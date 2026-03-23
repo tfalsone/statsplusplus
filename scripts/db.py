@@ -224,6 +224,11 @@ def get_conn(league_dir: Path | None = None) -> sqlite3.Connection:
     db_path = _resolve_db_path(league_dir)
     conn = sqlite3.connect(db_path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(
+        "CREATE VIEW IF NOT EXISTS latest_ratings AS "
+        "SELECT * FROM ratings "
+        "WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM ratings)"
+    )
     conn.row_factory = sqlite3.Row
     return conn
 
