@@ -152,7 +152,7 @@ Global config in `data/app_config.json`:
 
 ## License
 
-Private project. Not currently licensed for redistribution.
+MIT License. See [LICENSE](LICENSE) for details.
 
 ## Getting Your StatsPlus Cookie
 
