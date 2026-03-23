@@ -18,19 +18,20 @@ An assistant GM dashboard for [OOTP Baseball](https://www.ootpdevelopments.com/)
 ## Prerequisites
 
 - Python 3.10+
-- Flask (`pip install flask`)
 - A [StatsPlus](https://statsplus.net/) league with API access
-- Your StatsPlus session cookie (grab from browser dev tools after logging in)
+- Your StatsPlus session cookie (see [Getting Your Cookie](#getting-your-statsplus-cookie) below)
 
 ## Quick Start
 
-### 1. Clone and set up
+### 1. Clone and install
 
 ```bash
 git clone <repo-url> statsplusplus
 cd statsplusplus
-pip install flask
+pip install -r requirements.txt
 ```
+
+The only dependency is Flask. Everything else uses the Python standard library.
 
 ### 2. Launch the web UI
 
@@ -39,7 +40,7 @@ cd web
 python3 app.py
 ```
 
-Open `http://localhost:5000`. You'll be redirected to the onboarding wizard.
+The server starts on `http://localhost:5000`. You'll be redirected to the onboarding wizard on first visit.
 
 ### 3. Onboard a league
 
@@ -152,3 +153,26 @@ Global config in `data/app_config.json`:
 ## License
 
 Private project. Not currently licensed for redistribution.
+
+## Getting Your StatsPlus Cookie
+
+The StatsPlus API requires authentication via session cookie. To get yours:
+
+1. Log in to [statsplus.net](https://statsplus.net/) in your browser
+2. Open Developer Tools (F12) → Application tab → Cookies → `statsplus.net`
+3. Copy the values for `sessionid` and `csrftoken`
+4. Format as: `sessionid=<value>;csrftoken=<value>`
+
+Paste this into the onboarding wizard when prompted. The cookie is stored locally in `data/app_config.json` and never transmitted anywhere except to the StatsPlus API.
+
+Cookies expire periodically — if refreshes start failing with authentication errors, grab a fresh cookie from your browser.
+
+## Troubleshooting
+
+**"No module named flask"** — Run `pip install -r requirements.txt` from the project root.
+
+**Refresh fails or times out** — The StatsPlus API can be slow. Ratings exports in particular may take 45+ seconds. The refresh will retry automatically. If it consistently fails, check that your session cookie is still valid.
+
+**Empty data after refresh** — Some StatsPlus leagues don't expose minor league stats via the API. MLB-level stats should always populate. Check the DB validation counts in the Settings page.
+
+**Port already in use** — The default port is 5000. If it's taken, set the `PORT` environment variable or edit `app.py`.
