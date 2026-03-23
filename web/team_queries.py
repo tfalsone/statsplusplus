@@ -1,0 +1,1572 @@
+"""Team-level DB queries for the web dashboard."""
+
+import os, sys
+from collections import defaultdict
+
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(BASE, "scripts"))
+from player_utils import display_pos as _display_pos
+from web_league_context import (get_db, get_cfg, team_abbr_map, team_names_map,
+                                 level_map, pos_map, pos_order, pyth_exp, my_team_id,
+                                 mlb_team_ids)
+
+ROLE_MAP = {11: "SP", 12: "RP", 13: "CL"}
+
+
+def _get_state():
+    import json
+    cfg = get_cfg()
+    with open(cfg.state_path) as f:
+        return json.load(f)
+
+
+def get_summary(team_id=None):
+    state = _get_state()
+    conn = get_db()
+    conn.row_factory = None
+    year = state["year"]
+    tid = team_id or my_team_id()
+    ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
+    mlb_surplus = conn.execute(
+        "SELECT COALESCE(SUM(surplus),0) FROM player_surplus WHERE eval_date=? AND team_id=?",
+        (ed, tid)).fetchone()[0]
+    farm_surplus = conn.execute(
+        "SELECT COALESCE(SUM(prospect_surplus),0) FROM prospect_fv pf JOIN players p ON pf.player_id=p.player_id WHERE pf.eval_date=? AND p.parent_team_id=? AND p.level!='1'",
+        (ed, tid)).fetchone()[0]
+    fv50 = conn.execute(
+        "SELECT COUNT(*) FROM prospect_fv pf JOIN players p ON pf.player_id=p.player_id WHERE pf.eval_date=? AND p.parent_team_id=? AND p.level!='1' AND pf.fv>=50",
+        (ed, tid)).fetchone()[0]
+    return {
+        "game_date": state["game_date"], "year": year,
+        "mlb_surplus": round(mlb_surplus / 1e6, 1),
+        "farm_surplus": round(farm_surplus / 1e6, 1),
+        "fv50_count": fv50,
+    }
+
+
+def _team_won(g, tid):
+    """Did tid win? API convention: runs0=away, runs1=home."""
+    if g[0] == tid:  # home
+        return g[2] > g[1]  # runs1(home) > runs0(away)
+    return g[1] > g[2]  # runs0(away) > runs1(home)
+
+
+def get_power_rankings():
+    """Composite power rankings: pyth W% (50%), last-10 (25%), run diff/game (25%)."""
+    standings = get_standings()
+    if not standings:
+        return []
+
+    state = _get_state()
+    year = state["year"]
+    conn = get_db()
+    conn.row_factory = None
+
+    # Surplus for display only
+    ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
+    surplus_map = dict(conn.execute(
+        "SELECT team_id, SUM(surplus) FROM player_surplus WHERE eval_date=? GROUP BY team_id",
+        (ed,)).fetchall())
+    farm_map = dict(conn.execute("""
+        SELECT p.parent_team_id, SUM(pf.prospect_surplus)
+        FROM prospect_fv pf JOIN players p ON pf.player_id=p.player_id
+        WHERE pf.eval_date=? AND pf.level != 'MLB'
+        GROUP BY p.parent_team_id
+    """, (ed,)).fetchall())
+
+    # Last-10 record and streak
+    tids = [r["tid"] for r in standings]
+    l10_map, streak_map = {}, {}
+    has_games = conn.execute(
+        "SELECT COUNT(*) FROM games WHERE date LIKE ? AND played=1 AND game_type=0",
+        (f"{year}%",)).fetchone()[0] > 0
+
+    if has_games:
+        for tid in tids:
+            games = conn.execute("""
+                SELECT home_team, runs0, runs1 FROM games
+                WHERE (home_team=? OR away_team=?) AND played=1 AND game_type=0 AND date LIKE ?
+                ORDER BY date DESC, game_id DESC LIMIT 10
+            """, (tid, tid, f"{year}%")).fetchall()
+            w = sum(1 for g in games if _team_won(g, tid))
+            l10_map[tid] = (w, len(games) - w)
+            s_count, s_type = 0, None
+            for g in games:
+                res = "W" if _team_won(g, tid) else "L"
+                if s_type is None:
+                    s_type = res
+                if res == s_type:
+                    s_count += 1
+                else:
+                    break
+            streak_map[tid] = f"{s_type}{s_count}" if s_type else "-"
+
+
+    # Normalize components to 0-1
+    pyths = {r["tid"]: r["pct"] for r in standings}
+    rdpg = {r["tid"]: r["diff"] / r["g"] if r["g"] else 0 for r in standings}
+    l10_pct = {t: l10_map[t][0] / sum(l10_map[t]) if t in l10_map and sum(l10_map[t]) else 0.5 for t in tids}
+
+    def _norm(d):
+        vals = list(d.values())
+        lo, hi = min(vals), max(vals)
+        span = hi - lo if hi != lo else 1
+        return {k: (v - lo) / span for k, v in d.items()}
+
+    n_pyth, n_rdpg, n_l10 = _norm(pyths), _norm(rdpg), _norm(l10_pct)
+    w_pyth, w_l10, w_rdpg = (0.50, 0.25, 0.25) if has_games else (0.65, 0.00, 0.35)
+
+    rows = []
+    for r in standings:
+        t = r["tid"]
+        score = n_pyth[t]*w_pyth + n_l10[t]*w_l10 + n_rdpg[t]*w_rdpg
+        l10w, l10l = l10_map.get(t, (0, 0))
+        rows.append({
+            "tid": t, "name": r["name"], "abbr": team_abbr_map().get(t, "?"),
+            "g": r["g"], "w": r["w"], "l": r["l"],
+            "pct": r["w"] / r["g"] if r["g"] else 0,
+            "pyth_w": r["pyth_w"], "pyth_l": r["pyth_l"],
+            "rs": r["rs"], "ra": r["ra"], "diff": r["diff"],
+            "rdpg": rdpg[t],
+            "l10": f"{l10w}-{l10l}" if has_games else "-",
+            "streak": streak_map.get(t, "-"),
+            "mlb_surplus": round(surplus_map.get(t, 0) / 1e6, 1),
+            "farm_surplus": round(farm_map.get(t, 0) / 1e6, 1),
+            "score": round(score * 100, 1),
+            "is_mine": r["is_mine"],
+        })
+    rows.sort(key=lambda x: -x["score"])
+    for i, r in enumerate(rows):
+        r["rank"] = i + 1
+    return rows
+
+
+def get_standings():
+    state = _get_state()
+    conn = get_db()
+    conn.row_factory = None
+    year = state["year"]
+
+    bat = {r[0]: (r[1], r[2]) for r in conn.execute(
+        "SELECT team_id, name, r FROM team_batting_stats WHERE year=? AND split_id=1", (year,)).fetchall()}
+    pit = {r[0]: (r[1], r[2]) for r in conn.execute(
+        "SELECT team_id, r, ip FROM team_pitching_stats WHERE year=? AND split_id=1", (year,)).fetchall()}
+
+    # Actual W/L from games (runs0=away, runs1=home)
+    actual_wl = {}
+    game_rows = conn.execute(
+        "SELECT home_team, away_team, runs0, runs1 FROM games WHERE date LIKE ? AND played=1 AND game_type=0",
+        (f"{year}%",)).fetchall()
+    if game_rows:
+        from collections import Counter
+        wins, losses = Counter(), Counter()
+        for g in game_rows:
+            # g = (home_team, away_team, runs0=away_runs, runs1=home_runs)
+            if g[3] > g[2]:  # home wins (runs1 > runs0)
+                wins[g[0]] += 1; losses[g[1]] += 1
+            else:  # away wins
+                wins[g[1]] += 1; losses[g[0]] += 1
+        for tid in set(wins) | set(losses):
+            actual_wl[tid] = (wins[tid], losses[tid])
+
+
+    rows = []
+    for tid, (name, rs) in bat.items():
+        if tid not in pit:
+            continue
+        ra, ip = pit[tid]
+        g = round(ip / 9)
+        if g == 0 or rs + ra == 0:
+            continue
+        pyth = rs**pyth_exp() / (rs**pyth_exp() + ra**pyth_exp())
+        pyth_w = round(pyth * g, 1)
+        pyth_l = round(g - pyth_w, 1)
+        aw, al = actual_wl.get(tid, (pyth_w, pyth_l))
+        ag = aw + al
+        pct = aw / ag if ag else pyth
+        rows.append({"tid": tid, "name": name, "g": ag,
+                      "w": aw, "l": al, "pyth_w": pyth_w, "pyth_l": pyth_l,
+                      "pct": pct, "rs": rs, "ra": ra, "diff": rs - ra,
+                      "div": get_cfg().team_div_map.get(tid, ""),
+                      "has_actual": tid in actual_wl})
+    rows.sort(key=lambda x: x["pct"], reverse=True)
+
+    if rows:
+        leader_w, leader_l = rows[0]["w"], rows[0]["l"]
+        for i, r in enumerate(rows):
+            r["rank"] = i + 1
+            gb = ((leader_w - leader_l) - (r["w"] - r["l"])) / 2
+            r["gb"] = "-" if gb < 0.25 else f"{gb:.1f}"
+            r["is_mine"] = r["tid"] == my_team_id()
+    return rows
+
+
+def get_division_standings(team_id=None):
+    all_rows = get_standings()
+    tid = team_id or my_team_id()
+    my_div = get_cfg().team_div_map.get(tid, "")
+    div_rows = [r for r in all_rows if r["div"] == my_div]
+    if div_rows:
+        leader_w, leader_l = div_rows[0]["w"], div_rows[0]["l"]
+        for i, r in enumerate(div_rows):
+            r["rank"] = i + 1
+            gb = ((leader_w - leader_l) - (r["w"] - r["l"])) / 2
+            r["gb"] = "-" if gb < 0.25 else f"{gb:.1f}"
+    return div_rows, my_div
+
+
+def get_roster(team_id=None):
+    state = _get_state()
+    conn = get_db()
+    conn.row_factory = None
+    year = state["year"]
+    tid = team_id or my_team_id()
+    ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
+
+    players = conn.execute("""
+        SELECT p.player_id, p.name, p.age, p.pos, p.role,
+               ps.ovr, ps.surplus, ps.bucket
+        FROM players p
+        LEFT JOIN player_surplus ps ON p.player_id=ps.player_id AND ps.eval_date=?
+        WHERE p.team_id=? AND p.level='1'
+    """, (ed, tid)).fetchall()
+
+    bat = {}
+    for r in conn.execute(
+        "SELECT player_id, ab, h, d, t, hr, bb, pa, war FROM batting_stats WHERE year=? AND split_id=1", (year,)
+    ).fetchall():
+        pid, ab, h, d, t, hr, bb, pa, war = r
+        avg = h / ab if ab else None
+        obp = (h + bb) / pa if pa else None
+        slg = (h + d + 2 * t + 3 * hr) / ab if ab else None
+        bat[pid] = (avg, obp, slg, war)
+
+    pit = {}
+    for r in conn.execute(
+        "SELECT player_id, era, ip, k, war FROM pitching_stats WHERE year=? AND split_id=1", (year,)
+    ).fetchall():
+        pit[r[0]] = (r[1], r[2], r[3], r[4])
+
+    mlb_pids = {row[0] for row in players if row[0] in bat or row[0] in pit}
+
+    hitters, pitchers = [], []
+    for pid, name, age, pos, role, ovr, surplus, bucket in players:
+        if pid not in mlb_pids:
+            continue
+        base = {"pid": pid, "name": name, "age": age, "ovr": ovr or 0,
+                "surplus": round(surplus / 1e6, 1) if surplus else 0}
+        if role in (11, 12, 13):
+            s = pit.get(pid, (None, None, None, None))
+            role_str = ROLE_MAP.get(role, "P")
+            base.update({"role": role_str, "role_order": pos_order().get(role_str, 99),
+                          "era": s[0], "ip": s[1], "k": s[2],
+                          "war": round(s[3], 1) if s[3] is not None else 0})
+            pitchers.append(base)
+        else:
+            s = bat.get(pid, (None, None, None, None))
+            base.update({"pos": pos_map().get(pos, "?"),
+                          "pos_order": pos_order().get(pos_map().get(pos, "?"), 99),
+                          "avg": s[0], "obp": s[1], "slg": s[2],
+                          "war": round(s[3], 1) if s[3] is not None else 0})
+            hitters.append(base)
+
+    hitters.sort(key=lambda x: x["war"], reverse=True)
+    pitchers.sort(key=lambda x: x["war"], reverse=True)
+    return hitters, pitchers
+
+
+def get_roster_hitters(team_id=None):
+    """Hitters with all 3 splits for the roster Hitters tab.
+    Includes two-way players (pitchers with PA >= 30)."""
+    state = _get_state()
+    conn = get_db()
+    year = state["year"]
+    tid = team_id or my_team_id()
+    ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
+
+    # Position players
+    players = conn.execute("""
+        SELECT p.player_id, p.name, p.age, p.pos, p.role,
+               ps.ovr, ps.surplus
+        FROM players p
+        LEFT JOIN player_surplus ps ON p.player_id=ps.player_id AND ps.eval_date=?
+        WHERE p.team_id=? AND p.level='1' AND COALESCE(p.role,0) NOT IN (11,12,13)
+    """, (ed, tid)).fetchall()
+
+    # Two-way pitchers with meaningful batting (PA >= 30)
+    twp = conn.execute("""
+        SELECT p.player_id, p.name, p.age, p.pos, p.role,
+               ps.ovr, ps.surplus
+        FROM players p
+        LEFT JOIN player_surplus ps ON p.player_id=ps.player_id AND ps.eval_date=?
+        JOIN batting_stats b ON b.player_id=p.player_id AND b.year=? AND b.split_id=1 AND b.pa>=30
+        WHERE p.team_id=? AND p.level='1' AND p.role IN (11,12,13)
+    """, (ed, year, tid)).fetchall()
+    twp_pids = {p["player_id"] for p in twp}
+    players = list(players) + list(twp)
+
+    # Load all 3 splits
+    bat = {}  # pid -> {split_id -> dict}
+    for r in conn.execute("""
+        SELECT player_id, split_id, ab, h, d, t, hr, r, rbi, sb, bb, k, pa, war, g, cs, hbp, sf
+        FROM batting_stats WHERE year=? AND split_id IN (1,2,3)
+    """, (year,)):
+        bat.setdefault(r["player_id"], {})[r["split_id"]] = dict(r)
+
+    # For two-way players: primary non-pitcher fielding position
+    conn_fld = {}
+    if twp_pids:
+        for r in conn.execute(
+            "SELECT player_id, position, g FROM fielding_stats "
+            "WHERE year=? AND position != 1 AND player_id IN ({})".format(
+                ",".join("?" * len(twp_pids))),
+            [year] + list(twp_pids)
+        ).fetchall():
+            pid = r["player_id"]
+            if pid not in conn_fld or r["g"] > conn_fld[pid][1]:
+                conn_fld[pid] = (r["position"], r["g"])
+        conn_fld = {pid: pos for pid, (pos, _) in conn_fld.items()}
+
+
+    def _fmt_split(s):
+        if not s:
+            return None
+        ab, pa = s["ab"] or 0, s["pa"] or 0
+        h, d, t, hr = s["h"] or 0, s["d"] or 0, s["t"] or 0, s["hr"] or 0
+        bb, k, hbp, sf = s["bb"] or 0, s["k"] or 0, s["hbp"] or 0, s["sf"] or 0
+        avg = h / ab if ab else None
+        obp = (h + bb + hbp) / (ab + bb + hbp + sf) if (ab + bb + hbp + sf) else None
+        slg = (h + d + 2*t + 3*hr) / ab if ab else None
+        ops = (obp or 0) + (slg or 0) if obp is not None else None
+        return {
+            "pa": pa, "ab": ab, "avg": _r3(avg), "obp": _r3(obp), "slg": _r3(slg),
+            "ops": _r3(ops), "hr": hr, "r": s["r"] or 0, "rbi": s["rbi"] or 0,
+            "sb": s["sb"] or 0, "cs": s["cs"] or 0,
+            "bb_pct": round(100 * bb / pa, 1) if pa else None,
+            "k_pct": round(100 * k / pa, 1) if pa else None,
+            "war": round(s["war"], 1) if s["war"] is not None else 0,
+            "g": s["g"] or 0,
+        }
+
+    result = []
+    for p in players:
+        splits = bat.get(p["player_id"])
+        if not splits or 1 not in splits:
+            continue
+        pid = p["player_id"]
+        if pid in twp_pids:
+            # Two-way: show fielding position, not P
+            fld = conn_fld.get(pid)
+            pos = pos_map().get(fld, "DH") if fld else "DH"
+        else:
+            pos = pos_map().get(p["pos"], "?")
+        result.append({
+            "pid": pid, "name": p["name"], "age": p["age"],
+            "ovr": p["ovr"] or 0, "pos": pos,
+            "pos_order": pos_order().get(pos, 99),
+            "surplus": round(p["surplus"] / 1e6, 1) if p["surplus"] else 0,
+            "is_two_way": pid in twp_pids,
+            "splits": {
+                "1": _fmt_split(splits.get(1)),
+                "2": _fmt_split(splits.get(2)),
+                "3": _fmt_split(splits.get(3)),
+            }
+        })
+    result.sort(key=lambda x: x["splits"]["1"]["war"], reverse=True)
+    return result
+
+
+def get_roster_pitchers(team_id=None):
+    """Pitchers with all 3 splits for the roster Pitchers tab."""
+    state = _get_state()
+    conn = get_db()
+    year = state["year"]
+    tid = team_id or my_team_id()
+    ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
+
+    players = conn.execute("""
+        SELECT p.player_id, p.name, p.age, p.pos, p.role,
+               ps.ovr, ps.surplus
+        FROM players p
+        LEFT JOIN player_surplus ps ON p.player_id=ps.player_id AND ps.eval_date=?
+        WHERE p.team_id=? AND p.level='1' AND p.role IN (11,12,13)
+    """, (ed, tid)).fetchall()
+
+    pit = {}  # pid -> {split_id -> dict}
+    for r in conn.execute("""
+        SELECT player_id, split_id, ip, g, gs, w, l, sv, era, k, bb, ha, war,
+               hra, bf, hld, bs, qs, er, r AS runs, cg, sho, ir, irs
+        FROM pitching_stats WHERE year=? AND split_id IN (1,2,3)
+    """, (year,)):
+        pit.setdefault(r["player_id"], {})[r["split_id"]] = dict(r)
+
+    # Detect two-way pitchers
+    pitcher_pids = {p["player_id"] for p in players}
+    twp_pids = set()
+    if pitcher_pids:
+        for r in conn.execute(
+            "SELECT player_id FROM batting_stats WHERE year=? AND split_id=1 AND pa>=30 AND player_id IN ({})".format(
+                ",".join("?" * len(pitcher_pids))),
+            [year] + list(pitcher_pids)
+        ).fetchall():
+            twp_pids.add(r["player_id"])
+
+
+    def _fmt_split(s):
+        if not s:
+            return None
+        ip, bf = s["ip"] or 0, s["bf"] or 0
+        k, bb, ha, hra = s["k"] or 0, s["bb"] or 0, s["ha"] or 0, s["hra"] or 0
+        ir, irs = s["ir"] or 0, s["irs"] or 0
+        whip = (bb + ha) / ip if ip else None
+        irs_pct = round(100 * irs / ir, 1) if ir else None
+        return {
+            "ip": ip, "g": s["g"] or 0, "gs": s["gs"] or 0,
+            "w": s["w"] or 0, "l": s["l"] or 0, "sv": s["sv"] or 0,
+            "era": round(s["era"], 2) if s["era"] is not None else None,
+            "whip": round(whip, 2) if whip else None,
+            "k": k, "bb": bb, "hra": hra,
+            "k_pct": round(100 * k / bf, 1) if bf else None,
+            "bb_pct": round(100 * bb / bf, 1) if bf else None,
+            "k_bb_pct": round(100 * (k - bb) / bf, 1) if bf else None,
+            "war": round(s["war"], 1) if s["war"] is not None else 0,
+            "hld": s["hld"] or 0, "bs": s["bs"] or 0,
+            "qs": s["qs"] or 0, "irs_pct": irs_pct,
+        }
+
+    result = []
+    for p in players:
+        splits = pit.get(p["player_id"])
+        if not splits or 1 not in splits:
+            continue
+        role_str = ROLE_MAP.get(p["role"], "P")
+        result.append({
+            "pid": p["player_id"], "name": p["name"], "age": p["age"],
+            "ovr": p["ovr"] or 0, "role": role_str,
+            "role_order": pos_order().get(role_str, 99),
+            "surplus": round(p["surplus"] / 1e6, 1) if p["surplus"] else 0,
+            "is_two_way": p["player_id"] in twp_pids,
+            "splits": {
+                "1": _fmt_split(splits.get(1)),
+                "2": _fmt_split(splits.get(2)),
+                "3": _fmt_split(splits.get(3)),
+            }
+        })
+    result.sort(key=lambda x: x["splits"]["1"]["war"], reverse=True)
+    return result
+
+
+def _r3(v):
+    return round(v, 3) if v is not None else None
+
+
+def get_farm(team_id=None):
+    conn = get_db()
+    conn.row_factory = None
+    tid = team_id or my_team_id()
+    ed = conn.execute("SELECT MAX(eval_date) FROM prospect_fv").fetchone()[0]
+
+    rows = conn.execute("""
+        SELECT p.name, p.age, p.level, pf.fv, pf.fv_str, pf.bucket, pf.prospect_surplus, p.player_id, p.pos
+        FROM prospect_fv pf
+        JOIN players p ON pf.player_id=p.player_id
+        WHERE pf.eval_date=? AND p.parent_team_id=? AND p.level!='1'
+        ORDER BY pf.fv DESC, p.age ASC
+    """, (ed, tid)).fetchall()
+
+    def sort_key(r):
+        fv_val = r[3] + (0.1 if r[4].endswith("+") else 0)
+        return (-fv_val, -(r[6] or 0))
+
+    rows = sorted(rows, key=sort_key)[:15]
+    return [{"rank": i + 1, "name": r[0], "age": r[1],
+             "level": level_map().get(str(r[2]), str(r[2])),
+             "fv": r[3], "fv_str": r[4],
+             "bucket": _display_pos(r[5], r[8]),
+             "pos_order": pos_order().get(_display_pos(r[5], r[8]), 99),
+             "surplus": round(r[6] / 1e6, 1) if r[6] else 0,
+             "pid": r[7]}
+            for i, r in enumerate(rows)]
+
+
+def get_team_stats(team_id):
+    state = _get_state()
+    year = state["year"]
+    conn = get_db()
+    conn.row_factory = None
+
+    bat_rows = conn.execute(
+        "SELECT team_id, avg, obp, slg, ops, hr, r, bb_pct, k_pct, iso FROM team_batting_stats WHERE year=? AND split_id=1", (year,)
+    ).fetchall()
+    pit_rows = conn.execute(
+        "SELECT team_id, era, fip, k_pct, bb_pct, hra, r, ip, bb, k, ha FROM team_pitching_stats WHERE year=? AND split_id=1", (year,)
+    ).fetchall()
+
+    n = len(bat_rows)
+
+    def rankings(rows, specs, tid):
+        out = {}
+        for label, idx, low in specs:
+            vals = sorted([r[idx] for r in rows if r[idx] is not None], reverse=not low)
+            my = next((r[idx] for r in rows if r[0] == tid), None)
+            out[label] = {"val": my, "rank": (vals.index(my) + 1) if my in vals else n, "n": n}
+        return out
+
+    bat = rankings(bat_rows, [
+        ("AVG",1,False),("OBP",2,False),("SLG",3,False),("OPS",4,False),
+        ("HR",5,False),("R",6,False),("BB%",7,False),("K%",8,True),("ISO",9,False),
+    ], team_id)
+
+    pit_derived = []
+    for r in pit_rows:
+        tid, era, fip, kp, bbp, hra, ra, ip, bb, k, ha = r
+        whip = (bb + ha) / ip if ip else 99
+        k9 = k * 9 / ip if ip else 0
+        bb9 = bb * 9 / ip if ip else 99
+        hr9 = hra * 9 / ip if ip else 99
+        pit_derived.append((tid, era, fip, kp, bbp, hra, ra, whip, k9, bb9, hr9))
+
+    pit = rankings(pit_derived, [
+        ("ERA",1,True),("FIP",2,True),("K%",3,False),("BB%",4,True),
+        ("RA",6,True),("WHIP",7,True),("K/9",8,False),("BB/9",9,True),("HR/9",10,True),
+    ], team_id)
+
+    return {"batting": bat, "pitching": pit}
+
+
+def get_contracts(team_id):
+    conn = get_db()
+    conn.row_factory = None
+    ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
+
+    rows = conn.execute("""
+        SELECT c.player_id, p.name, c.years, c.current_year,
+               c.salary_0, c.salary_1, c.salary_2, c.salary_3, c.salary_4,
+               c.salary_5, c.salary_6, c.salary_7, c.salary_8, c.salary_9,
+               c.salary_10, c.salary_11, c.salary_12, c.salary_13, c.salary_14,
+               c.no_trade, c.last_year_team_option, c.last_year_player_option,
+               ps.surplus, c.is_major
+        FROM contracts c
+        JOIN players p ON c.player_id = p.player_id
+        LEFT JOIN player_surplus ps ON c.player_id = ps.player_id AND ps.eval_date = ?
+        WHERE c.contract_team_id = ?
+        ORDER BY c.salary_0 DESC
+    """, (ed, team_id)).fetchall()
+
+    out = []
+    for r in rows:
+        pid, name = r[0], r[1]
+        years, cur_yr = r[2], r[3]
+        salaries = [r[4 + i] for i in range(15)]
+        ntc, to, po = r[19], r[20], r[21]
+        surplus, is_major = r[22], r[23]
+        cur_sal = salaries[cur_yr] if cur_yr < len(salaries) else salaries[0]
+        yrs_left = max(years - cur_yr, 1)
+        total_left = sum(salaries[cur_yr:years]) if cur_yr < years else cur_sal
+        out.append({
+            "pid": pid, "name": name,
+            "salary": cur_sal, "years_left": yrs_left, "total_left": total_left,
+            "ntc": ntc, "to": to, "po": po,
+            "surplus": round(surplus / 1e6, 1) if surplus else 0,
+            "is_major": is_major,
+        })
+
+    display = [c for c in out if c["is_major"] and (c["salary"] > 825000 or c["years_left"] > 1)]
+    display.sort(key=lambda x: -x["salary"])
+    total_payroll = sum(c["salary"] for c in out if c["is_major"])
+    return display, total_payroll
+
+
+def get_payroll_summary(team_id):
+    """Committed payroll by year with per-player breakdown, including arb projections."""
+    state = _get_state()
+    year = state["year"]
+    conn = get_db()
+    conn.row_factory = None
+    rows = conn.execute("""
+        SELECT c.player_id, p.name, c.years, c.current_year,
+               c.salary_0, c.salary_1, c.salary_2, c.salary_3, c.salary_4,
+               c.salary_5, c.salary_6, c.salary_7, c.salary_8, c.salary_9,
+               c.salary_10, c.salary_11, c.salary_12, c.salary_13, c.salary_14,
+               c.last_year_team_option, c.last_year_player_option, c.no_trade
+        FROM contracts c
+        JOIN players p ON c.player_id = p.player_id
+        WHERE c.contract_team_id = ? AND c.is_major = 1
+    """, (team_id,)).fetchall()
+
+    # Project salaries for 1yr contract players using arb model (no non-tender gate)
+    from contract_value import _estimate_control, _resolve
+    from player_utils import league_minimum, aging_mult
+    import db as _scripts_db, math
+    cv_conn = _scripts_db.get_conn()
+    lmin = league_minimum()
+    projections = {}  # pid -> [(year_offset, salary), ...]
+    for r in rows:
+        if r[2] != 1:  # multi-year contract, skip
+            continue
+        pid, sal = r[0], r[4]
+        try:
+            res = _resolve(cv_conn, str(pid))
+            if not res:
+                continue
+            _, _, age, ovr, pot, bucket = res
+            est = _estimate_control(cv_conn, pid, age, sal)
+            ctrl, _, pre_arb = est
+            if not ctrl or ctrl <= 1:
+                continue
+            rp_mult = 0.80 if bucket == "RP" else 1.0
+            proj = []
+            prev_sal = sal
+            for i in range(1, ctrl):
+                if i < pre_arb:
+                    s = lmin
+                elif i == pre_arb and pre_arb > 0:
+                    s = round(318400 * math.exp(0.0495 * ovr) * rp_mult)
+                else:
+                    arb_raise = max(1_000_000, round((-2_500_000 + 110_000 * ovr) * rp_mult))
+                    s = prev_sal + arb_raise
+                proj.append((i, s))
+                prev_sal = s
+            projections[pid] = proj
+        except Exception:
+            pass
+    cv_conn.close()
+
+    horizon = 6
+    future_years = [year + i for i in range(horizon)]
+    min_sal = get_cfg().minimum_salary
+    players = []
+    totals = [0] * horizon
+    for r in rows:
+        pid, name = r[0], r[1]
+        yrs_total, cur_yr = r[2], r[3]
+        sals = [r[4 + i] for i in range(15)]
+        to, po, ntc = r[19], r[20], r[21]
+
+        proj = projections.get(pid)
+        proj_map = {i: s for i, s in proj} if proj else {}
+        by_year = []
+        for i in range(horizon):
+            contract_yr = cur_yr + i
+            if i in proj_map:
+                by_year.append({"sal": proj_map[i], "option": None, "projected": True})
+                totals[i] += proj_map[i]
+            elif contract_yr < yrs_total:
+                is_option = (contract_yr == yrs_total - 1) and (to or po)
+                sal = sals[contract_yr]
+                by_year.append({"sal": sal, "option": "TO" if to and is_option else "PO" if po and is_option else None, "projected": False})
+                totals[i] += sal
+            else:
+                by_year.append(None)
+        if not any(s for s in by_year if s):
+            continue
+        players.append({"pid": pid, "name": name, "by_year": by_year, "ntc": ntc})
+    players.sort(key=lambda p: -(p["by_year"][0]["sal"] if p["by_year"][0] else 0))
+    return {"years": future_years, "players": players, "totals": totals}
+
+def get_roster_summary(team_id):
+    state = _get_state()
+    year = state["year"]
+    conn = get_db()
+    conn.row_factory = None
+    rows = conn.execute("""
+        SELECT p.role, p.age FROM players p
+        WHERE p.team_id=? AND p.level='1'
+          AND (p.player_id IN (SELECT player_id FROM batting_stats WHERE year=? AND split_id=1)
+            OR p.player_id IN (SELECT player_id FROM pitching_stats WHERE year=? AND split_id=1))
+    """, (team_id, year, year)).fetchall()
+
+    groups = {"SP": [], "RP": [], "Pos": []}
+    for role, age in rows:
+        if role == 11:
+            groups["SP"].append(age)
+        elif role in (12, 13):
+            groups["RP"].append(age)
+        else:
+            groups["Pos"].append(age)
+
+    return {k: {"count": len(v), "avg_age": round(sum(v) / len(v), 1) if v else 0}
+            for k, v in groups.items()}
+
+
+def get_upcoming_fa(team_id):
+    conn = get_db()
+    conn.row_factory = None
+    ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
+
+    rows = conn.execute("""
+        SELECT c.player_id, p.name, p.age, c.years, c.current_year,
+               c.salary_0, ps.surplus, ps.ovr, ps.bucket
+        FROM contracts c
+        JOIN players p ON c.player_id = p.player_id
+        LEFT JOIN player_surplus ps ON c.player_id = ps.player_id AND ps.eval_date = ?
+        WHERE c.contract_team_id = ? AND c.is_major = 1
+    """, (ed, team_id)).fetchall()
+
+    out = []
+    for pid, name, age, years, cur_yr, sal, surplus, ovr, bucket in rows:
+        if not ovr:
+            continue
+        yrs_left = max(years - cur_yr, 1)
+        if yrs_left > 2:
+            continue
+        if years == 1 and age < 30:
+            continue
+        out.append({
+            "pid": pid, "name": name, "age": age,
+            "pos": _display_pos(bucket) if bucket else "?",
+            "yrs_left": yrs_left, "salary": sal,
+            "surplus": round(surplus / 1e6, 1) if surplus else 0,
+            "ovr": ovr or 0,
+        })
+    out.sort(key=lambda x: (-x["ovr"], x["yrs_left"]))
+    return out
+
+
+def get_surplus_leaders(team_id):
+    conn = get_db()
+    conn.row_factory = None
+    ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
+
+    mlb = conn.execute("""
+        SELECT ps.player_id, p.name, ps.bucket, ps.surplus, 'MLB' as src
+        FROM player_surplus ps JOIN players p ON ps.player_id = p.player_id
+        WHERE ps.eval_date = ? AND ps.team_id = ?
+    """, (ed, team_id)).fetchall()
+
+    farm = conn.execute("""
+        SELECT pf.player_id, p.name, pf.bucket, pf.prospect_surplus, 'Farm' as src
+        FROM prospect_fv pf JOIN players p ON pf.player_id = p.player_id
+        WHERE pf.eval_date = ? AND p.parent_team_id = ? AND p.level != '1'
+    """, (ed, team_id)).fetchall()
+
+    combined = []
+    for pid, name, bucket, surplus, src in list(mlb) + list(farm):
+        if not surplus:
+            continue
+        combined.append({"pid": pid, "name": name,
+                         "pos": _display_pos(bucket) if bucket else "?",
+                         "surplus": round(surplus / 1e6, 1), "src": src})
+    combined.sort(key=lambda x: -x["surplus"])
+    return combined[:15]
+
+
+def get_age_distribution(team_id):
+    state = _get_state()
+    year = state["year"]
+    conn = get_db()
+    conn.row_factory = None
+
+    mlb_breaks = [("≤25", 0, 25), ("26-29", 26, 29), ("30-33", 30, 33), ("34+", 34, 99)]
+    farm_breaks = [("≤20", 0, 20), ("21-23", 21, 23), ("24+", 24, 99)]
+
+    def bucket(ages, breaks):
+        out = {label: 0 for label, _, _ in breaks}
+        for (age,) in ages:
+            for label, lo, hi in breaks:
+                if lo <= age <= hi:
+                    out[label] += 1
+                    break
+        return out
+
+    def pcts(counts):
+        total = sum(counts.values())
+        return {k: round(v / total * 100, 1) if total else 0 for k, v in counts.items()}
+
+    mlb_ages = conn.execute("""
+        SELECT p.age FROM players p
+        WHERE p.team_id=? AND p.level='1'
+          AND (p.player_id IN (SELECT player_id FROM batting_stats WHERE year=? AND split_id=1)
+            OR p.player_id IN (SELECT player_id FROM pitching_stats WHERE year=? AND split_id=1))
+    """, (team_id, year, year)).fetchall()
+
+    ed = conn.execute("SELECT MAX(eval_date) FROM prospect_fv").fetchone()[0]
+    farm_ages = conn.execute("""
+        SELECT p.age FROM prospect_fv pf
+        JOIN players p ON pf.player_id = p.player_id
+        WHERE pf.eval_date=? AND p.parent_team_id=? AND p.level!='1' AND pf.fv >= 40
+    """, (ed, team_id)).fetchall()
+
+    mlb = bucket(mlb_ages, mlb_breaks)
+    farm = bucket(farm_ages, farm_breaks)
+
+    mlb_tids = mlb_team_ids()
+    all_mlb = conn.execute("""
+        SELECT p.team_id, p.age FROM players p
+        WHERE p.level='1'
+          AND (p.player_id IN (SELECT player_id FROM batting_stats WHERE year=? AND split_id=1)
+            OR p.player_id IN (SELECT player_id FROM pitching_stats WHERE year=? AND split_id=1))
+    """, (year, year)).fetchall()
+
+    all_farm = conn.execute("""
+        SELECT p.parent_team_id, p.age FROM prospect_fv pf
+        JOIN players p ON pf.player_id = p.player_id
+        WHERE pf.eval_date=? AND p.level!='1' AND pf.fv >= 40
+    """, (ed,)).fetchall()
+
+    def league_avg_pcts(rows, breaks, tid_idx):
+        teams = defaultdict(list)
+        for row in rows:
+            tid = row[tid_idx]
+            if tid in mlb_tids:
+                teams[tid].append((row[1],))
+        if not teams:
+            return {label: 0 for label, _, _ in breaks}
+        team_pcts = [pcts(bucket(ages, breaks)) for ages in teams.values()]
+        return {k: round(sum(tp[k] for tp in team_pcts) / len(team_pcts), 1)
+                for k in team_pcts[0]}
+
+    lg_mlb = league_avg_pcts(all_mlb, mlb_breaks, 0)
+    lg_farm = league_avg_pcts(all_farm, farm_breaks, 0)
+
+    return {"mlb": mlb, "farm": farm, "lg_mlb": lg_mlb, "lg_farm": lg_farm}
+
+
+
+def get_record_breakdown(team_id):
+    """Record splits: home/away, vs division, 1-run games, last 10, streak."""
+    state = _get_state()
+    year = state["year"]
+    conn = get_db()
+    conn.row_factory = None
+    rows = conn.execute("""
+        SELECT home_team, away_team, runs0, runs1
+        FROM games
+        WHERE (home_team=? OR away_team=?) AND date LIKE ? AND played=1 AND game_type=0
+        ORDER BY date, game_id
+    """, (team_id, team_id, f"{year}%")).fetchall()
+    if not rows:
+        return None
+
+    # Find division mates
+    div_teams = set()
+    for div, teams in get_cfg().divisions.items():
+        if team_id in teams:
+            div_teams = set(teams) - {team_id}
+            break
+
+    splits = {
+        "overall": [0, 0], "home": [0, 0], "away": [0, 0],
+        "vs_div": [0, 0], "one_run": [0, 0],
+    }
+    results = []  # ordered W/L booleans
+    for home, away, r0, r1 in rows:
+        is_home = home == team_id
+        opp = away if is_home else home
+        won = (r1 > r0) if is_home else (r0 > r1)
+        margin = abs(r1 - r0)
+        idx = 0 if won else 1
+        splits["overall"][idx] += 1
+        splits["home" if is_home else "away"][idx] += 1
+        if opp in div_teams:
+            splits["vs_div"][idx] += 1
+        if margin == 1:
+            splits["one_run"][idx] += 1
+        results.append(won)
+
+    # Last 10
+    last10 = results[-10:]
+    l10_w = sum(last10)
+    l10_l = len(last10) - l10_w
+
+    # Streak
+    streak_type = results[-1] if results else True
+    streak_len = 0
+    for r in reversed(results):
+        if r == streak_type:
+            streak_len += 1
+        else:
+            break
+    streak = f"{'W' if streak_type else 'L'}{streak_len}"
+
+    return {
+        "overall": splits["overall"],
+        "home": splits["home"],
+        "away": splits["away"],
+        "vs_div": splits["vs_div"],
+        "one_run": splits["one_run"],
+        "l10": [l10_w, l10_l],
+        "streak": streak,
+    }
+
+
+def get_recent_games(team_id, n=10):
+    """Last n games for a team with W/L, score, opponent."""
+    state = _get_state()
+    year = state["year"]
+    conn = get_db()
+    conn.row_factory = None
+    rows = conn.execute("""
+        SELECT g.date, g.home_team, g.away_team, g.runs0, g.runs1,
+               g.winning_pitcher, g.losing_pitcher, g.save_pitcher,
+               th.name as home_name, ta.name as away_name
+        FROM games g
+        JOIN teams th ON g.home_team = th.team_id
+        JOIN teams ta ON g.away_team = ta.team_id
+        WHERE (g.home_team=? OR g.away_team=?) AND g.played=1 AND g.game_type=0
+          AND g.date LIKE ?
+        ORDER BY g.date DESC, g.game_id DESC LIMIT ?
+    """, (team_id, team_id, f"{year}%", n)).fetchall()
+
+    # Collect pitcher IDs and names
+    pids = set()
+    for r in rows:
+        for i in (5, 6, 7):
+            if r[i]:
+                pids.add(r[i])
+    pname = {}
+    if pids:
+        ph = ",".join("?" * len(pids))
+        for p in conn.execute(f"SELECT player_id, name FROM players WHERE player_id IN ({ph})", list(pids)).fetchall():
+            pname[p[0]] = p[1]
+
+    # Running W/L/SV from game history for these pitchers
+    all_games = conn.execute("""
+        SELECT date, winning_pitcher, losing_pitcher, save_pitcher
+        FROM games WHERE date LIKE ? AND played=1 AND game_type=0
+        ORDER BY date, game_id
+    """, (f"{year}%",)).fetchall()
+
+    # Build cumulative counts keyed by (pid, date) -> count after that date's games
+    from collections import defaultdict
+    pw, pl, ps = defaultdict(int), defaultdict(int), defaultdict(int)
+    pw_at, pl_at, ps_at = {}, {}, {}  # (pid, date) -> running total
+    for g in all_games:
+        d = g[0]
+        if g[1] in pids:
+            pw[g[1]] += 1; pw_at[(g[1], d)] = pw[g[1]]
+        if g[2] in pids:
+            pl[g[2]] += 1; pl_at[(g[2], d)] = pl[g[2]]
+        if g[3] and g[3] in pids:
+            ps[g[3]] += 1; ps_at[(g[3], d)] = ps[g[3]]
+
+    def _pfmt(pid, date, mode):
+        if not pid or pid not in pname:
+            return None
+        name = pname[pid]
+        if mode == "sv":
+            stat = f"({ps_at.get((pid, date), 0)})"
+        else:
+            w = pw_at.get((pid, date), 0)
+            l = pl_at.get((pid, date), 0)
+            stat = f"({w}-{l})"
+        return {"pid": pid, "name": name, "stat": stat}
+
+    out = []
+    for r in rows:
+        home = r[1] == team_id
+        # runs0=away, runs1=home
+        team_runs = r[4] if home else r[3]
+        opp_runs = r[3] if home else r[4]
+        opp_name = r[9] if home else r[8]
+        opp_tid = r[2] if home else r[1]
+        wl = "W" if team_runs > opp_runs else "L"
+        out.append({
+            "date": r[0], "home": home,
+            "opp": opp_name, "opp_tid": opp_tid,
+            "team_runs": team_runs, "opp_runs": opp_runs,
+            "wl": wl,
+            "wp": _pfmt(r[5], r[0], "wl"),
+            "lp": _pfmt(r[6], r[0], "wl"),
+            "sv": _pfmt(r[7], r[0], "sv") if r[7] else "",
+        })
+    return out
+
+
+def get_stat_leaders(team_id):
+    """Top 3 players in key batting/pitching categories for a team."""
+    state = _get_state()
+    year = state["year"]
+    conn = get_db()
+    conn.row_factory = None
+
+    # Team games for MLB qualification thresholds
+    tip = conn.execute("SELECT ip FROM team_pitching_stats WHERE team_id=? AND year=? AND split_id=1",
+                       (team_id, year)).fetchone()
+    team_g = round(tip[0] / 9) if tip and tip[0] else 0
+    pa_qual = round(3.1 * team_g)   # MLB batting: 3.1 PA per team game
+    ip_qual = round(1.0 * team_g)   # MLB pitching: 1.0 IP per team game
+
+    bat_rows = conn.execute("""
+        SELECT b.player_id, p.name, b.ab, b.h, b.hr, b.rbi, b.sb, b.war,
+               b.pa, b.bb, b.d, b.t
+        FROM batting_stats b JOIN players p ON b.player_id = p.player_id
+        WHERE b.year=? AND b.split_id=1 AND b.team_id=?
+    """, (year, team_id)).fetchall()
+
+    pit_rows = conn.execute("""
+        SELECT b.player_id, p.name, b.era, b.ip, b.k, b.war, b.w, b.l, b.sv, b.bb, b.ha
+        FROM pitching_stats b JOIN players p ON b.player_id = p.player_id
+        WHERE b.year=? AND b.split_id=1 AND b.team_id=?
+    """, (year, team_id)).fetchall()
+
+    def top3(rows, key, fmt, low=False):
+        pool = [(r, key(r)) for r in rows if key(r) is not None]
+        pool.sort(key=lambda x: x[1], reverse=not low)
+        return [{"pid": r[0], "name": r[1], "val": fmt(v)} for r, v in pool[:3]]
+
+    pa_ok = lambda r: (r[8] or 0) >= pa_qual
+    ip_ok = lambda r: (r[3] or 0) >= ip_qual
+
+    batting = {
+        "HR":  top3(bat_rows, lambda r: r[4], str),
+        "RBI": top3(bat_rows, lambda r: r[5], str),
+        "AVG": top3(bat_rows, lambda r: r[3]/r[2] if pa_ok(r) and r[2] else None, lambda v: f"{v:.3f}"),
+        "OPS": top3(bat_rows, lambda r: ((r[3]+r[9])/r[8] + (r[3]+r[10]+2*r[11]+3*r[4])/r[2]) if pa_ok(r) and r[2] and r[8] else None,
+                     lambda v: f"{v:.3f}"),
+        "SB":  top3(bat_rows, lambda r: r[6], str),
+        "WAR": top3(bat_rows, lambda r: r[7], lambda v: f"{v:.1f}"),
+    }
+
+    pitching = {
+        "ERA":  top3(pit_rows, lambda r: r[2] if ip_ok(r) else None, lambda v: f"{v:.2f}", low=True),
+        "W":    top3(pit_rows, lambda r: r[6], str),
+        "SV":   top3(pit_rows, lambda r: r[8] if r[8] else None, str),
+        "K":    top3(pit_rows, lambda r: r[4], str),
+        "WHIP": top3(pit_rows, lambda r: (r[9]+r[10])/r[3] if ip_ok(r) and r[3] else None,
+                      lambda v: f"{v:.2f}", low=True),
+        "WAR":  top3(pit_rows, lambda r: r[5], lambda v: f"{v:.1f}"),
+    }
+
+    return {"batting": batting, "pitching": pitching}
+
+def get_farm_depth(team_id):
+    conn = get_db()
+    conn.row_factory = None
+    ed = conn.execute("SELECT MAX(eval_date) FROM prospect_fv").fetchone()[0]
+
+    by_bucket = conn.execute("""
+        SELECT pf.bucket, COUNT(*), COALESCE(SUM(pf.prospect_surplus), 0)
+        FROM prospect_fv pf JOIN players p ON pf.player_id = p.player_id
+        WHERE pf.eval_date=? AND p.parent_team_id=? AND p.level!='1' AND pf.fv >= 40
+        GROUP BY pf.bucket
+    """, (ed, team_id)).fetchall()
+
+    by_level = conn.execute("""
+        SELECT pf.level, COUNT(*)
+        FROM prospect_fv pf JOIN players p ON pf.player_id = p.player_id
+        WHERE pf.eval_date=? AND p.parent_team_id=? AND p.level!='1' AND pf.fv >= 40
+        GROUP BY pf.level
+    """, (ed, team_id)).fetchall()
+
+    mlb_tids = mlb_team_ids()
+    lg = conn.execute("""
+        SELECT p.parent_team_id, SUM(pf.prospect_surplus)
+        FROM prospect_fv pf JOIN players p ON pf.player_id = p.player_id
+        WHERE pf.eval_date=? AND p.level!='1'
+        GROUP BY p.parent_team_id
+    """, (ed,)).fetchall()
+
+    lg_vals = sorted([s for tid, s in lg if s and tid in mlb_tids], reverse=True)
+    team_surplus = sum(s for _, _, s in by_bucket)
+    lg_avg = sum(lg_vals) / len(lg_vals) if lg_vals else 0
+    lg_rank = next((i + 1 for i, v in enumerate(lg_vals) if v <= team_surplus), len(lg_vals))
+
+    buckets = [{"bucket": _display_pos(b), "count": c, "surplus": round(s / 1e6, 1)}
+               for b, c, s in sorted(by_bucket, key=lambda x: -x[2])]
+
+    level_order = {"AAA": 1, "AA": 2, "A": 3, "A-Short": 4, "Rookie": 5, "Intl": 6}
+    levels = [{"level": l, "count": c}
+              for l, c in sorted(by_level, key=lambda x: level_order.get(x[0], 9))]
+
+    return {
+        "buckets": buckets, "levels": levels,
+        "total_surplus": round(team_surplus / 1e6, 1),
+        "lg_avg": round(lg_avg / 1e6, 1),
+        "lg_rank": lg_rank, "lg_n": len(lg_vals),
+    }
+
+
+def _league_pos_rankings(conn, year):
+    """Rank all 34 MLB teams by WAR at each position. Returns {pos: [(team_id, war), ...]}."""
+    from projections import project_war
+    from collections import defaultdict
+
+    team_pos = defaultdict(lambda: defaultdict(list))
+
+    # Position players — primary position = most fielding games
+    seen = set()
+    for r in conn.execute("""
+        SELECT f.player_id, f.team_id, f.position, f.g, r.ovr, r.pot, p.age
+        FROM fielding_stats f
+        JOIN players p ON f.player_id = p.player_id
+        JOIN latest_ratings r ON f.player_id = r.player_id
+        WHERE p.level = 1 AND f.year = ? AND f.position != 1 AND r.league_id > 0
+        ORDER BY f.player_id, f.g DESC
+    """, (year,)).fetchall():
+        if r['player_id'] in seen:
+            continue
+        seen.add(r['player_id'])
+        pos = pos_map().get(r['position'])
+        if pos:
+            team_pos[r['team_id']][pos].append(
+                project_war(r['ovr'], r['pot'], r['age'], 'CF', 0))
+
+    # Pitchers
+    for r in conn.execute("""
+        SELECT p.team_id, p.role, r.ovr, r.pot, p.age
+        FROM pitching_stats ps
+        JOIN players p ON ps.player_id = p.player_id
+        JOIN latest_ratings r ON ps.player_id = r.player_id
+        WHERE p.level = 1 AND ps.year = ? AND ps.split_id = 1 AND r.league_id > 0
+        GROUP BY ps.player_id
+    """, (year,)).fetchall():
+        bucket = 'SP' if r['role'] == 11 else 'RP'
+        team_pos[r['team_id']][bucket].append(
+            project_war(r['ovr'], r['pot'], r['age'], bucket, 0))
+
+    TOP_N = {'C':1,'1B':1,'2B':1,'3B':1,'SS':1,'LF':1,'CF':1,'RF':1,'DH':1,'SP':5,'RP':5}
+    rankings = {}
+    for pos in ['C','1B','2B','3B','SS','LF','CF','RF','SP','RP']:
+        tw = []
+        for tid, pdict in team_pos.items():
+            wars = sorted(pdict.get(pos, []), reverse=True)[:TOP_N[pos]]
+            tw.append((tid, round(sum(wars), 1)))
+        tw.sort(key=lambda x: -x[1])
+        rankings[pos] = tw
+    return rankings
+
+
+def get_depth_chart(team_id):
+    """Build 3-year depth chart for a team.
+
+    Returns dict with 'years' list and 'by_year' dict keyed by year, each containing:
+        positions: {pos: [{pid, name, level, pt_pct, pa, war, ops_plus}, ...]},
+        sp: [{pid, name, level, pt_pct, ip, war, era, fip}, ...],
+        rp: [{pid, name, level, rp_role, pt_pct, ip, war, era, fip}, ...],
+        team_pa, team_ip, total_war, departed (list of names gone since prior year)
+    """
+    import json, math
+    from projections import (
+        project_war, project_ovr, project_ops_plus, project_ops_plus_splits,
+        project_era, project_fip, project_ratings,
+        assign_diamond_positions, allocate_playing_time, allocate_pitcher_time,
+        roster_availability, LEVEL_DISCOUNT, DEFAULT_TEAM_PA, DEFAULT_TEAM_IP,
+    )
+    from player_utils import stat_peak_war, load_stat_history
+    from contract_value import _estimate_control, contract_value as _cv
+    from prospect_value import prospect_surplus as _pv
+
+    state = _get_state()
+    year = state["year"]
+    conn = get_db()
+
+    from web_league_context import league_averages as _load_la
+    lg = _load_la()
+    lg_era = lg["pitching"]["era"]
+    lg_fip = lg["pitching"]["fip"]
+
+    bat_hist, pit_hist, two_way = load_stat_history(conn, state["game_date"])
+
+    # ── Query MLB roster ────────────────────────────────────────────────
+    mlb_rows = conn.execute('''
+        SELECT p.player_id, p.name, p.age, p.role,
+               r.ovr, r.pot,
+               r.cntct, r.gap, r.pow, r.eye,
+               r.cntct_l, r.cntct_r, r.gap_l, r.gap_r,
+               r.pow_l, r.pow_r, r.eye_l, r.eye_r,
+               r.pot_cntct, r.pot_gap, r.pot_pow, r.pot_eye,
+               r.c, r.ss, r.second_b, r.third_b, r.first_b, r.lf, r.cf, r.rf,
+               r.pot_c, r.pot_ss, r.pot_second_b, r.pot_third_b,
+               r.pot_first_b, r.pot_lf, r.pot_cf, r.pot_rf,
+               c.years, c.current_year,
+               c.salary_0, c.salary_1, c.salary_2, c.salary_3, c.salary_4,
+               c.salary_5, c.salary_6, c.salary_7, c.salary_8, c.salary_9,
+               c.salary_10, c.salary_11, c.salary_12, c.salary_13, c.salary_14,
+               c.last_year_team_option, c.last_year_player_option
+        FROM players p
+        JOIN latest_ratings r ON p.player_id = r.player_id
+        JOIN contracts c ON p.player_id = c.player_id
+        WHERE p.team_id = ? AND p.level = 1 AND r.league_id > 0
+    ''', (team_id,)).fetchall()
+
+    # Fielding and batting games for year-1 position assignment
+    fielding = {}
+    for r in conn.execute(
+        'SELECT player_id, position, g FROM fielding_stats '
+        'WHERE team_id=? AND year=? AND position!=1', (team_id, year)
+    ).fetchall():
+        fielding.setdefault(r["player_id"], {})[r["position"]] = r["g"]
+
+    bat_games = {r["player_id"]: r["g"] for r in conn.execute(
+        'SELECT player_id, g FROM batting_stats '
+        'WHERE team_id=? AND year=? AND split_id=1', (team_id, year)
+    ).fetchall()}
+
+    # ── Build MLB player dicts ──────────────────────────────────────────
+    all_players = []
+    for row in mlb_rows:
+        pid, role = row["player_id"], row["role"]
+        bucket = "SP" if role == 11 else ("RP" if role in (12, 13) else "CF")
+        sw = stat_peak_war(pid, bucket, bat_hist, pit_hist, two_way=two_way)
+        war = project_war(row["ovr"], row["pot"], row["age"], bucket, 0, sw)
+
+        if role == 0:
+            ovr_ops = project_ops_plus(row["cntct"], row["gap"], row["pow"], row["eye"])
+            split_ops, vl, vr = project_ops_plus_splits(dict(row))
+        else:
+            ovr_ops, split_ops, vl, vr = 0, 0, 0, 0
+
+        salaries = [row[f"salary_{i}"] or 0 for i in range(15)]
+        ctrl = None
+        if row["years"] == 1:
+            est = _estimate_control(conn, pid, row["age"], salaries[0])
+            if est[0]:
+                ctrl = {"ctrl_years": est[0], "pre_arb_left": est[2] or 0}
+
+        fg = fielding.get(pid)
+        bg = bat_games.get(pid, 0)
+        yr1_pos = assign_diamond_positions(
+            {"role": role, "war_proj": war,
+             **{k: row[k] for k in ("c", "ss", "second_b", "third_b",
+                                     "first_b", "lf", "cf", "rf")}},
+            fg, bg)
+        dh_primary = any(pos == "DH" and w >= 0.5 for pos, w in yr1_pos)
+        primary_pos = max(yr1_pos, key=lambda x: x[1])[0] if yr1_pos else None
+        yr1_positions = {pos for pos, _ in yr1_pos}
+        # Also include positions where current ratings are well above viable
+        # (not just barely qualifying). This lets Rockwell (RF=76) play RF
+        # without letting Gentry (RF=45, barely viable) leak there.
+        from projections import POS_THRESHOLDS
+        for pos, (field, thresh) in POS_THRESHOLDS.items():
+            val = row[field] if field in row.keys() else 0
+            if val >= thresh + 15:  # solidly above threshold
+                yr1_positions.add(pos)
+
+        all_players.append({
+            "player_id": pid, "name": row["name"], "age": row["age"],
+            "level": "MLB", "ovr": row["ovr"], "pot": row["pot"],
+            "bucket": bucket, "war_proj": war, "role": role, "stat_peak": sw,
+            "ovr_ops_plus": ovr_ops, "split_ops_plus": split_ops,
+            "ops_vs_l": vl, "ops_vs_r": vr,
+            # Current + potential positional ratings
+            "c": row["c"], "ss": row["ss"], "second_b": row["second_b"],
+            "third_b": row["third_b"], "first_b": row["first_b"],
+            "lf": row["lf"], "cf": row["cf"], "rf": row["rf"],
+            "pot_c": row["pot_c"], "pot_ss": row["pot_ss"],
+            "pot_second_b": row["pot_second_b"], "pot_third_b": row["pot_third_b"],
+            "pot_first_b": row["pot_first_b"], "pot_lf": row["pot_lf"],
+            "pot_cf": row["pot_cf"], "pot_rf": row["pot_rf"],
+            # Offensive rating potentials for project_ratings
+            "pot_cntct": row["pot_cntct"], "pot_gap": row["pot_gap"],
+            "pot_pow": row["pot_pow"], "pot_eye": row["pot_eye"],
+            "cntct": row["cntct"], "gap": row["gap"],
+            "pow": row["pow"], "eye": row["eye"],
+            # Split ratings
+            "cntct_l": row["cntct_l"], "cntct_r": row["cntct_r"],
+            "gap_l": row["gap_l"], "gap_r": row["gap_r"],
+            "pow_l": row["pow_l"], "pow_r": row["pow_r"],
+            "eye_l": row["eye_l"], "eye_r": row["eye_r"],
+            # Year-1 flags
+            "fielding": fg, "bat_games": bg,
+            "dh_primary": dh_primary, "primary_pos": primary_pos,
+            "yr1_positions": yr1_positions,
+            "contract": {"years": row["years"], "current_year": row["current_year"],
+                         "salaries": salaries,
+                         "team_option": bool(row["last_year_team_option"]),
+                         "player_option": bool(row["last_year_player_option"])},
+            "control": ctrl,
+        })
+
+    # ── Pre-compute WAR curves from surplus model ───────────────────────
+    war_curves = {}  # {player_id: {year: war}}
+    hist = (bat_hist, pit_hist)
+    for p in all_players:
+        cv = _cv(p["player_id"], _conn=conn, _hist=hist)
+        if cv and cv.get("breakdown"):
+            war_curves[p["player_id"]] = {
+                b["year"]: round(b["war_base"], 2) for b in cv["breakdown"]
+            }
+
+    # ── Query org prospects ─────────────────────────────────────────────
+    prospect_rows = conn.execute('''
+        SELECT pf.player_id, p.name, p.age, p.role, pf.fv, pf.level, pf.bucket,
+               r.ovr, r.pot,
+               r.cntct, r.gap, r.pow, r.eye,
+               r.cntct_l, r.cntct_r, r.gap_l, r.gap_r,
+               r.pow_l, r.pow_r, r.eye_l, r.eye_r,
+               r.pot_cntct, r.pot_gap, r.pot_pow, r.pot_eye,
+               r.c, r.ss, r.second_b, r.third_b, r.first_b, r.lf, r.cf, r.rf,
+               r.pot_c, r.pot_ss, r.pot_second_b, r.pot_third_b,
+               r.pot_first_b, r.pot_lf, r.pot_cf, r.pot_rf
+        FROM prospect_fv pf
+        JOIN players p ON pf.player_id = p.player_id
+        JOIN latest_ratings r ON pf.player_id = r.player_id
+        WHERE (p.parent_team_id = ? OR p.team_id = ?)
+          AND pf.level != 'MLB'
+          AND (pf.fv >= 50 OR (pf.fv >= 40 AND pf.level IN ('AAA', 'AA')))
+          AND r.league_id > 0
+          AND pf.eval_date = (SELECT MAX(pf2.eval_date) FROM prospect_fv pf2
+                              WHERE pf2.player_id = pf.player_id)
+        GROUP BY pf.player_id
+    ''', (team_id, team_id)).fetchall()
+
+    # League-wide position rankings (lightweight, ~0.02s)
+    lg_rankings = _league_pos_rankings(conn, year)
+    num_teams = max(len(v) for v in lg_rankings.values()) if lg_rankings else 34
+    pos_rank = {}
+    for pos, tw in lg_rankings.items():
+        for i, (tid, _war) in enumerate(tw):
+            if tid == team_id:
+                pos_rank[pos] = i + 1
+                break
+
+
+    for row in prospect_rows:
+        bucket = row["bucket"]
+        role = 11 if bucket == "SP" else (12 if bucket == "RP" else 0)
+        war = project_war(row["ovr"], row["pot"], row["age"],
+                          bucket if bucket in ("SP", "RP") else "CF", 0)
+        if role == 0:
+            ovr_ops = project_ops_plus(row["cntct"], row["gap"], row["pow"], row["eye"])
+            split_ops, vl, vr = project_ops_plus_splits(dict(row))
+        else:
+            ovr_ops, split_ops, vl, vr = 0, 0, 0, 0
+
+        all_players.append({
+            "player_id": row["player_id"], "name": row["name"], "age": row["age"],
+            "level": row["level"], "ovr": row["ovr"], "pot": row["pot"],
+            "bucket": bucket, "war_proj": war, "role": role, "fv": row["fv"],
+            "ovr_ops_plus": ovr_ops, "split_ops_plus": split_ops,
+            "ops_vs_l": vl, "ops_vs_r": vr,
+            "c": row["c"], "ss": row["ss"], "second_b": row["second_b"],
+            "third_b": row["third_b"], "first_b": row["first_b"],
+            "lf": row["lf"], "cf": row["cf"], "rf": row["rf"],
+            "pot_c": row["pot_c"], "pot_ss": row["pot_ss"],
+            "pot_second_b": row["pot_second_b"], "pot_third_b": row["pot_third_b"],
+            "pot_first_b": row["pot_first_b"], "pot_lf": row["pot_lf"],
+            "pot_cf": row["pot_cf"], "pot_rf": row["pot_rf"],
+            "pot_cntct": row["pot_cntct"], "pot_gap": row["pot_gap"],
+            "pot_pow": row["pot_pow"], "pot_eye": row["pot_eye"],
+            "cntct": row["cntct"], "gap": row["gap"],
+            "pow": row["pow"], "eye": row["eye"],
+            "cntct_l": row["cntct_l"], "cntct_r": row["cntct_r"],
+            "gap_l": row["gap_l"], "gap_r": row["gap_r"],
+            "pow_l": row["pow_l"], "pow_r": row["pow_r"],
+            "eye_l": row["eye_l"], "eye_r": row["eye_r"],
+            "dh_primary": False, "primary_pos": None,
+            "contract": None, "control": None,
+        })
+
+    # ── Pre-compute prospect WAR curves ─────────────────────────────────
+    for p in all_players:
+        if p.get("fv") and p["level"] != "MLB":
+            pv = _pv(p["fv"], p["age"], p["level"], p["bucket"],
+                     ovr=p["ovr"], pot=p["pot"])
+            if pv and pv.get("breakdown"):
+                eta = pv["years_to_mlb"]
+                curve = {}
+                for b in pv["breakdown"]:
+                    cal_year = year + eta + (b["control_year"] - 1)
+                    # Map to integer year (round down — partial years count)
+                    curve[int(cal_year)] = round(b["war"], 2)
+                war_curves[p["player_id"]] = curve
+
+    # ── Roster availability across 3 years ──────────────────────────────
+    avail = roster_availability(all_players, (0, 1, 2))
+
+    LEVEL_ORDER = ["Intl", "Rookie", "A", "A-Short", "AA", "AAA", "MLB"]
+
+    def _promote(level, offset):
+        idx = LEVEL_ORDER.index(level) if level in LEVEL_ORDER else 0
+        return LEVEL_ORDER[min(idx + offset, len(LEVEL_ORDER) - 1)]
+
+    # ── Per-year assembly ───────────────────────────────────────────────
+    by_year = {}
+    prev_names = set()
+
+    for off in (0, 1, 2):
+        yr = year + off
+        pool = avail[off]
+        hitter_entries = []  # (pos, player_dict)
+        sp_pool, rp_pool = [], []
+
+        for p in pool:
+            level = _promote(p["level"], off) if p["level"] != "MLB" else "MLB"
+            discount = LEVEL_DISCOUNT.get(level, 0.1)
+            bucket = p.get("bucket", "CF")
+            pit_bucket = bucket if bucket in ("SP", "RP") else "CF"
+
+            # Project ratings forward for pre-peak players
+            if off > 0:
+                proj_r = project_ratings(p, off, p["age"], pit_bucket)
+            else:
+                proj_r = None
+
+            # Use surplus model WAR curve for MLB players, fall back to project_war
+            cv_war = war_curves.get(p["player_id"], {}).get(yr)
+            if cv_war is not None:
+                war = cv_war
+            else:
+                war = project_war(p["ovr"], p["pot"], p["age"], pit_bucket, off,
+                                  p.get("stat_peak"))
+
+            # Pitchers
+            if p["role"] in (11, 12, 13):
+                era = project_era(p["ovr"], p["pot"], p["age"], bucket, off, lg_era, p.get("stat_peak"))
+                fip = project_fip(p["ovr"], p["pot"], p["age"], bucket, off, lg_fip, p.get("stat_peak"))
+                entry = dict(p, war_proj=war, level_discount=discount,
+                             _level=level, _era=era, _fip=fip)
+                if p["role"] == 11:
+                    sp_pool.append(entry)
+                else:
+                    rp_pool.append(entry)
+                continue
+
+            # Hitters — compute OPS+ from projected ratings if future year
+            if proj_r:
+                ovr_ops = project_ops_plus(proj_r["cntct"], proj_r["gap"],
+                                           proj_r["pow"], proj_r["eye"])
+                # Re-derive splits from projected overall (rough — splits stay proportional)
+                ratio_l = p["ops_vs_l"] / p["ovr_ops_plus"] if p["ovr_ops_plus"] else 1.0
+                ratio_r = p["ops_vs_r"] / p["ovr_ops_plus"] if p["ovr_ops_plus"] else 1.0
+                vl = ovr_ops * ratio_l
+                vr = ovr_ops * ratio_r
+                split_ops = vr * 0.60 + vl * 0.40
+            else:
+                ovr_ops = p["ovr_ops_plus"]
+                split_ops = p["split_ops_plus"]
+                vl, vr = p["ops_vs_l"], p["ops_vs_r"]
+
+            # Position assignment
+            use_pot = off > 0 or level != "MLB"
+            if off == 0 and level == "MLB":
+                positions = assign_diamond_positions(p, p.get("fielding"), p.get("bat_games", 0))
+            else:
+                positions = assign_diamond_positions(p, use_pot=use_pot)
+                # MLB players: constrain to year-1 positions so they don't
+                # suddenly appear at new positions via potential ratings
+                yr1p = p.get("yr1_positions")
+                if yr1p and p.get("level") == "MLB":
+                    positions = [(pos, w) for pos, w in positions if pos in yr1p]
+                    if positions:
+                        wt = sum(w for _, w in positions)
+                        positions = [(pos, w / wt) for pos, w in positions]
+
+            for pos, w in positions:
+                entry = dict(p, pos_weight=w, level_discount=discount,
+                             war_proj=war, _level=level,
+                             ovr_ops_plus=ovr_ops, split_ops_plus=split_ops,
+                             ops_vs_l=vl, ops_vs_r=vr)
+                hitter_entries.append((pos, entry))
+
+        # Allocate playing time
+        players_by_pos = {}
+        for pos, e in hitter_entries:
+            players_by_pos.setdefault(pos, []).append(e)
+        pos_result = allocate_playing_time(players_by_pos)
+
+        # Backfill DH: when the primary DH rests, a field player DHs.
+        # Prefer bat-first players (high OPS+) at non-premium positions.
+        # Elite defenders at CF/SS/C should almost never DH.
+        dh_players = pos_result.get("DH", [])
+        dh_used = sum(p["pt_pct"] for p in dh_players)
+        dh_gap = 100.0 - dh_used
+        if dh_gap > 1.0:
+            # Defensive position penalty: DHing an elite CF wastes his glove
+            _DEF_PEN = {"C": 15, "SS": 12, "CF": 12, "2B": 6, "3B": 4,
+                        "LF": 2, "RF": 2, "1B": 0}
+            field_candidates = []
+            seen = {p["player_id"] for p in dh_players}
+            for fpos in ["1B", "LF", "RF", "3B", "2B", "SS", "CF"]:
+                for p in pos_result.get(fpos, []):
+                    if p["player_id"] not in seen:
+                        seen.add(p["player_id"])
+                        ops = p.get("ovr_ops_plus", 0) or 0
+                        war = p.get("war_proj", 0)
+                        # DH score: bat quality minus defensive opportunity cost
+                        score = ops - _DEF_PEN.get(fpos, 0) * max(war, 0.5)
+                        field_candidates.append((p, fpos, score))
+            field_candidates.sort(key=lambda x: x[2], reverse=True)
+            top = field_candidates[:5]
+            total_s = sum(max(s, 1) for _, _, s in top) or 1
+            pos_pa = DEFAULT_TEAM_PA / 9
+            for p, fpos, score in top:
+                share = dh_gap * max(score, 1) / total_s
+                dh_entry = {k: v for k, v in p.items() if not k.startswith("_")}
+                dh_entry["pt_pct"] = round(share, 1)
+                dh_entry["pa"] = round(pos_pa * share / 100)
+                dh_players.append(dh_entry)
+            pos_result["DH"] = dh_players
+
+        # Allocate pitcher time
+        # SP prospects who can't crack the rotation move to the bullpen.
+        # Sort SP by effective WAR, keep top 5 MLB-caliber starters,
+        # overflow SP prospects become RP candidates.
+        sp_pool.sort(key=lambda x: x["war_proj"] * x.get("level_discount", 1.0),
+                     reverse=True)
+        rotation_size = 5
+        sp_keep, sp_overflow = sp_pool[:rotation_size], sp_pool[rotation_size:]
+        for p in sp_overflow:
+            if p.get("level", "MLB") != "MLB":
+                # Prospect — re-project as RP
+                rp_war = project_war(p["ovr"], p["pot"], p["age"], "RP", off)
+                rp_era = project_era(p["ovr"], p["pot"], p["age"], "RP", off, lg_era)
+                rp_fip = project_fip(p["ovr"], p["pot"], p["age"], "RP", off, lg_fip)
+                rp_entry = dict(p, war_proj=rp_war, _era=rp_era, _fip=rp_fip,
+                                bucket="RP", role=12)
+                rp_pool.append(rp_entry)
+            else:
+                # MLB SP who didn't make top 5 stays as 6th starter / swingman
+                sp_keep.append(p)
+        sp_result, rp_result = allocate_pitcher_time(sp_keep, rp_pool)
+
+        # ── Format output ───────────────────────────────────────────────
+        def _fmt_hitter(p):
+            w = round(p["war_proj"], 1)
+            pt = p["pt_pct"]
+            return {
+                "pid": p["player_id"], "name": p["name"], "age": p["age"] + off,
+                "level": p.get("_level", "MLB"),
+                "pt_pct": pt, "pa": p["pa"],
+                "war": round(w * pt / 100, 1),
+                "full_war": w,
+                "ops_plus": round(p.get("ovr_ops_plus", 0)),
+            }
+
+        def _fmt_pitcher(p):
+            w = round(p["war_proj"], 1)
+            ip = p.get("ip", 0)
+            is_sp = p.get("role") == 11 or p.get("bucket") == "SP"
+            full_ip = 200 if is_sp else 70
+            return {
+                "pid": p["player_id"], "name": p["name"], "age": p["age"] + off,
+                "level": p.get("_level", "MLB"),
+                "pt_pct": p.get("pt_pct", 0), "ip": ip,
+                "war": round(w * min(ip / full_ip, 1.0), 1),
+                "full_war": w,
+                "era": round(p.get("_era", 5.0), 2),
+                "fip": round(p.get("_fip", 5.0), 2),
+                "rp_role": p.get("rp_role", ""),
+            }
+
+        positions = {}
+        pos_war_map = {}
+        for pos in ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"]:
+            players = [_fmt_hitter(p) for p in pos_result.get(pos, [])
+                       if p["pa"] > 0 and round(p.get("pt_pct", 0)) >= 2]
+            positions[pos] = players
+            pos_war_map[pos] = round(sum(p["war"] for p in players), 1)
+
+        sp_fmt = [_fmt_pitcher(p) for p in sp_result if round(p.get("pt_pct", 0)) >= 2]
+        rp_fmt = [_fmt_pitcher(p) for p in rp_result if round(p.get("pt_pct", 0)) >= 2]
+        pos_war_map["SP"] = round(sum(p["war"] for p in sp_fmt), 1)
+        pos_war_map["RP"] = round(sum(p["war"] for p in rp_fmt), 1)
+
+        curr_names = {p["name"] for p in pool}
+        departed = sorted(prev_names - curr_names) if off > 0 else []
+        prev_names = curr_names
+
+        by_year[yr] = {
+            "positions": positions,
+            "pos_war": pos_war_map,
+            "sp": sp_fmt,
+            "rp": rp_fmt,
+            "team_pa": DEFAULT_TEAM_PA,
+            "team_ip": DEFAULT_TEAM_IP,
+            "total_war": round(sum(pos_war_map.values()), 1),
+            "departed": departed,
+        }
+
+    return {"years": [year, year + 1, year + 2], "by_year": by_year,
+            "pos_rank": pos_rank, "num_teams": num_teams}

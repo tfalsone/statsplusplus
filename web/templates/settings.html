@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="settings-page">
+
+  {% if not league_ready %}
+  <div class="panel settings-section" style="border-left: 3px solid #e67e22; background: #2a2218;">
+    <h2 style="color: #e67e22;">⚠ League Setup Incomplete</h2>
+    <p>This league hasn't been refreshed yet — no player data is available. Run a refresh from the Connection section below, or <a href="/onboard">use the onboarding wizard</a>.</p>
+  </div>
+  {% endif %}
+
+  {# ── My Team ── #}
+  <div class="panel settings-section">
+    <h2>My Team</h2>
+    <form method="post">
+      <input type="hidden" name="action" value="set_team">
+      <div class="form-row">
+        <label for="team_id">Highlighted team across the dashboard</label>
+        <select name="team_id" id="team_id">
+          {% for tid, name in teams %}
+          <option value="{{ tid }}"{% if tid == current %} selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit">Save</button>
+      </div>
+    </form>
+  </div>
+
+  {# ── League Identity ── #}
+  <div class="panel settings-section">
+    <h2>League Identity</h2>
+    <form method="post">
+      <input type="hidden" name="action" value="save_identity">
+      <div class="form-grid">
+        <label>League Name</label>
+        <input type="text" name="league_name" value="{{ cfg.settings.league }}" style="width:200px">
+        <label>StatsPlus Slug</label>
+        <input type="text" name="statsplus_slug" value="{{ cfg.settings.statsplus_slug or '' }}" style="width:160px" placeholder="e.g. emlb">
+        <label>Wild Cards / League</label>
+        <input type="number" name="wild_cards_per_league" value="{{ cfg.settings.wild_cards_per_league }}" min="0" max="8" style="width:80px">
+        <label>DH Rule</label>
+        <select name="dh_rule" style="width:200px">
+          {% for opt in ["No DH", "Universal DH", "AL Only DH"] %}
+          <option value="{{ opt }}"{% if cfg.settings.dh_rule == opt %} selected{% endif %}>{{ opt }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" style="margin-top:8px">Save</button>
+    </form>
+  </div>
+
+  {# ── League Structure ── #}
+  <div class="panel settings-section">
+    <h2>League Structure</h2>
+    {% include '_structure_editor.html' %}
+    <details style="margin-top:8px">
+      <summary class="dim" style="cursor:pointer;font-size:0.85em">Raw JSON</summary>
+      <form method="post" style="margin-top:6px">
+        <input type="hidden" name="action" value="save_structure">
+        <textarea name="leagues_json" rows="16" style="width:100%;font-family:monospace;font-size:0.8em;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:6px">{{ leagues_json }}</textarea>
+        {% if structure_error %}<p class="form-error">{{ structure_error }}</p>{% endif %}
+        <button type="submit" style="margin-top:6px">Save Structure</button>
+      </form>
+    </details>
+  </div>
+
+  {# ── Financial ── #}
+  <div class="panel settings-section">
+    <h2>Financial Settings</h2>
+    <form method="post">
+      <input type="hidden" name="action" value="save_financial">
+      <div class="form-grid">
+        <label>Minimum Salary</label>
+        <input type="number" name="minimum_salary" value="{{ cfg.minimum_salary }}" style="width:120px">
+        <label>Pythagorean Exponent</label>
+        <input type="number" name="pyth_exp" value="{{ cfg.pyth_exp }}" step="0.01" style="width:100px">
+      </div>
+      <button type="submit" style="margin-top:8px">Save</button>
+    </form>
+  </div>
+
+  {# ── Connection ── #}
+  <div class="panel settings-section">
+    <h2>Connection</h2>
+    <form method="post">
+      <input type="hidden" name="action" value="save_cookie">
+      <div class="form-grid">
+        <label>Session ID</label>
+        <input type="text" name="session_id" id="session-id-input" value="{{ session_id }}" style="width:400px" placeholder="Paste sessionid value">
+        <label>CSRF Token <span class="dim">(optional)</span></label>
+        <input type="text" name="csrf_token" id="csrf-token-input" value="{{ csrf_token }}" style="width:400px" placeholder="Paste csrftoken value">
+      </div>
+      <div style="margin-top:8px; display:flex; gap:8px; align-items:center">
+        <button type="submit">Save</button>
+        <button type="button" id="test-conn-btn" onclick="testConnection()">Test Connection</button>
+        <span id="test-conn-result" class="dim"></span>
+      </div>
+    </form>
+    <details style="margin-top:12px">
+      <summary class="dim" style="cursor:pointer">Where do I find these?</summary>
+      <div style="margin-top:8px; padding:12px; background:#1a1a2e; border-radius:6px; font-size:0.9em; line-height:1.6">
+        <ol style="margin:0; padding-left:20px">
+          <li>Open <a href="https://statsplus.net" target="_blank">statsplus.net</a> and <strong>log in</strong>.</li>
+          <li>Press <kbd>F12</kbd> to open DevTools.</li>
+          <li>Go to <strong>Application</strong> (Chrome) or <strong>Storage</strong> (Firefox).</li>
+          <li>Expand <strong>Cookies</strong> → click <strong>https://statsplus.net</strong>.</li>
+          <li>Copy the <strong>Value</strong> for <code>sessionid</code> and <code>csrftoken</code>.</li>
+        </ol>
+        <p style="margin:8px 0 0; color:#888">Session cookies expire periodically. If refreshes start failing, repeat these steps to get a fresh cookie.</p>
+      </div>
+    </details>
+    <div class="settings-info" style="margin-top:8px">
+      <span class="dim">Last refresh:</span> {{ state.get('last_updated', 'Never') }}<br>
+      <span class="dim">Game date:</span> {{ state.game_date }}<br>
+      <span class="dim">Season:</span> {{ state.year }}
+    </div>
+  </div>
+  <script>
+  function testConnection() {
+    const btn = document.getElementById('test-conn-btn');
+    const result = document.getElementById('test-conn-result');
+    btn.disabled = true;
+    result.textContent = 'Testing...';
+    result.style.color = '#888';
+    let cookie = 'sessionid=' + document.getElementById('session-id-input').value;
+    const csrf = document.getElementById('csrf-token-input').value;
+    if (csrf) cookie += ';csrftoken=' + csrf;
+    fetch('/api/test-connection', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cookie: cookie})
+    }).then(r => r.json()).then(data => {
+      if (data.ok) {
+        result.textContent = '✓ Connected — game date: ' + data.game_date;
+        result.style.color = '#4caf50';
+      } else {
+        result.textContent = '✗ ' + (data.error || 'Connection failed');
+        result.style.color = '#e74c3c';
+      }
+    }).catch(() => {
+      result.textContent = '✗ Request failed';
+      result.style.color = '#e74c3c';
+    }).finally(() => { btn.disabled = false; });
+  }
+  function wipeLeague(slug, label) {
+    if (!confirm('Are you sure you want to wipe ' + label + '?\n\nThis will permanently delete all data, settings, history, and reports. This cannot be undone.')) return;
+    fetch('/api/wipe-league', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(slug ? {slug} : {})
+    }).then(r => r.json()).then(data => {
+      if (data.ok) window.location.href = data.redirect;
+      else alert('Wipe failed: ' + (data.error || 'Unknown error'));
+    }).catch(() => alert('Wipe request failed'));
+  }
+  </script>
+
+  {# ── Data Management ── #}
+  <div class="panel settings-section">
+    <h2>Data</h2>
+    <table class="settings-counts">
+      <tbody>
+        {% for tbl, n in counts.items() %}
+        <tr><td class="dim">{{ tbl }}</td><td>{{ n|string }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div style="margin-top:16px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.06)">
+      <h3 style="color:#e74c3c; margin:0 0 8px; font-size:0.95em">Danger Zone</h3>
+      <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center">
+        {% for lg in league_list %}
+        <button type="button" class="btn-danger" onclick="wipeLeague('{{ lg.slug }}', '{{ lg.name }}')">
+          Wipe {{ lg.name }}
+        </button>
+        {% endfor %}
+        {% if league_list|length > 1 %}
+        <button type="button" class="btn-danger btn-danger-all" onclick="wipeLeague(null, 'ALL leagues')">
+          Wipe All Leagues
+        </button>
+        {% endif %}
+      </div>
+      <p class="dim" style="margin:6px 0 0; font-size:0.8em">Removes the database, settings, history, and reports for the selected league. This cannot be undone.</p>
+    </div>
+  </div>
+
+  {# ── Add League ── #}
+  <div class="panel settings-section">
+    <a href="/onboard" class="nav-btn" style="text-decoration:none">+ Add Another League</a>
+  </div>
+
+</div>
+{% endblock %}

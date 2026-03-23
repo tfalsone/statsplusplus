@@ -1,0 +1,488 @@
+"""Percentile ranking for hitters and pitchers against the qualified pool."""
+
+import os, sys, json
+
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(BASE, "scripts"))
+from web_league_context import get_db, get_cfg
+
+# ── constants ────────────────────────────────────────────────────────────
+
+HITTER_PCTILE_STATS = [
+    ("avg", "AVG", False),
+    ("obp", "OBP", False),
+    ("slg", "SLG", False),
+    ("ops", "OPS", False),
+    ("iso", "ISO", False),
+    ("bb_pct", "BB%", False),
+    ("so_pct", "K%", True),
+    ("babip", "BABIP", False),
+    ("war", "WAR", False),
+]
+
+HITTER_TAG_MAP = {
+    "AVG":  ("avg",    "cntct", False, False),
+    "ISO":  ("iso",    "pow",   False, False),
+    "BB%":  ("bb_pct", "eye",   False, False),
+    "K%":   ("so_pct", "ks",    True,  False),
+}
+
+PITCHER_PCTILE_STATS = [
+    ("era", "ERA", True),
+    ("fip", "FIP", True),
+    ("siera", "SIERA", True),
+    ("era_plus", "ERA+", False),
+    ("k9", "K/9", False),
+    ("bb9", "BB/9", True),
+    ("hr9", "HR/9", True),
+    ("babip", "BABIP", True),
+    ("war", "WAR", False),
+]
+
+PITCHER_TAG_MAP = {
+    "K/9":  ("k9",  "stf",  False, False),
+    "BB/9": ("bb9", "ctrl", True,  False),
+}
+
+# ── helpers ──────────────────────────────────────────────────────────────
+
+def _tag_threshold(r_pctile):
+    room = min(r_pctile, 100 - r_pctile)
+    return max(15, min(25, round(room * 0.6)))
+
+def _pctile(val, all_vals):
+    below = sum(1 for v in all_vals if v < val)
+    n = len(all_vals)
+    return round(below / (n - 1) * 100) if n > 1 else 50
+
+
+def _est_team_games(conn, year):
+    """Estimate team games played from max team PA (≈38 PA/game)."""
+    row = conn.execute(
+        "SELECT MAX(pa) FROM team_batting_stats WHERE split_id=1 AND year=?", (year,)
+    ).fetchone()
+    return round((row[0] or 0) / 38) or 1
+
+
+def _expected_range(expected, pa_or_ip, qualifier):
+    """Half-width of expected range band, scaled by sample size.
+
+    ±12 percentile points at the qualifier threshold, narrowing as
+    sqrt(qualifier / sample).  Clamped so the band stays within 0-100.
+    """
+    if expected is None:
+        return None
+    import math
+    half = 12 * math.sqrt(qualifier / max(pa_or_ip, 1))
+    half = min(half, 25)  # cap so early-season doesn't blow out
+    lo = max(0, round(expected - half))
+    hi = min(100, round(expected + half))
+    return (lo, hi)
+
+# BABIP model: regression coefficients from 1311 player-seasons (2028-2032)
+# BABIP ≈ 0.2276 + 0.001178 * cntct + 0.000228 * speed
+_BABIP_B0, _BABIP_B1, _BABIP_B2 = 0.2276, 0.001178, 0.000228
+
+def _babip_expected(pid, cntct, speed, conn, year, babip_rating=None):
+    """Expected BABIP from ratings. Uses the BABIP rating directly when available,
+    otherwise falls back to the contact+speed regression model."""
+    if babip_rating is not None:
+        # BABIP rating is 1-100 scale. Convert to expected stat-line BABIP.
+        # League average BABIP ≈ .300, rating 50 = average.
+        # Scale: each point ≈ 0.002 BABIP (50 → .300, 70 → .340, 30 → .260)
+        model_babip = 0.200 + babip_rating * 0.002
+    else:
+        model_babip = _BABIP_B0 + _BABIP_B1 * cntct + _BABIP_B2 * speed
+    # Historical residual: average (actual - model) over prior qualifying seasons
+    rows = conn.execute("""
+        SELECT b.h, b.hr, b.ab, b.k, b.sf, r.cntct, r.speed
+        FROM batting_stats b JOIN latest_ratings r ON b.player_id = r.player_id
+        WHERE b.player_id=? AND b.split_id=1 AND b.ab>=200 AND b.year<? AND b.year>=?
+    """, (pid, year, year - 5)).fetchall()
+    if len(rows) >= 2:
+        resids = []
+        for h, hr, ab, k, sf, rc, rs in rows:
+            denom = ab - k - hr + (sf or 0)
+            if denom <= 0:
+                continue
+            actual = (h - hr) / denom
+            pred = _BABIP_B0 + _BABIP_B1 * (rc or 0) + _BABIP_B2 * (rs or 0)
+            resids.append(actual - pred)
+        if len(resids) >= 2:
+            model_babip += sum(resids) / len(resids)
+    return model_babip
+
+
+# ── hitter percentiles ───────────────────────────────────────────────────
+
+def get_hitter_percentiles(pid, split_id=1):
+    conn = get_db()
+    conn.row_factory = None
+    year = get_cfg().year
+    games = _est_team_games(conn, year)
+    min_pa = max(round(2.0 * games), 30) if split_id == 1 else 20
+
+    # Use split-specific ratings for L/R expected percentiles
+    if split_id == 2:    # vs L
+        rcols = "r.cntct_l, r.pow_l, r.eye_l, r.ks_l"
+    elif split_id == 3:  # vs R
+        rcols = "r.cntct_r, r.pow_r, r.eye_r, r.ks_r"
+    else:
+        rcols = "r.cntct, r.pow, r.eye, r.ks"
+
+    q = ("SELECT b.player_id, b.ab, b.h, b.d, b.t, b.hr, b.bb, b.k, b.pa, b.war, b.hbp, b.sf, "
+         f"{rcols}, r.speed "
+         "FROM batting_stats b JOIN latest_ratings r ON b.player_id=r.player_id "
+         "WHERE b.year=? AND b.split_id=? AND b.pa>=?")
+    rows = conn.execute(q, (year, split_id, min_pa)).fetchall()
+
+    qualified = True
+    player_row = None
+    if pid not in {r[0] for r in rows}:
+        player_row = conn.execute(
+            q.replace("b.pa>=?", "b.player_id=?"), (year, split_id, pid)
+        ).fetchone()
+        qualified = False
+
+    # Compute expected BABIP before closing (needs conn for historical residual)
+    _pc = conn.execute(
+        "SELECT cntct, speed, babip FROM ratings WHERE player_id=? ORDER BY snapshot_date DESC LIMIT 1",
+        (pid,)).fetchone()
+    exp_babip = _babip_expected(pid, _pc[0] or 0, _pc[1] or 0, conn, year, _pc[2]) if _pc else None
+    conn.close()
+
+    if not rows:
+        return None
+
+    def _parse(r):
+        _, ab, h, d, t, hr, bb, k, pa, war, hbp, sf, cntct, pw, eye, ks, speed = r
+        hbp = hbp or 0; sf = sf or 0
+        if not ab:
+            return None, None, 0
+        obp = (h + bb + hbp) / (ab + bb + hbp + sf) if (ab + bb + hbp + sf) else 0
+        slg = (h + d + 2 * t + 3 * hr) / ab
+        stats = {
+            "avg": h / ab, "obp": obp, "slg": slg, "ops": obp + slg,
+            "iso": slg - h / ab,
+            "bb_pct": bb / pa * 100 if pa else 0,
+            "so_pct": k / pa * 100 if pa else 0,
+            "babip": (h - hr) / (ab - k - hr + sf) if (ab - k - hr + sf) > 0 else 0,
+            "war": war or 0,
+        }
+        rats = {"cntct": cntct or 0, "pow": pw or 0, "eye": eye or 0, "ks": ks or 0, "speed": speed or 0}
+        return stats, rats, pa
+
+    pool, ratings_pool = {}, {}
+    player_pa = 0
+    for r in rows:
+        s, rt, pa = _parse(r)
+        if s:
+            pool[r[0]] = s
+            ratings_pool[r[0]] = rt
+            if r[0] == pid:
+                player_pa = pa
+
+    if not qualified:
+        if not player_row:
+            return None
+        s, rt, pa = _parse(player_row)
+        if not s:
+            return None
+        pool[pid] = s
+        ratings_pool[pid] = rt
+        player_pa = pa
+
+    if pid not in pool:
+        return None
+
+    player = pool[pid]
+    player_rat = ratings_pool[pid]
+    rat_vals = {k: [ratings_pool[p][k] for p in pool] for k in ("cntct", "pow", "eye", "ks")}
+    cntct_pctile = _pctile(player_rat["cntct"], rat_vals["cntct"])
+
+    result = []
+    for key, label, inverted in HITTER_PCTILE_STATS:
+        if key == "war" and split_id != 1:
+            continue
+        val = player[key]
+        pctile = _pctile(val, [pool[p][key] for p in pool])
+        if inverted:
+            pctile = 100 - pctile
+
+        tag = None
+        expected = None
+        if qualified:
+            if label in HITTER_TAG_MAP:
+                sk, rk, s_inv, r_inv = HITTER_TAG_MAP[label]
+                r_pctile = _pctile(player_rat[rk], rat_vals[rk])
+                expected = r_pctile
+                gap = pctile - r_pctile
+                thresh = _tag_threshold(r_pctile)
+                tag = "hot" if gap >= thresh else ("cold" if gap <= -thresh else None)
+            elif label == "BABIP":
+                if exp_babip is not None:
+                    babip_vals = [pool[p]["babip"] for p in pool]
+                    expected = _pctile(exp_babip, babip_vals)
+                else:
+                    expected = cntct_pctile
+                gap = pctile - expected
+                thresh = _tag_threshold(expected)
+                tag = "lucky" if gap >= thresh else ("unlucky" if gap <= -thresh else None)
+
+        result.append({"label": label, "value": val, "pctile": pctile, "tag": tag,
+                       "qualified": qualified, "expected": expected,
+                       "expected_range": _expected_range(expected, player_pa, min_pa),
+                       "fmt": ".1f" if "pct" in key else (".1f" if label == "WAR" else ".3f")})
+    return result
+
+# ── pitcher percentiles ──────────────────────────────────────────────────
+
+def get_pitcher_percentiles(pid, split_id=1):
+    conn = get_db()
+    conn.row_factory = None
+    year = get_cfg().year
+    games = _est_team_games(conn, year)
+    min_ip = max(round(0.5 * games), 5) if split_id == 1 else 5
+
+    from web_league_context import league_averages as _load_la
+    lg_era = _load_la()["pitching"]["era"]
+
+    tp = conn.execute(
+        "SELECT SUM(era*ip)/SUM(ip), SUM(hra), SUM(bb), SUM(k), SUM(ip) "
+        "FROM team_pitching_stats WHERE split_id=1"
+    ).fetchone()
+    fip_const = (tp[0] - ((13 * tp[1] + 3 * tp[2] - 2 * tp[3]) / tp[4])) if tp and tp[4] else 3.1
+
+    # Use split-specific ratings for L/R expected percentiles
+    if split_id == 2:    # vs L batters
+        rcols = "r.stf_l, r.mov_l, r.ctrl_l, r.ctrl_l, r.hra_l, r.pbabip_l"
+    elif split_id == 3:  # vs R batters
+        rcols = "r.stf_r, r.mov_r, r.ctrl_r, r.ctrl_r, r.hra_r, r.pbabip_r"
+    else:
+        rcols = "r.stf, r.mov, r.ctrl, r.ctrl, r.hra, r.pbabip"
+
+    q = ("SELECT ps.player_id, ps.ip, ps.era, ps.k, ps.bb, ps.ha, ps.war, ps.hra, ps.bf, ps.hp, "
+         f"{rcols} "
+         "FROM pitching_stats ps JOIN latest_ratings r ON ps.player_id=r.player_id "
+         "WHERE ps.year=? AND ps.split_id=? AND ps.ip>=?")
+    rows = conn.execute(q, (year, split_id, min_ip)).fetchall()
+
+    qualified = True
+    player_row = None
+    if pid not in {r[0] for r in rows}:
+        player_row = conn.execute(
+            q.replace("ps.ip>=?", "ps.player_id=?"), (year, split_id, pid)
+        ).fetchone()
+        qualified = False
+    conn.close()
+
+    if not rows:
+        return None
+
+    def _parse(r):
+        _, ip, era, k, bb, ha, war, hra, bf, hp, stf, mov, ctrl_r, ctrl_l, hra_rat, pbabip_rat = r
+        hra = hra or 0; bf = bf or 0; hp = hp or 0; ha = ha or 0
+        if not ip:
+            return None, None, 0
+        k9 = k * 9 / ip
+        bb9 = bb * 9 / ip
+        hr9 = hra * 9 / ip
+        fip = (13 * hra + 3 * (bb + hp) - 2 * k) / ip + fip_const
+        era_plus = round(lg_era / era * 100) if era else 0
+        babip_d = bf - k - hra - bb - hp
+        babip = (ha - hra) / babip_d if babip_d > 0 else 0
+        k_pct = k / bf if bf else 0
+        bb_pct = bb / bf if bf else 0
+        siera = (6.145 - 16.986 * k_pct + 11.434 * bb_pct
+                 + 7.653 * k_pct**2 + 6.664 * bb_pct**2 + 0.9) if bf else 0
+        stats = {
+            "era": era or 99, "fip": fip, "siera": siera, "era_plus": era_plus,
+            "k9": k9, "bb9": bb9, "hr9": hr9, "babip": babip, "war": war or 0,
+        }
+        ctrl = round(((ctrl_r or 0) + (ctrl_l or 0)) / 2)
+        rats = {"stf": stf or 0, "mov": mov or 0, "ctrl": ctrl,
+                "hra": hra_rat, "pbabip": pbabip_rat}
+        return stats, rats, ip
+
+    pool, ratings_pool = {}, {}
+    player_ip = 0
+    for r in rows:
+        s, rt, ip = _parse(r)
+        if s:
+            pool[r[0]] = s
+            ratings_pool[r[0]] = rt
+            if r[0] == pid:
+                player_ip = ip
+
+    if not qualified:
+        if not player_row:
+            return None
+        s, rt, ip = _parse(player_row)
+        if not s:
+            return None
+        pool[pid] = s
+        ratings_pool[pid] = rt
+        player_ip = ip
+
+    if pid not in pool:
+        return None
+
+    player = pool[pid]
+    player_rat = ratings_pool[pid]
+    rat_vals = {k: [ratings_pool[p][k] for p in pool] for k in ("stf", "mov", "ctrl")}
+    # Extended ratings: hra and pbabip (None when league doesn't have them)
+    _has_hra = player_rat.get("hra") is not None
+    _has_pbabip = player_rat.get("pbabip") is not None
+    if _has_hra:
+        rat_vals["hra"] = [ratings_pool[p].get("hra") or 0 for p in pool]
+    if _has_pbabip:
+        rat_vals["pbabip"] = [ratings_pool[p].get("pbabip") or 0 for p in pool]
+
+    result = []
+    _skip_splits = {"war", "era_plus", "siera"}
+    for key, label, inverted in PITCHER_PCTILE_STATS:
+        if key in _skip_splits and split_id != 1:
+            continue
+        val = player[key]
+        pctile = _pctile(val, [pool[p][key] for p in pool])
+        if inverted:
+            pctile = 100 - pctile
+
+        tag = None
+        expected = None
+        if qualified:
+            if label == "HR/9":
+                rk = "hra" if _has_hra else "mov"
+                r_pctile = _pctile(player_rat.get(rk) or 0, rat_vals[rk])
+                expected = r_pctile
+                gap = pctile - r_pctile
+                thresh = _tag_threshold(r_pctile)
+                tag = "hot" if gap >= thresh else ("cold" if gap <= -thresh else None)
+            elif label == "BABIP":
+                rk = "pbabip" if _has_pbabip else "mov"
+                r_pctile = _pctile(player_rat.get(rk) or 0, rat_vals[rk])
+                expected = r_pctile
+                gap = pctile - r_pctile
+                thresh = _tag_threshold(r_pctile)
+                tag = "lucky" if gap >= thresh else ("unlucky" if gap <= -thresh else None)
+            elif label in PITCHER_TAG_MAP:
+                sk, rk, s_inv, r_inv = PITCHER_TAG_MAP[label]
+                r_pctile = _pctile(player_rat[rk], rat_vals[rk])
+                expected = r_pctile
+                gap = pctile - r_pctile
+                thresh = _tag_threshold(r_pctile)
+                tag = "hot" if gap >= thresh else ("cold" if gap <= -thresh else None)
+
+        fmt = "d" if key == "era_plus" else (".1f" if key in ("k9", "bb9", "hr9") else ".2f" if key in ("era", "fip", "siera") else ".3f")
+        result.append({"label": label, "value": val, "pctile": pctile, "tag": tag,
+                       "qualified": qualified, "expected": expected,
+                       "expected_range": _expected_range(expected, player_ip, min_ip),
+                       "fmt": fmt})
+    return result
+
+
+# ── fielding percentiles ─────────────────────────────────────────────────
+
+_POS_NAMES = {2: "C", 3: "1B", 4: "2B", 5: "3B", 6: "SS", 7: "LF", 8: "CF", 9: "RF"}
+
+def get_fielding_percentiles(pid):
+    """Return fielding percentiles per position the player has played.
+
+    Returns a list of dicts: [{pos, stats: [{label, value, pctile, ...}], qualified}]
+    """
+    conn = get_db()
+    conn.row_factory = None
+    year = get_cfg().year
+    games = _est_team_games(conn, year)
+    min_ip = max(round(1.0 * games), 15)
+
+    # Player's positions and ratings this year
+    player_rows = conn.execute(
+        "SELECT f.position, f.g, f.ip, f.tc, f.a, f.po, f.e, f.zr, f.framing, f.arm, "
+        "       r.ifr, r.ofr, r.ife, r.ofe, r.c_arm, r.c_blk, r.c_frm "
+        "FROM fielding_stats f "
+        "JOIN latest_ratings r ON f.player_id = r.player_id "
+        "WHERE f.player_id=? AND f.year=? AND f.position > 1",
+        (pid, year)).fetchall()
+    if not player_rows:
+        conn.close()
+        return None
+
+    results = []
+    for prow in player_rows:
+        pos, g, ip, tc, a, po, e, zr, framing, arm, ifr, ofr, ife, ofe, c_arm, c_blk, c_frm = prow
+        if g == 0:
+            continue
+        fpct = (po + a) / tc if tc else 0
+
+        qualified = ip >= min_ip
+
+        # Build pool with ratings for expected percentiles
+        pool_rows = conn.execute(
+            "SELECT f.player_id, f.ip, f.tc, f.a, f.po, f.e, f.zr, f.framing, f.arm, "
+            "       r.ifr, r.ofr, r.ife, r.ofe, r.c_arm, r.c_blk, r.c_frm "
+            "FROM fielding_stats f "
+            "JOIN latest_ratings r ON f.player_id = r.player_id "
+            "WHERE f.year=? AND f.position=? AND f.ip>=? "
+            "GROUP BY f.player_id",
+            (year, pos, min_ip)).fetchall()
+
+        if not pool_rows:
+            continue
+
+        # Rating composites by position for ZR expected
+        def _zr_composite(r_ifr, r_ofr, r_ife, r_ofe, r_c_arm, r_c_blk):
+            if pos in (3, 4, 5, 6):  # infielders: range 70%, error 30%
+                return (r_ifr or 0) * 0.7 + (r_ife or 0) * 0.3
+            elif pos in (7, 8, 9):   # outfielders: range dominant
+                return (r_ofr or 0)
+            elif pos == 2:           # catchers: range + arm + blocking
+                return ((r_ifr or 0) * 0.35 + (r_c_arm or 0) * 0.35 + (r_c_blk or 0) * 0.3)
+            return 0
+
+        def _framing_composite(r_c_frm, r_c_blk):
+            return (r_c_frm or 0) * 0.7 + (r_c_blk or 0) * 0.3
+
+        pool_fpct = [(r[3] + r[4]) / r[2] if r[2] else 0 for r in pool_rows]
+        pool_zr = [r[6] for r in pool_rows if r[6] is not None]
+        pool_zr_comp = [_zr_composite(r[9], r[10], r[11], r[12], r[13], r[14]) for r in pool_rows if r[6] is not None]
+        pool_arm = [r[8] for r in pool_rows if r[8] is not None]
+        pool_framing = [r[7] for r in pool_rows if r[7] is not None]
+        pool_frm_comp = [_framing_composite(r[15], r[14]) for r in pool_rows if r[7] is not None]
+
+        player_zr_comp = _zr_composite(ifr, ofr, ife, ofe, c_arm, c_blk)
+        player_frm_comp = _framing_composite(c_frm, c_blk)
+
+        def _stat_entry(label, value, pool_vals, fmt, rating_comp=None, pool_comps=None):
+            if not pool_vals:
+                return None
+            all_vals = pool_vals + ([value] if not qualified else [])
+            all_comps = (pool_comps or []) + ([rating_comp] if not qualified and pool_comps is not None else [])
+            pctile = _pctile(value, all_vals)
+            expected = None
+            exp_range = None
+            if qualified and rating_comp is not None and pool_comps:
+                expected = _pctile(rating_comp, all_comps)
+                exp_range = _expected_range(expected, ip, min_ip)
+            return {"label": label, "value": value, "pctile": pctile, "fmt": fmt,
+                    "qualified": qualified, "tag": None, "expected": expected, "expected_range": exp_range}
+
+        stats = [_stat_entry("FPCT", fpct, pool_fpct, ".3f")]
+        zr_entry = _stat_entry("ZR", zr or 0, pool_zr, ".1f", player_zr_comp, pool_zr_comp)
+        if zr_entry:
+            stats.append(zr_entry)
+        if pos in (7, 8, 9):
+            arm_entry = _stat_entry("Arm", arm or 0, pool_arm, ".1f")
+            if arm_entry:
+                stats.append(arm_entry)
+        if pos == 2:
+            frm_entry = _stat_entry("Framing", framing or 0, pool_framing, ".1f", player_frm_comp, pool_frm_comp)
+            if frm_entry:
+                stats.append(frm_entry)
+
+        stats = [s for s in stats if s is not None]
+        if stats:
+            results.append({"pos": _POS_NAMES.get(pos, str(pos)), "stats": stats, "qualified": qualified})
+
+    conn.close()
+    return results if results else None

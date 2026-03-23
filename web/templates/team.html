@@ -1,0 +1,926 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 class="page-title">{{ team_name }} <a href="{{ statsplus_base }}/team/{{ tid }}" target="_blank" class="ext-link" title="View on StatsPlus">↗</a></h1>
+
+{# ── Summary Bar — KPI Cards ── #}
+<div class="summary-bar">
+  <div class="summary-item">
+    <span class="label">Game Date</span>
+    <span class="value">{{ summary.game_date }}</span>
+  </div>
+  <div class="summary-item kpi-accent">
+    <span class="label">MLB Surplus</span>
+    <span class="value {{ 'pos' if summary.mlb_surplus > 0 else 'neg' if summary.mlb_surplus < 0 else '' }}">${{ summary.mlb_surplus }}M</span>
+  </div>
+  <div class="summary-item kpi-accent">
+    <span class="label">Farm Surplus</span>
+    <span class="value {{ 'pos' if summary.farm_surplus > 0 else 'neg' if summary.farm_surplus < 0 else '' }}">${{ summary.farm_surplus }}M</span>
+  </div>
+  <div class="summary-item">
+    <span class="label">FV 50+</span>
+    <span class="value">{{ summary.fv50_count }}</span>
+  </div>
+  <div class="summary-item">
+    <span class="label">Payroll</span>
+    <span class="value">${{ "%.0f"|format(payroll / 1000000) }}M</span>
+  </div>
+  <div class="summary-item">
+    <span class="label">Roster</span>
+    <span class="value">{{ roster_summary.SP.count }}SP · {{ roster_summary.RP.count }}RP · {{ roster_summary.Pos.count }}Pos</span>
+  </div>
+  {% if record %}
+  <div class="summary-item {{ 'kpi-win' if record.streak[0] == 'W' else 'kpi-loss' }}">
+    <span class="label">Streak</span>
+    <span class="value {{ 'pos' if record.streak[0] == 'W' else 'neg' }}">{{ record.streak }}</span>
+  </div>
+  {% endif %}
+</div>
+
+{% macro stat_row(label, s, fmt) %}
+<tr>
+  <td>{{ label }}</td>
+  <td>{% if fmt == "pct" %}{{ "%.3f"|format(s.val) }}{% elif fmt == "rate" %}{{ "%.1f"|format(s.val) }}%{% elif fmt == "dec2" %}{{ "%.2f"|format(s.val) }}{% elif fmt == "int" %}{{ s.val }}{% endif %}</td>
+  <td class="rank-cell">
+    {%- set r = s.rank -%}
+    {%- set pct = (((s.n - r) * 100 / (s.n - 1)) * 0.85)|round|int -%}
+    <span class="rank-track">
+    {%- if r <= 5 -%}<span class="rank-bar" style="width:{{ pct }}%;background:#50b4ff"></span><span class="rank-pill rank-elite">{{ r }}</span>
+    {%- elif r <= 12 -%}<span class="rank-bar" style="width:{{ pct }}%;background:#7ec8ff"></span><span class="rank-pill rank-good">{{ r }}</span>
+    {%- elif r <= 22 -%}<span class="rank-bar" style="width:{{ pct }}%;background:#8a8a9a"></span><span class="rank-pill rank-mid">{{ r }}</span>
+    {%- elif r <= 29 -%}<span class="rank-bar" style="width:{{ pct }}%;background:#ffa03c"></span><span class="rank-pill rank-poor">{{ r }}</span>
+    {%- else -%}<span class="rank-bar" style="width:{{ pct }}%;background:#ff5050"></span><span class="rank-pill rank-bad">{{ r }}</span>
+    {%- endif -%}
+    </span>
+  </td>
+</tr>
+{% endmacro %}
+
+{# ── Tabs ── #}
+<div class="tab-bar">
+  <button class="tab active" data-tab="main">Main</button>
+  <button class="tab" data-tab="depth">Depth Chart</button>
+  <button class="tab" data-tab="hitters">Hitters</button>
+  <button class="tab" data-tab="pitchers">Pitchers</button>
+  <button class="tab" data-tab="contracts">Contracts</button>
+  <button class="tab" data-tab="finances">Finances</button>
+  <button class="tab" data-tab="dev">Player Development</button>
+</div>
+
+{# ══════ Main ══════ #}
+<div class="tab-content active" id="tab-main">
+  <div class="main-columns">
+    {# ── Left column: Standings + Record + Recent Games ── #}
+    <div class="main-col">
+      <div class="panel">
+        <h2>{{ div_name }} Standings</h2>
+        <table>
+          <thead>
+            <tr>
+              <th data-sort="num">#</th><th data-sort="str" class="left">Team</th><th data-sort="num">W</th><th data-sort="num" data-sort-best="low">L</th>
+              <th data-sort="num">Pct</th><th data-sort="num" data-sort-best="low">GB</th><th data-sort="num">RS</th><th data-sort="num" data-sort-best="low">RA</th><th data-sort="num">Diff</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in standings %}
+            <tr{% if r.tid == tid %} class="highlight"{% endif %}>
+              <td>{{ r.rank }}</td>
+              <td><a class="team-link" href="/team/{{ r.tid }}">{{ r.name }}</a></td>
+              <td>{{ r.w }}</td>
+              <td>{{ r.l }}</td>
+              <td>{{ "%.3f"|format(r.pct) }}</td>
+              <td>{{ r.gb }}</td>
+              <td>{{ r.rs }}</td>
+              <td>{{ r.ra }}</td>
+              <td>{% if r.diff > 0 %}+{% endif %}{{ r.diff }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if record %}
+      <div class="panel">
+        <h2>Record Breakdown</h2>
+        <table class="record-breakdown">
+          <thead><tr><th class="left">Split</th><th>W</th><th>L</th><th>Pct</th></tr></thead>
+          <tbody>
+            {% for label, wl in [("Overall", record.overall), ("Home", record.home), ("Away", record.away), ("vs Division", record.vs_div), ("1-Run Games", record.one_run), ("Last 10", record.l10)] %}
+            <tr>
+              <td class="left">{{ label }}</td><td>{{ wl[0] }}</td><td>{{ wl[1] }}</td>
+              <td>{{ "%.3f"|format(wl[0] / (wl[0] + wl[1])) if (wl[0] + wl[1]) > 0 else "-" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+
+      {% if recent_games %}
+      <div class="panel">
+        <h2>Recent Games</h2>
+        <table>
+          <thead>
+            <tr><th></th><th>Date</th><th></th><th class="left">Opp</th><th>Score</th><th class="left">WP</th><th class="left">LP</th><th class="left">SV</th></tr>
+          </thead>
+          <tbody>
+            {% for g in recent_games %}
+            <tr>
+              <td><span class="{{ 'streak-w' if g.wl == 'W' else 'streak-l' }}">{{ g.wl }}</span></td>
+              <td>{{ g.date[5:] }}</td>
+              <td class="game-loc">{{ "vs" if g.home else "@" }}</td>
+              <td class="left"><a class="team-link" href="/team/{{ g.opp_tid }}">{{ g.opp }}</a></td>
+              <td><strong>{{ g.team_runs }}-{{ g.opp_runs }}</strong></td>
+              {% for p in [g.wp, g.lp, g.sv] %}
+              <td class="left game-pitcher">{% if p %}<a class="player-link" href="/player/{{ p.pid }}">{{ p.name|short }}</a> {{ p.stat }}{% endif %}</td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+
+    {# ── Right column: Team Stats + Leaders ── #}
+    <div class="main-col">
+      <div class="columns team-stats-pair">
+        <div class="panel">
+          <h2>Team Batting</h2>
+          <table class="stats-rank-table">
+            <thead><tr><th>Stat</th><th>Value</th><th>Rank</th></tr></thead>
+            <tbody>
+              {{ stat_row("AVG", team_stats.batting.AVG, "pct") }}
+              {{ stat_row("OBP", team_stats.batting.OBP, "pct") }}
+              {{ stat_row("SLG", team_stats.batting.SLG, "pct") }}
+              {{ stat_row("OPS", team_stats.batting.OPS, "pct") }}
+              {{ stat_row("ISO", team_stats.batting.ISO, "pct") }}
+              {{ stat_row("BB%", team_stats.batting["BB%"], "rate") }}
+              {{ stat_row("K%", team_stats.batting["K%"], "rate") }}
+              {{ stat_row("HR", team_stats.batting.HR, "int") }}
+              {{ stat_row("R", team_stats.batting.R, "int") }}
+            </tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <h2>Team Pitching</h2>
+          <table class="stats-rank-table">
+            <thead><tr><th>Stat</th><th>Value</th><th>Rank</th></tr></thead>
+            <tbody>
+              {{ stat_row("ERA", team_stats.pitching.ERA, "dec2") }}
+              {{ stat_row("FIP", team_stats.pitching.FIP, "dec2") }}
+              {{ stat_row("WHIP", team_stats.pitching.WHIP, "dec2") }}
+              {{ stat_row("K/9", team_stats.pitching["K/9"], "dec2") }}
+              {{ stat_row("BB/9", team_stats.pitching["BB/9"], "dec2") }}
+              {{ stat_row("HR/9", team_stats.pitching["HR/9"], "dec2") }}
+              {{ stat_row("RA", team_stats.pitching.RA, "int") }}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {# ── Stat Leaders ── #}
+      <div class="columns team-stats-pair">
+        {% for group_label, group in [("Batting Leaders", stat_leaders.batting), ("Pitching Leaders", stat_leaders.pitching)] %}
+        <div class="panel">
+          <h2>{{ group_label }}</h2>
+          <div class="leaders-grid">
+            {% for cat, players in group.items() %}
+            {% if players %}
+            <div class="leader-card">
+              <div class="leader-cat">{{ cat }}</div>
+              <div class="leader-rows">
+              {% for p in players %}
+              <div class="leader-row{% if loop.first %} leader-first{% endif %}">
+                <span class="leader-rank">{{ loop.index }}.</span>
+                <a class="player-link" href="/player/{{ p.pid }}">{{ p.name|short }}</a>
+                <span class="leader-val">{{ p.val }}</span>
+              </div>
+              {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{# ══════ Depth Chart ══════ #}
+<div class="tab-content" id="tab-depth">
+{% if depth_chart %}
+{% set dc = depth_chart %}
+{% set dc_years = dc.years %}
+
+{# Two-column layout #}
+<div class="dc-layout">
+
+  {# Left: diamond #}
+  <div class="dc-field">
+
+    {# Controls row — structured bar #}
+    <div class="dc-controls">
+      <div class="dc-year-nav">
+        {% for y in dc_years %}
+        <button class="dc-year-btn{% if loop.first %} active{% endif %}" data-idx="{{ loop.index0 }}">{{ y }}</button>
+        {% endfor %}
+        <span class="dc-war-label" id="dc-war-label">{{ dc.by_year[dc_years[0]].total_war }} WAR</span>
+        <span class="dc-heatmap-legend">
+          <span class="dc-hl-swatch" style="background:#1a4a8a"></span>Elite
+          <span class="dc-hl-swatch" style="background:#1a6b3a"></span>Above Avg
+          <span class="dc-hl-swatch" style="background:#8a2a2a"></span>Below Avg
+        </span>
+      </div>
+      <div class="dc-stat-selectors">
+        <div>
+          <span class="dc-sel-label">Pos:</span>
+          <select id="dc-hit-stat">
+            <option value="ops_plus" selected>OPS+</option>
+            <option value="war">WAR</option>
+            <option value="pa">PA</option>
+          </select>
+        </div>
+        <div>
+          <span class="dc-sel-label">Pit:</span>
+          <select id="dc-pit-stat">
+            <option value="era" selected>ERA</option>
+            <option value="fip">FIP</option>
+            <option value="war">WAR</option>
+            <option value="ip">IP</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    {# Departed players banner #}
+    <div class="dc-departed" id="dc-departed" style="display:none"></div>
+
+    <div class="dc-legend" id="dc-legend">
+      <span>Player</span> <span class="dc-legend-dim">Age</span>
+      <span id="dc-legend-stat">OPS+</span> <span class="dc-legend-dim">PT%</span>
+    </div>
+
+    <div class="dc-diamond">
+      <svg class="dc-field-bg" viewBox="0 -100 700 750" preserveAspectRatio="xMidYMid meet">
+        <!-- Outfield grass arc -->
+        <path d="M40,240 A310,310 0 0,1 660,240"
+              fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1.5"/>
+        <!-- Infield dirt circle -->
+        <circle cx="350" cy="395" r="165" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+        <!-- Basepaths (faint) -->
+        <line x1="350" y1="560" x2="190" y2="395" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+        <line x1="190" y1="395" x2="350" y2="230" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+        <line x1="350" y1="230" x2="510" y2="395" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+        <line x1="510" y1="395" x2="350" y2="560" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+        <!-- Home plate -->
+        <polygon points="342,555 358,555 358,563 350,570 342,563" fill="rgba(255,255,255,0.2)"/>
+      </svg>
+      {% macro pos_card(pos, x, y) %}
+      <div class="dc-card" data-pos="{{ pos }}" style="left:{{ x }}%;top:{{ y }}px">
+        <div class="dc-pos-header">{{ pos }} <span class="dc-pos-war"></span></div>
+        <div class="dc-players"></div>
+      </div>
+      {% endmacro %}
+      {{ pos_card("CF", 50, 0) }}
+      {{ pos_card("LF", 15, 80) }}
+      {{ pos_card("RF", 85, 80) }}
+      {{ pos_card("SS", 30, 230) }}
+      {{ pos_card("2B", 70, 230) }}
+      {{ pos_card("3B", 18, 390) }}
+      {{ pos_card("1B", 82, 390) }}
+      {{ pos_card("C", 50, 545) }}
+    </div>
+  </div>
+
+  {# Right: stat selectors + SP, RP #}
+  <div class="dc-sidebar">
+    <div class="dc-subtitle">Projections based on estimated playing time.</div>
+    <div class="dc-section">
+      <div class="dc-section-header">DH <span class="dc-pos-war" id="dc-dh-war"></span></div>
+      <div class="dc-section-body" id="dc-dh"></div>
+    </div>
+    <div class="dc-section">
+      <div class="dc-section-header">SP <span class="dc-pos-war" id="dc-sp-war"></span></div>
+      <div class="dc-section-body" id="dc-sp"></div>
+    </div>
+    <div class="dc-section">
+      <div class="dc-section-header">RP <span class="dc-pos-war" id="dc-rp-war"></span></div>
+      <div class="dc-section-body" id="dc-rp"></div>
+    </div>
+  </div>
+
+</div>
+
+{# Embed data as JSON for JS #}
+<script>
+(function() {
+  var DC = {{ dc.by_year | tojson }};
+  var YEARS = {{ dc_years | tojson }};
+  var POS_RANK = {{ dc.pos_rank | tojson }};
+  var NUM_TEAMS = {{ dc.num_teams }};
+  var idx = 0;
+  var SP_SHOW = 9, RP_SHOW = 9;
+
+  function fmt(val, stat) {
+    if (stat === 'war') return val.toFixed(1);
+    if (stat === 'era' || stat === 'fip') return val.toFixed(2);
+    if (stat === 'ops_plus' || stat === 'pa') return Math.round(val);
+    if (stat === 'ip') return val.toFixed(1);
+    if (stat === 'pt_pct') return val.toFixed(0) + '%';
+    return val;
+  }
+
+  function shortName(name) {
+    var parts = name.split(' ');
+    if (parts.length < 2) return name;
+    var last = parts[parts.length - 1];
+    var suf = {'jr':1,'jr.':1,'sr':1,'sr.':1,'ii':1,'iii':1,'iv':1};
+    if (suf[last.toLowerCase()] && parts.length > 2) {
+      return parts[0][0] + '. ' + parts[parts.length - 2] + ' ' + last;
+    }
+    return parts[0][0] + '. ' + parts.slice(1).join(' ');
+  }
+
+  function playerRow(p, stat, link, isFirst) {
+    var lvl = p.level !== 'MLB' ? ' <span class="dc-lvl">' + p.level + '</span>' : '';
+    var short = shortName(p.name);
+    var name = link ? '<a class="player-link" href="/player/' + p.pid + '">' + short + '</a>' : short;
+    var cls = isFirst ? 'dc-player dc-starter' : 'dc-player dc-backup';
+    var age = '<span class="dc-age">' + p.age + '</span>';
+    var pt = '<span class="dc-pt">' + Math.round(p.pt_pct) + '%</span>';
+    var main = '<span class="dc-stat">' + fmt(p[stat], stat) + '</span>';
+    return '<div class="' + cls + '"><span class="dc-name">' + name + lvl + '</span>' + age + main + pt + '</div>';
+  }
+
+  function pitcherRow(p, stat, prefix) {
+    var lvl = p.level !== 'MLB' ? ' <span class="dc-lvl">' + p.level + '</span>' : '';
+    var short = shortName(p.name);
+    var age = '<span class="dc-age">' + p.age + '</span>';
+    var pt = '<span class="dc-pt">' + Math.round(p.pt_pct) + '%</span>';
+    var main = '<span class="dc-stat">' + fmt(p[stat], stat) + '</span>';
+    return '<div class="dc-pitcher">' +
+      (prefix ? '<span class="dc-pit-num dc-role-' + (prefix.replace('.','') || '').toLowerCase() + '">' + prefix + '</span>' : '') +
+      '<span class="dc-name"><a class="player-link" href="/player/' + p.pid + '">' + short + '</a>' + lvl + '</span>' + main + pt + '</div>';
+  }
+
+  function render() {
+    var yr = YEARS[idx];
+    var d = DC[yr];
+    document.getElementById('dc-war-label').textContent = d.total_war + ' WAR' +
+      (idx > 0 ? ' (' + (d.total_war - DC[YEARS[0]].total_war > 0 ? '+' : '') +
+       (d.total_war - DC[YEARS[0]].total_war).toFixed(1) + ')' : '');
+    document.querySelectorAll('.dc-year-btn').forEach(function(btn) {
+      btn.classList.toggle('active', +btn.dataset.idx === idx);
+    });
+
+    var hitStat = document.getElementById('dc-hit-stat').value;
+    var pitStat = document.getElementById('dc-pit-stat').value;
+
+    // Update legend with current hitter stat label
+    var hitLabel = document.getElementById('dc-hit-stat');
+    document.getElementById('dc-legend-stat').textContent =
+      hitLabel.options[hitLabel.selectedIndex].text;
+
+    // Departed — show position context
+    var depEl = document.getElementById('dc-departed');
+    if (d.departed && d.departed.length && idx > 0) {
+      var prev = DC[YEARS[idx - 1]];
+      // Build name→primary position from prior year (highest pt_pct)
+      var namePos = {};
+      var allPos = ['C','1B','2B','3B','SS','LF','CF','RF','DH'];
+      allPos.forEach(function(pos) {
+        (prev.positions[pos] || []).forEach(function(p) {
+          if (!namePos[p.name] || p.pt_pct > namePos[p.name].pt) {
+            namePos[p.name] = {pos: pos, pt: p.pt_pct, war: p.war};
+          }
+        });
+      });
+      (prev.sp || []).forEach(function(p) {
+        if (!namePos[p.name] || p.pt_pct > (namePos[p.name] || {}).pt)
+          namePos[p.name] = {pos: 'SP', pt: p.pt_pct, war: p.war};
+      });
+      (prev.rp || []).forEach(function(p) {
+        if (!namePos[p.name] || p.pt_pct > (namePos[p.name] || {}).pt)
+          namePos[p.name] = {pos: 'RP', pt: p.pt_pct, war: p.war};
+      });
+      var parts = d.departed.map(function(name) {
+        var info = namePos[name];
+        var short = shortName(name);
+        return info ? {html: '<span class="dc-dep-chip"><strong>' + info.pos + '</strong> ' + short + ' <span class="dc-dep-war">' + info.war.toFixed(1) + '</span></span>', war: info.war}
+                    : {html: '<span class="dc-dep-chip">' + short + '</span>', war: 0};
+      });
+      parts.sort(function(a, b) { return b.war - a.war; });
+      depEl.style.display = '';
+      depEl.innerHTML = '<strong>Departed:</strong> ' + parts.map(function(p) { return p.html; }).join(' ');
+    } else { depEl.style.display = 'none'; }
+
+    // Position cards
+    var pw = d.pos_war || {};
+    ['C','1B','2B','3B','SS','LF','CF','RF'].forEach(function(pos) {
+      var card = document.querySelector('.dc-card[data-pos="'+pos+'"]');
+      if (!card) return;
+      var warBadge = card.querySelector('.dc-pos-war');
+      var pwar = pw[pos] || 0;
+      var rank = (idx === 0) ? POS_RANK[pos] : null;
+      warBadge.textContent = pwar.toFixed(1) + (rank ? '  #' + rank : '');
+      var hdr = card.querySelector('.dc-pos-header');
+      hdr.className = 'dc-pos-header' + (pwar >= 5 ? ' dc-war-elite' : pwar >= 3 ? ' dc-war-good' : pwar < 1.5 ? ' dc-war-weak' : '');
+      var players = d.positions[pos] || [];
+      var html = '';
+      var cum = 0;
+      players.forEach(function(p, i) {
+        if (i === 0 || cum < 95) { html += playerRow(p, hitStat, true, i === 0); cum += p.pt_pct; }
+      });
+      if (!players.length) html = '<div class="dc-player dc-empty">—</div>';
+      card.querySelector('.dc-players').innerHTML = html;
+    });
+
+    // DH
+    var dhPw = pw['DH'] || 0;
+    var dhHdr = document.getElementById('dc-dh-war').parentNode;
+    dhHdr.className = 'dc-section-header' + (dhPw >= 5 ? ' dc-war-elite' : dhPw >= 3 ? ' dc-war-good' : dhPw < 1.5 ? ' dc-war-weak' : '');
+    document.getElementById('dc-dh-war').textContent = dhPw.toFixed(1);
+    var dhPlayers = d.positions['DH'] || [];
+    var dhHtml = '', dhCum = 0;
+    dhPlayers.forEach(function(p, i) {
+      if (i === 0 || dhCum < 95) { dhHtml += playerRow(p, hitStat, true, i === 0); dhCum += p.pt_pct; }
+    });
+    document.getElementById('dc-dh').innerHTML = dhHtml || '<div class="dc-empty">—</div>';
+
+    // SP
+    var spPw = pw['SP'] || 0;
+    var spHdr = document.getElementById('dc-sp-war').parentNode;
+    spHdr.className = 'dc-section-header' + (spPw >= 5 ? ' dc-war-elite' : spPw >= 3 ? ' dc-war-good' : spPw < 1.5 ? ' dc-war-weak' : '');
+    document.getElementById('dc-sp-war').textContent = spPw.toFixed(1) + (idx === 0 && POS_RANK['SP'] ? '  #' + POS_RANK['SP'] : '');
+    var spAll = d.sp || [];
+    var spHtml = '';
+    spAll.slice(0, SP_SHOW).forEach(function(p, i) {
+      spHtml += pitcherRow(p, pitStat, (i+1) + '.');
+    });
+    if (spAll.length > SP_SHOW) spHtml += '<div class="dc-more">+' + (spAll.length - SP_SHOW) + ' More</div>';
+    document.getElementById('dc-sp').innerHTML = spHtml;
+
+    // RP
+    var rpPw = pw['RP'] || 0;
+    var rpHdr = document.getElementById('dc-rp-war').parentNode;
+    rpHdr.className = 'dc-section-header' + (rpPw >= 5 ? ' dc-war-elite' : rpPw >= 3 ? ' dc-war-good' : rpPw < 1.5 ? ' dc-war-weak' : '');
+    document.getElementById('dc-rp-war').textContent = rpPw.toFixed(1) + (idx === 0 && POS_RANK['RP'] ? '  #' + POS_RANK['RP'] : '');
+    var rpAll = d.rp || [];
+    var rpHtml = '';
+    rpAll.slice(0, RP_SHOW).forEach(function(p) {
+      var role = p.rp_role ? p.rp_role : '';
+      rpHtml += pitcherRow(p, pitStat, role);
+    });
+    if (rpAll.length > RP_SHOW) rpHtml += '<div class="dc-more">+' + (rpAll.length - RP_SHOW) + ' More</div>';
+    document.getElementById('dc-rp').innerHTML = rpHtml;
+  }
+
+  document.querySelectorAll('.dc-year-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() { idx = +btn.dataset.idx; render(); });
+  });
+  document.getElementById('dc-hit-stat').addEventListener('change', render);
+  document.getElementById('dc-pit-stat').addEventListener('change', render);
+  render();
+})();
+</script>
+{% endif %}
+</div>
+
+{# ══════ Hitters ══════ #}
+<div class="tab-content" id="tab-hitters">
+  <div class="roster-controls">
+    <button class="split-btn active" data-split="1">Overall</button>
+    <button class="split-btn" data-split="2">vs L</button>
+    <button class="split-btn" data-split="3">vs R</button>
+    <span class="split-label"></span>
+  </div>
+  <div class="panel">
+    <table id="hitters-table">
+      <thead>
+        <tr>
+          <th data-sort="pos">Pos</th>
+          <th data-sort="str" class="left">Name</th>
+          <th data-sort="num">Age</th>
+          <th data-sort="num" title="Overall rating (20-80 scale)">Ovr</th>
+          <th data-sort="num" title="Wins Above Replacement" class="col-sep">WAR</th>
+          <th data-sort="num" title="Games played" class="col-sep">G</th>
+          <th data-sort="num" title="Plate appearances">PA</th>
+          <th data-sort="num" title="Batting average">AVG</th>
+          <th data-sort="num" title="On-base percentage">OBP</th>
+          <th data-sort="num" title="Slugging percentage">SLG</th>
+          <th data-sort="num" title="On-base plus slugging">OPS</th>
+          <th data-sort="num" title="Home runs" class="col-sep">HR</th>
+          <th data-sort="num" title="Runs scored">R</th>
+          <th data-sort="num" title="Runs batted in">RBI</th>
+          <th data-sort="num" title="Stolen bases">SB</th>
+          <th data-sort="num" data-sort-best="low" title="Caught stealing">CS</th>
+          <th data-sort="num" title="Walk rate (BB/PA)" class="col-sep">BB%</th>
+          <th data-sort="num" data-sort-best="low" title="Strikeout rate (K/PA)">K%</th>
+          <th data-sort="num" title="Contract surplus value" class="col-sep">Surplus</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+{# ══════ Pitchers ══════ #}
+<div class="tab-content" id="tab-pitchers">
+  <div class="roster-controls">
+    <button class="split-btn active" data-split="1">Overall</button>
+    <button class="split-btn" data-split="2">vs L</button>
+    <button class="split-btn" data-split="3">vs R</button>
+    <span class="split-label"></span>
+  </div>
+  <div class="panel">
+    <table id="pitchers-table">
+      <thead>
+        <tr>
+          <th data-sort="pos">Role</th>
+          <th data-sort="str" class="left">Name</th>
+          <th data-sort="num">Age</th>
+          <th data-sort="num" title="Overall rating (20-80 scale)">Ovr</th>
+          <th data-sort="num" title="Wins Above Replacement" class="col-sep">WAR</th>
+          <th data-sort="num" title="Innings pitched" class="col-sep">IP</th>
+          <th data-sort="num" data-sort-best="low" title="Earned run average">ERA</th>
+          <th data-sort="num" data-sort-best="low" title="Walks + hits per inning pitched">WHIP</th>
+          <th data-sort="num" title="Strikeouts" class="col-sep">K</th>
+          <th data-sort="num" title="Walks">BB</th>
+          <th data-sort="num" title="Strikeout rate (K/BF)">K%</th>
+          <th data-sort="num" data-sort-best="low" title="Walk rate (BB/BF)">BB%</th>
+          <th data-sort="num" title="Strikeout minus walk rate">K-BB%</th>
+          <th data-sort="num" data-sort-best="low" title="Home runs allowed" class="col-sep">HR</th>
+          <th data-sort="num" title="Win-loss record">W-L</th>
+          <th data-sort="num" title="Quality starts (6+ IP, ≤3 ER)">QS</th>
+          <th data-sort="num" title="Saves + holds">SV+H</th>
+          <th data-sort="num" data-sort-best="low" title="Inherited runners scored % (lower is better)">IRS%</th>
+          <th data-sort="num" title="Contract surplus value" class="col-sep">Surplus</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+{# ══════ Contracts ══════ #}
+<div class="tab-content" id="tab-contracts">
+  <div class="columns">
+    <div class="panel">
+      <h2>Contracts</h2>
+      <table>
+        <thead>
+          <tr>
+            <th data-sort="str" class="left">Name</th><th data-sort="num">Salary</th><th data-sort="num">Yrs</th>
+            <th data-sort="num">Total</th><th data-sort="num">Surplus</th><th data-sort="str" class="left">Flags</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in contracts %}
+          <tr>
+            <td><a class="player-link" href="/player/{{ c.pid }}">{{ c.name }}</a></td>
+            <td>${{ "%.1f"|format(c.salary / 1000000) }}M</td>
+            <td>{{ c.years_left }}</td>
+            <td>${{ "%.1f"|format(c.total_left / 1000000) }}M</td>
+            <td class="{{ 'pos' if c.surplus > 0 else 'neg' if c.surplus < 0 else '' }}">${{ c.surplus }}M</td>
+            <td class="left">
+              {%- if c.ntc %}<span class="opt-badge opt-ntc">NTC</span>{% endif %}
+              {%- if c.to %}<span class="opt-badge opt-to">TO</span>{% endif %}
+              {%- if c.po %}<span class="opt-badge opt-po">PO</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h2>Upcoming Free Agents</h2>
+      <table>
+        <thead>
+          <tr>
+            <th data-sort="pos">Pos</th><th data-sort="str" class="left">Name</th><th data-sort="num" data-sort-best="low">Age</th>
+            <th data-sort="num">Ovr</th><th data-sort="num">Salary</th><th data-sort="num">Yrs</th><th data-sort="num">Surplus</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in upcoming_fa %}
+          <tr>
+            <td data-sort-value="{{ p.pos }}">{{ p.pos }}</td>
+            <td><a class="player-link" href="/player/{{ p.pid }}">{{ p.name }}</a></td>
+            <td>{{ p.age }}</td>
+            <td>{{ p.ovr }}</td>
+            <td>${{ "%.1f"|format(p.salary / 1000000) }}M</td>
+            <td>{{ p.yrs_left }}</td>
+            <td class="{{ 'pos' if p.surplus > 0 else 'neg' if p.surplus < 0 else '' }}">${{ p.surplus }}M</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{# ══════ Finances ══════ #}
+<div class="tab-content" id="tab-finances">
+  <div class="columns">
+    <div class="panel wide">
+      <h2>Committed Payroll — ${{ "%.1f"|format(payroll / 1000000) }}M ({{ payroll_summary.years[0] }})</h2>
+      <table>
+        <thead>
+          <tr>
+            <th class="left" data-sort="str">Name</th>
+            {% for y in payroll_summary.years %}
+            <th data-sort="num">{{ y }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in payroll_summary.players %}
+          <tr>
+            <td class="left"><a class="player-link" href="/player/{{ p.pid }}">{{ p.name }}</a>
+              {%- if p.ntc %} <span class="opt-badge opt-ntc">NTC</span>{% endif %}</td>
+            {% for s in p.by_year %}
+            <td{% if s and s.option %} class="opt-year"{% elif s and s.projected %} class="proj-year"{% endif %}>
+              {%- if s %}${{ "%.1f"|format(s.sal / 1000000) }}M{% if s.option %}<sup>{{ s.option }}</sup>{% elif s.projected %}<sup>est</sup>{% endif %}{% else %}-{% endif -%}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr class="total-row">
+            <td class="left">Total</td>
+            {% for t in payroll_summary.totals %}
+            <td>${{ "%.1f"|format(t / 1000000) }}M</td>
+            {% endfor %}
+          </tr>
+        </tfoot>
+      </table>
+      <p class="note">Guaranteed contracts shown in full. Pre-arb and arbitration-eligible salaries are estimated based on projected performance and OOTP arb model. <sup>TO</sup> = Team Option, <sup>PO</sup> = Player Option, <sup>est</sup> = Estimated (arb/pre-arb projection).</p>
+    </div>
+  </div>
+</div>
+
+{# ══════ Player Development ══════ #}
+<div class="tab-content" id="tab-dev">
+  <div class="columns">
+    <div class="panel">
+      <h2>Farm System — Top 15</h2>
+      <table>
+        <thead>
+          <tr>
+            <th data-sort="num">#</th><th data-sort="pos">Pos</th><th data-sort="str" class="left">Name</th><th data-sort="num" data-sort-best="low">Age</th>
+            <th data-sort="str" data-sort-best="high" class="left">FV</th><th data-sort="str" class="left">Level</th><th data-sort="num">Surplus</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in farm %}
+          <tr>
+            <td>{{ p.rank }}</td>
+            <td data-sort-value="{{ p.pos_order }}">{{ p.bucket }}</td>
+            <td><a class="player-link" href="/player/{{ p.pid }}">{{ p.name }}</a></td>
+            <td>{{ p.age }}</td>
+            <td class="left">{{ p.fv_str }}</td>
+            <td class="left">{{ p.level }}</td>
+            <td>${{ p.surplus }}M</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h2>Farm Depth</h2>
+      <div class="farm-depth-summary">
+        <span>Total: ${{ farm_depth.total_surplus }}M</span>
+        <span>Lg Avg: ${{ farm_depth.lg_avg }}M</span>
+        <span>Rank: {{ farm_depth.lg_rank }}/{{ farm_depth.lg_n }}</span>
+      </div>
+      <div class="columns team-stats-pair">
+        <div>
+          <h3>By Position</h3>
+          <table class="stats-rank-table">
+            <thead><tr><th>Pos</th><th>Count</th><th>Surplus</th></tr></thead>
+            <tbody>
+              {% for b in farm_depth.buckets %}
+              <tr><td>{{ b.bucket }}</td><td>{{ b.count }}</td><td>${{ b.surplus }}M</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h3>By Level</h3>
+          <table class="stats-rank-table">
+            <thead><tr><th>Level</th><th>Count</th></tr></thead>
+            <tbody>
+              {% for l in farm_depth.levels %}
+              <tr><td>{{ l.level }}</td><td>{{ l.count }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="columns" style="margin-top:12px">
+    <div class="panel">
+      <h2>Age Distribution</h2>
+      <div class="age-dist">
+        <div class="age-group">
+          <h3>MLB Roster</h3>
+          <div class="age-bars">
+            {% set mlb_total = age_dist.mlb.values()|sum %}
+            {% for label, count in age_dist.mlb.items() %}
+            <div class="age-bar-row">
+              <span class="age-label">{{ label }}</span>
+              <div class="age-bar-track">
+                <div class="age-bar-fill" style="width:{{ (count / mlb_total * 100) if mlb_total else 0 }}%"><span class="age-count">{{ count }}</span></div>
+                <div class="age-lg-marker" style="left:{{ age_dist.lg_mlb[label] }}%" title="Lg avg {{ age_dist.lg_mlb[label] }}%"></div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="age-group">
+          <h3>Farm (FV 40+)</h3>
+          <div class="age-bars">
+            {% set farm_total = age_dist.farm.values()|sum %}
+            {% for label, count in age_dist.farm.items() %}
+            <div class="age-bar-row">
+              <span class="age-label">{{ label }}</span>
+              <div class="age-bar-track">
+                <div class="age-bar-fill" style="width:{{ (count / farm_total * 100) if farm_total else 0 }}%"><span class="age-count">{{ count }}</span></div>
+                <div class="age-lg-marker" style="left:{{ age_dist.lg_farm[label] }}%" title="Lg avg {{ age_dist.lg_farm[label] }}%"></div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+    <div></div>
+  </div>
+</div>
+
+<script>
+/* ── Roster Hitters / Pitchers ── */
+(function() {
+  var hitData = {{ roster_hitters | tojson }};
+  var pitData = {{ roster_pitchers | tojson }};
+
+  function fmtAvg(v) { return v == null ? '-' : v.toFixed(3).replace(/^0/,''); }
+  function fmtPct(v) { return v == null ? '-' : v.toFixed(1); }
+  function fmtEra(v) { return v == null ? '-' : v.toFixed(2); }
+  function fmtIp(v) {
+    if (v == null) return '-';
+    var full = Math.floor(v), thirds = Math.round((v - full) * 3);
+    return full + '.' + thirds;
+  }
+  function surpCls(v) { return v > 0 ? 'pos' : v < 0 ? 'neg' : ''; }
+
+  // League averages for conditional formatting
+  var lgAvg = {{ league_avg | tojson }};
+  // higher-is-better: green if above avg, red if below
+  // lower-is-better: green if below avg, red if above
+  function statCls(val, avg, lower) {
+    if (val == null || avg == null) return '';
+    var pct = (val - avg) / Math.max(Math.abs(avg), 0.001);
+    if (Math.abs(pct) < 0.05) return '';
+    if (lower) return pct < -0.05 ? 'stat-good' : pct > 0.05 ? 'stat-bad' : '';
+    return pct > 0.05 ? 'stat-good' : pct < -0.05 ? 'stat-bad' : '';
+  }
+  function td(val, txt, avg, lower, sep) {
+    var cls = [];
+    if (sep) cls.push('col-sep');
+    if (avg !== undefined) cls.push(statCls(val, avg, lower));
+    return '<td' + (cls.length ? ' class="' + cls.filter(Boolean).join(' ') + '"' : '') + '>' + txt + '</td>';
+  }
+
+  var splitLabels = {'1': '', '2': 'Showing: vs LHP', '3': 'Showing: vs RHP'};
+
+  function renderHitters(split) {
+    var tb = document.querySelector('#hitters-table tbody');
+    var isOvr = split === '1';
+    var lbl = document.querySelector('#tab-hitters .split-label');
+    if (lbl) lbl.textContent = splitLabels[split];
+    tb.innerHTML = '';
+    hitData.forEach(function(p) {
+      var s = p.splits[split];
+      var twBadge = p.is_two_way ? ' <span class="tw-badge" title="Two-way player">TW</span>' : '';
+      var tr = document.createElement('tr');
+      if (!s) {
+        tr.innerHTML =
+          '<td data-sort-value="' + p.pos_order + '">' + p.pos + '</td>' +
+          '<td class="left"><a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a>' + twBadge + '</td>' +
+          '<td>' + p.age + '</td><td>' + p.ovr + '</td>' +
+          '<td class="col-sep">-</td><td class="col-sep">-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td class="col-sep">-</td><td>-</td><td>-</td><td>-</td><td>-</td><td class="col-sep">-</td><td>-</td>' +
+          '<td class="col-sep ' + surpCls(p.surplus) + '">$' + p.surplus + 'M</td>';
+      } else {
+        var L = lgAvg;
+        tr.innerHTML =
+          '<td data-sort-value="' + p.pos_order + '">' + p.pos + '</td>' +
+          '<td class="left"><a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a>' + twBadge + '</td>' +
+          '<td>' + p.age + '</td>' +
+          '<td>' + p.ovr + '</td>' +
+          td(s.war, isOvr ? s.war : '-', undefined, false, true) +
+          '<td class="col-sep">' + s.g + '</td>' +
+          '<td>' + s.pa + '</td>' +
+          td(s.avg, fmtAvg(s.avg), L.avg) +
+          td(s.obp, fmtAvg(s.obp), L.obp) +
+          td(s.slg, fmtAvg(s.slg), L.slg) +
+          td(s.ops, fmtAvg(s.ops), L.ops) +
+          td(null, s.hr, undefined, false, true) +
+          '<td>' + (isOvr ? s.r : '-') + '</td>' +
+          '<td>' + (isOvr ? s.rbi : '-') + '</td>' +
+          '<td>' + (isOvr ? s.sb : '-') + '</td>' +
+          '<td>' + (isOvr ? s.cs : '-') + '</td>' +
+          td(s.bb_pct, fmtPct(s.bb_pct), L.bb_pct, false, true) +
+          td(s.k_pct, fmtPct(s.k_pct), L.k_pct, true) +
+          '<td class="col-sep ' + surpCls(p.surplus) + '">$' + p.surplus + 'M</td>';
+      }
+      tb.appendChild(tr);
+    });
+  }
+
+  function renderPitchers(split) {
+    var tb = document.querySelector('#pitchers-table tbody');
+    var isOvr = split === '1';
+    var lbl = document.querySelector('#tab-pitchers .split-label');
+    if (lbl) lbl.textContent = splitLabels[split];
+    tb.innerHTML = '';
+    pitData.forEach(function(p) {
+      var s = p.splits[split];
+      var twBadge = p.is_two_way ? ' <span class="tw-badge" title="Two-way player">TW</span>' : '';
+      var tr = document.createElement('tr');
+      if (!s) {
+        tr.innerHTML =
+          '<td data-sort-value="' + p.role_order + '">' + p.role + '</td>' +
+          '<td class="left"><a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a>' + twBadge + '</td>' +
+          '<td>' + p.age + '</td><td>' + p.ovr + '</td>' +
+          '<td class="col-sep">-</td><td class="col-sep">-</td><td>-</td><td>-</td><td class="col-sep">-</td><td>-</td><td>-</td><td>-</td><td>-</td><td class="col-sep">-</td><td>-</td><td>-</td><td>-</td><td>-</td>' +
+          '<td class="col-sep ' + surpCls(p.surplus) + '">$' + p.surplus + 'M</td>';
+      } else {
+        var svh = s.sv + s.hld;
+        var L = lgAvg;
+        tr.innerHTML =
+          '<td data-sort-value="' + p.role_order + '">' + p.role + '</td>' +
+          '<td class="left"><a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a>' + twBadge + '</td>' +
+          '<td>' + p.age + '</td>' +
+          '<td>' + p.ovr + '</td>' +
+          td(s.war, isOvr ? s.war : '-', undefined, false, true) +
+          '<td class="col-sep">' + fmtIp(s.ip) + '</td>' +
+          td(s.era, fmtEra(s.era), L.era, true) +
+          '<td>' + fmtEra(s.whip) + '</td>' +
+          td(null, s.k, undefined, false, true) +
+          '<td>' + s.bb + '</td>' +
+          td(s.k_pct, fmtPct(s.k_pct), L.p_k_pct) +
+          td(s.bb_pct, fmtPct(s.bb_pct), L.p_bb_pct, true) +
+          '<td>' + fmtPct(s.k_bb_pct) + '</td>' +
+          td(null, s.hra, undefined, false, true) +
+          '<td>' + (isOvr ? s.w + '-' + s.l : '-') + '</td>' +
+          '<td>' + (isOvr ? s.qs : '-') + '</td>' +
+          '<td>' + (isOvr ? svh : '-') + '</td>' +
+          '<td>' + (isOvr ? fmtPct(s.irs_pct) : '-') + '</td>' +
+          '<td class="col-sep ' + surpCls(p.surplus) + '">$' + p.surplus + 'M</td>';
+      }
+      tb.appendChild(tr);
+    });
+  }
+
+  // Split toggle buttons
+  document.querySelectorAll('#tab-hitters .split-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      btn.parentNode.querySelectorAll('.split-btn').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      renderHitters(btn.dataset.split);
+    });
+  });
+  document.querySelectorAll('#tab-pitchers .split-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      btn.parentNode.querySelectorAll('.split-btn').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      renderPitchers(btn.dataset.split);
+    });
+  });
+
+  // Initial render
+  renderHitters('1');
+  renderPitchers('1');
+})();
+</script>
+
+<script>
+document.querySelectorAll('.tab-bar .tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-bar .tab').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+</script>
+
+{% endblock %}

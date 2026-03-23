@@ -1,0 +1,209 @@
+{# Interactive league structure editor — included in settings.html and onboard.html #}
+{# Expects: leagues (list), all_mlb_teams (dict tid→abbr), cfg (optional) #}
+<div id="structure-editor">
+  <div id="se-leagues"></div>
+  <button type="button" class="se-add-btn" onclick="SE.addLeague()">+ Add League</button>
+  <div id="se-unassigned" class="se-unassigned">
+    <span class="se-label">Unassigned</span>
+    <div class="se-team-pool" data-drop="unassigned"></div>
+  </div>
+  <div id="se-status" class="dim" style="font-size:0.8em;margin-top:4px;min-height:1.2em"></div>
+</div>
+
+<script>
+(function(){
+const ALL_TEAMS = {{ all_mlb_teams | default({}) | tojson }};
+const TEAM_NAMES = {{ (cfg.team_names_map if cfg is defined and cfg else (team_names_map if team_names_map is defined else {})) | tojson }};
+let leagues = {{ (leagues if leagues is defined else league_groups) | default([]) | tojson }};
+let saveTimer = null;
+let dragged = null;
+
+function el(tag, cls, html) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html !== undefined) e.innerHTML = html;
+  return e;
+}
+
+function render() {
+  const root = document.getElementById('se-leagues');
+  root.innerHTML = '';
+  const assigned = new Set();
+
+  leagues.forEach((lg, li) => {
+    const lgDiv = el('div', 'se-league');
+
+    // League header
+    const hdr = el('div', 'se-league-hdr');
+    const colorDot = el('span', 'se-color-dot');
+    colorDot.style.background = lg.color || '#508cff';
+    colorDot.onclick = () => cycleColor(li);
+    colorDot.title = 'Click to change color';
+    hdr.appendChild(colorDot);
+
+    const nameIn = el('input', 'se-inline-edit se-league-name');
+    nameIn.value = lg.name || '';
+    nameIn.placeholder = 'League name';
+    nameIn.onchange = () => { lg.name = nameIn.value; lg.short = nameIn.value; save(); };
+    hdr.appendChild(nameIn);
+
+    const delLg = el('button', 'se-del-btn', '×');
+    delLg.title = 'Delete league';
+    delLg.onclick = () => { if (confirm('Delete league "' + lg.name + '"? Teams will be unassigned.')) { leagues.splice(li, 1); render(); save(); }};
+    hdr.appendChild(delLg);
+    lgDiv.appendChild(hdr);
+
+    // Divisions
+    const divNames = Object.keys(lg.divisions || {});
+    divNames.forEach(dname => {
+      const tids = lg.divisions[dname] || [];
+      tids.forEach(t => assigned.add(t));
+
+      const divRow = el('div', 'se-division');
+      const divHdr = el('div', 'se-div-hdr');
+      const divIn = el('input', 'se-inline-edit se-div-name');
+      divIn.value = dname;
+      divIn.placeholder = 'Division name';
+      divIn.onchange = () => {
+        const nv = divIn.value.trim();
+        if (nv && nv !== dname) {
+          lg.divisions[nv] = lg.divisions[dname];
+          delete lg.divisions[dname];
+          render(); save();
+        }
+      };
+      divHdr.appendChild(divIn);
+
+      const delDiv = el('button', 'se-del-btn se-del-div', '×');
+      delDiv.title = 'Delete division';
+      delDiv.onclick = () => { delete lg.divisions[dname]; render(); save(); };
+      divHdr.appendChild(delDiv);
+      divRow.appendChild(divHdr);
+
+      const pool = el('div', 'se-team-pool');
+      pool.dataset.drop = li + '/' + dname;
+      tids.forEach(tid => pool.appendChild(makeChip(tid)));
+      divRow.appendChild(pool);
+      lgDiv.appendChild(divRow);
+    });
+
+    const addDiv = el('button', 'se-add-btn se-add-div', '+ Division');
+    addDiv.onclick = () => {
+      const n = 'Division ' + (divNames.length + 1);
+      lg.divisions = lg.divisions || {};
+      lg.divisions[n] = [];
+      render(); save();
+    };
+    lgDiv.appendChild(addDiv);
+    lgDiv.appendChild(el('div', 'se-league-sep'));
+    root.appendChild(lgDiv);
+  });
+
+  // Unassigned teams
+  const pool = document.querySelector('#se-unassigned .se-team-pool');
+  pool.innerHTML = '';
+  Object.keys(ALL_TEAMS).forEach(tid => {
+    const t = parseInt(tid);
+    if (!assigned.has(t)) pool.appendChild(makeChip(t));
+  });
+  document.getElementById('se-unassigned').style.display = pool.children.length ? '' : 'none';
+
+  initDragDrop();
+}
+
+function makeChip(tid) {
+  const abbr = ALL_TEAMS[tid] || '?';
+  const name = TEAM_NAMES[tid] || abbr;
+  const chip = el('div', 'se-team-chip');
+  chip.textContent = abbr;
+  chip.title = name;
+  chip.dataset.tid = tid;
+  chip.draggable = true;
+  chip.ondragstart = e => {
+    dragged = chip;
+    chip.classList.add('se-dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', tid);
+  };
+  chip.ondragend = () => { chip.classList.remove('se-dragging'); dragged = null; };
+  // Touch support
+  chip.ontouchstart = e => { dragged = chip; chip.classList.add('se-dragging'); };
+  chip.ontouchend = e => {
+    chip.classList.remove('se-dragging');
+    const touch = e.changedTouches[0];
+    const target = document.elementFromPoint(touch.clientX, touch.clientY);
+    const pool = target && target.closest('.se-team-pool');
+    if (pool && dragged) dropInto(pool, parseInt(dragged.dataset.tid));
+    dragged = null;
+  };
+  return chip;
+}
+
+function initDragDrop() {
+  document.querySelectorAll('.se-team-pool').forEach(pool => {
+    pool.ondragover = e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; pool.classList.add('se-drop-hover'); };
+    pool.ondragleave = () => pool.classList.remove('se-drop-hover');
+    pool.ondrop = e => {
+      e.preventDefault();
+      pool.classList.remove('se-drop-hover');
+      if (!dragged) return;
+      const tid = parseInt(dragged.dataset.tid);
+      dropInto(pool, tid);
+    };
+  });
+}
+
+function dropInto(pool, tid) {
+  // Remove from current location
+  leagues.forEach(lg => {
+    Object.keys(lg.divisions || {}).forEach(d => {
+      lg.divisions[d] = lg.divisions[d].filter(t => t !== tid);
+    });
+  });
+  // Add to target
+  const loc = pool.dataset.drop;
+  if (loc !== 'unassigned') {
+    const [li, dname] = [parseInt(loc.split('/')[0]), loc.split('/').slice(1).join('/')];
+    leagues[li].divisions[dname].push(tid);
+  }
+  render();
+  save();
+}
+
+const COLORS = ['#508cff','#ff6b6b','#50c878','#ffa500','#c084fc','#f472b6','#38bdf8','#facc15'];
+function cycleColor(li) {
+  const cur = leagues[li].color || COLORS[0];
+  const idx = COLORS.indexOf(cur);
+  leagues[li].color = COLORS[(idx + 1) % COLORS.length];
+  render(); save();
+}
+
+function save() {
+  clearTimeout(saveTimer);
+  const st = document.getElementById('se-status');
+  st.textContent = 'Saving...';
+  st.style.color = '#888';
+  saveTimer = setTimeout(() => {
+    fetch('/api/save-structure', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({leagues: leagues})
+    }).then(r => r.json()).then(d => {
+      st.textContent = d.ok ? '✓ Saved' : '✗ ' + (d.error || 'Error');
+      st.style.color = d.ok ? '#4caf50' : '#e74c3c';
+      setTimeout(() => { if (st.textContent.startsWith('✓')) st.textContent = ''; }, 2000);
+    }).catch(() => { st.textContent = '✗ Save failed'; st.style.color = '#e74c3c'; });
+  }, 400);
+}
+
+window.SE = {
+  addLeague() {
+    const n = 'League ' + (leagues.length + 1);
+    leagues.push({name: n, short: n, color: COLORS[leagues.length % COLORS.length], divisions: {'Division 1': []}});
+    render(); save();
+  }
+};
+
+render();
+})();
+</script>

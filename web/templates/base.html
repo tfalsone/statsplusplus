@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stats++ · {{ league_name }}</title>
+  <link rel="icon" type="image/x-icon" href="/static/assets/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/assets/favicon-32.png">
+  <link rel="apple-touch-icon" href="/static/assets/apple-touch-icon.png">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/sort.js" defer></script>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <a href="/league" class="app-name"><img src="/static/assets/favicon-32.png" alt="" class="app-logo">Stats<span class="app-pp">++</span></a>
+      <nav>
+        {% if league_list|length > 1 %}
+        <div class="nav-dropdown">
+          <button class="nav-btn nav-dropdown-btn">{{ league_name }} ▾</button>
+          <div class="nav-dropdown-menu">
+            {% for lg in league_list %}
+            <a href="/switch-league/{{ lg.slug }}"{% if lg.slug == active_league_slug %} class="active"{% endif %}>{{ lg.name }}</a>
+            {% endfor %}
+          </div>
+        </div>
+        {% else %}
+        <span class="nav-league-label">{{ league_name }}</span>
+        {% endif %}
+        <a href="/dashboard">My Team</a>
+        <div class="nav-dropdown">
+          <button class="nav-btn nav-dropdown-btn">Teams ▾</button>
+          <div class="nav-dropdown-menu">
+            {% for tid, name in all_teams %}<a href="/team/{{ tid }}">{{ name }}</a>
+            {% endfor %}
+          </div>
+        </div>
+        <a href="/league">League</a>
+        <a href="/settings">Settings</a>
+        <button id="refresh-btn" class="nav-btn" title="Pull latest game data">⟳ Refresh</button>
+      </nav>
+    </div>
+  </header>
+
+  <div id="refresh-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <p id="refresh-modal-msg"></p>
+      <button id="refresh-modal-ok" class="modal-ok">OK</button>
+    </div>
+  </div>
+  <main>
+    {% if breadcrumbs %}
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      {% for bc in breadcrumbs %}<a href="{{ bc.url }}">{{ bc.label }}</a>{% if not loop.last %}<span class="bc-sep">›</span>{% endif %}{% endfor %}
+    </nav>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+  <script>
+  (function() {
+    const btn = document.getElementById('refresh-btn');
+    const modal = document.getElementById('refresh-modal');
+    const modalMsg = document.getElementById('refresh-modal-msg');
+    const modalOk = document.getElementById('refresh-modal-ok');
+
+    function showModal(text, isError) {
+      modalMsg.textContent = text;
+      modalMsg.style.color = isError ? '#e05050' : '';
+      modalOk.textContent = isError ? 'Dismiss' : 'OK';
+      modalOk.onclick = function() {
+        if (isError) { modal.classList.add('hidden'); }
+        else { location.reload(); }
+      };
+      modal.classList.remove('hidden');
+    }
+
+    function setRunning() {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spin">⚾</span> Running…';
+    }
+    function setIdle() {
+      btn.disabled = false;
+      btn.textContent = '⟳ Refresh';
+      // Re-check staleness after refresh
+      fetch('/api/game-date').then(r => r.json()).then(d => {
+        if (!d.remote) {
+          btn.innerHTML = '⟳ Refresh <span class="sync-badge sync-unknown" title="Could not reach API">?</span>';
+        } else if (d.local === d.remote) {
+          btn.innerHTML = '⟳ Refresh <span class="sync-badge sync-ok" title="Up to date: ' + d.local + '">✓</span>';
+        } else {
+          btn.innerHTML = '⟳ Refresh <span class="sync-badge sync-stale" title="Local: ' + (d.local||'none') + ' — API: ' + d.remote + '">!</span>';
+        }
+      }).catch(() => {});
+    }
+
+    function poll() {
+      fetch('/refresh/status').then(r => r.json()).then(d => {
+        if (d.running) {
+          setTimeout(poll, 2000);
+        } else {
+          setIdle();
+          if (d.result === 'ok') {
+            showModal(d.message + '\nClick OK to load the updated data.', false);
+          } else if (d.result === 'error') {
+            showModal('Refresh failed: ' + d.message, true);
+          }
+        }
+      });
+    }
+
+    btn.addEventListener('click', function() {
+      if (!confirm('Pull latest game data?\nThis takes 2-3 minutes. The site remains browsable.')) return;
+      setRunning();
+      fetch('/refresh', {method: 'POST'}).then(r => r.json()).then(d => { poll(); });
+    });
+
+    // Resume polling if refresh was already running on page load
+    fetch('/refresh/status').then(r => r.json()).then(d => {
+      if (d.running) { setRunning(); poll(); }
+    });
+
+    // Check if local data is stale vs API
+    fetch('/api/game-date').then(r => r.json()).then(d => {
+      if (!d.remote) {
+        btn.innerHTML = '⟳ Refresh <span class="sync-badge sync-unknown" title="Could not reach API">?</span>';
+      } else if (d.local === d.remote) {
+        btn.innerHTML = '⟳ Refresh <span class="sync-badge sync-ok" title="Up to date: ' + d.local + '">✓</span>';
+      } else {
+        btn.innerHTML = '⟳ Refresh <span class="sync-badge sync-stale" title="Local: ' + (d.local||'none') + ' — API: ' + d.remote + '">!</span>';
+      }
+    }).catch(() => {});
+  })();
+  </script>
+
+  <!-- Player hover popup -->
+  <div id="player-popup" style="display:none"></div>
+  <script>
+  (function() {
+    var popup = document.getElementById('player-popup');
+    var cache = {};
+    var hoverTimer = null;
+    var currentLink = null;
+
+    function fmtAvg(v) { return v == null ? '-' : v.toFixed(3).replace(/^0/,''); }
+    function fmtIp(v) {
+      if (v == null) return '-';
+      var f = Math.floor(v); return f + '.' + Math.round((v - f) * 3);
+    }
+
+    function gradeColor(g) {
+      if (g >= 70) return '#5ba4f5';
+      if (g >= 60) return '#4ecca3';
+      if (g >= 50) return 'var(--text)';
+      if (g >= 40) return '#f0a050';
+      return '#e94560';
+    }
+    function gradePair(arr) {
+      if (!arr) return '-';
+      return '<span style="color:' + gradeColor(arr[0]) + '">' + arr[0] + '</span>/' +
+             '<span style="color:' + gradeColor(arr[1]) + '">' + arr[1] + '</span>';
+    }
+
+    function renderPopup(d) {
+      var h = '<div class="pp-header"><strong>' + d.name + '</strong> <span class="pp-dim">' +
+        d.age + 'y ' + (d.height || '') + ' ' + (d.bats || '') + '/' + (d.throws || '') + '</span></div>';
+      h += '<div class="pp-meta">' + d.pos + ' · ' + d.team + ' · ' + d.level;
+      if (d.ovr) h += ' · <span class="pp-dim">Ovr</span> ' + d.ovr;
+      if (d.pot && d.pot !== d.ovr) h += '/<span class="pp-dim">Pot</span> ' + d.pot;
+      if (d.fv) h += ' · <span class="pp-dim">FV</span> ' + d.fv;
+      h += '</div>';
+      // Ratings
+      if (d.ratings) {
+        var R = d.ratings;
+        h += '<div class="pp-ratings">';
+        if (d.is_pitcher) {
+          h += '<span class="pp-tool"><span class="pp-dim">Stf</span> ' + gradePair(R.stf) + '</span>';
+          h += '<span class="pp-tool"><span class="pp-dim">Mov</span> ' + gradePair(R.mov) + '</span>';
+          h += '<span class="pp-tool"><span class="pp-dim">Ctl</span> ' + gradePair(R.ctl) + '</span>';
+          if (R.stm) h += '<span class="pp-tool"><span class="pp-dim">Stm</span> ' + R.stm + '</span>';
+          if (R.vel) h += '<span class="pp-tool"><span class="pp-dim">Vel</span> ' + R.vel + '</span>';
+          if (R.pitches && R.pitches.length) {
+            h += '<div class="pp-pitches">';
+            R.pitches.forEach(function(p) {
+              h += '<span class="pp-pitch"><span class="pp-dim">' + p.name + '</span> <span style="color:' + gradeColor(p.grade) + '">' + p.grade + '</span></span>';
+            });
+            h += '</div>';
+          }
+          if (R.bat) {
+            h += '<div style="margin-top:2px">';
+            h += '<span class="pp-tool"><span class="pp-dim">Con</span> ' + gradePair(R.bat.con) + '</span>';
+            h += '<span class="pp-tool"><span class="pp-dim">Pow</span> ' + gradePair(R.bat.pow) + '</span>';
+            h += '<span class="pp-tool"><span class="pp-dim">Eye</span> ' + gradePair(R.bat.eye) + '</span>';
+            if (R.bat.spd) h += '<span class="pp-tool"><span class="pp-dim">Spd</span> ' + R.bat.spd + '</span>';
+            h += '</div>';
+          }
+        } else {
+          h += '<span class="pp-tool"><span class="pp-dim">Con</span> ' + gradePair(R.con) + '</span>';
+          h += '<span class="pp-tool"><span class="pp-dim">Pow</span> ' + gradePair(R.pow) + '</span>';
+          h += '<span class="pp-tool"><span class="pp-dim">Eye</span> ' + gradePair(R.eye) + '</span>';
+          if (R.spd) h += '<span class="pp-tool"><span class="pp-dim">Spd</span> ' + R.spd + '</span>';
+        }
+        h += '</div>';
+      }
+      if (d.stats) {
+        h += '<div class="pp-stats">';
+        if (d.is_pitcher) {
+          var s = d.stats;
+          h += s.era != null ? s.era.toFixed(2) + ' ERA' : '';
+          h += ' · ' + fmtIp(s.ip) + ' IP · ' + s.k + ' K · ' + s.bb + ' BB';
+          if (s.sv || s.hld) h += ' · ' + s.sv + ' SV ' + s.hld + ' HLD';
+          h += ' · ' + s.war + ' WAR';
+          if (d.bat_stats) {
+            var b = d.bat_stats;
+            h += '</div><div class="pp-stats">' + fmtAvg(b.avg) + '/' + fmtAvg(b.obp) + '/' + fmtAvg(b.slg);
+            h += ' · ' + b.hr + ' HR · ' + b.war + ' bWAR';
+          }
+        } else {
+          var s = d.stats;
+          h += fmtAvg(s.avg) + '/' + fmtAvg(s.obp) + '/' + fmtAvg(s.slg);
+          h += ' · ' + s.hr + ' HR · ' + s.sb + ' SB · ' + s.war + ' WAR';
+        }
+        h += '</div>';
+      }
+      if (d.surplus != null) {
+        var cls = d.surplus > 0 ? 'pos' : d.surplus < 0 ? 'neg' : '';
+        h += '<div class="pp-surplus"><span class="' + cls + '">$' + d.surplus + 'M surplus</span></div>';
+      }
+      return h;
+    }
+
+    function show(link, pid) {
+      if (cache[pid]) {
+        popup.innerHTML = renderPopup(cache[pid]);
+        position(link);
+        popup.style.display = 'block';
+        return;
+      }
+      fetch('/api/player-popup/' + pid).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.error) return;
+        cache[pid] = d;
+        if (currentLink === link) {
+          popup.innerHTML = renderPopup(d);
+          position(link);
+          popup.style.display = 'block';
+        }
+      });
+    }
+
+    function position(link) {
+      var rect = link.getBoundingClientRect();
+      var top = rect.bottom + window.scrollY + 4;
+      var left = rect.left + window.scrollX;
+      if (left + 300 > window.innerWidth) left = window.innerWidth - 310;
+      popup.style.top = top + 'px';
+      popup.style.left = Math.max(4, left) + 'px';
+    }
+
+    function hide() {
+      clearTimeout(hoverTimer);
+      currentLink = null;
+      popup.style.display = 'none';
+    }
+
+    document.addEventListener('mouseover', function(e) {
+      var link = e.target.closest('a.player-link');
+      if (!link) return;
+      var m = link.getAttribute('href').match(/\/player\/(\d+)/);
+      if (!m) return;
+      currentLink = link;
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(function() { show(link, m[1]); }, 300);
+    });
+    document.addEventListener('mouseout', function(e) {
+      var link = e.target.closest('a.player-link');
+      if (!link) return;
+      var related = e.relatedTarget;
+      if (related && (related === popup || popup.contains(related))) return;
+      hide();
+    });
+    popup.addEventListener('mouseleave', hide);
+  })();
+  </script>
+</body>
+</html>

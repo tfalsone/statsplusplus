@@ -1,0 +1,790 @@
+#!/usr/bin/env python3
+"""
+Usage:
+  python3 scripts/refresh.py [year]                    # Full league refresh
+  python3 scripts/refresh.py state <game_date> [year]  # Update state only
+
+Game date is fetched automatically from the API. State is updated and fv_calc
+is run at the end — single command does everything.
+
+Targets the active league from data/app_config.json. Year defaults to the
+league's configured year.
+"""
+
+import json, os, sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+BASE = Path(__file__).parent.parent
+sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(BASE))
+from statsplus import client
+import db as _db
+from league_config import config as _cfg
+from league_context import get_league_dir
+from log_config import get_logger
+
+log = get_logger("refresh")
+
+
+def _upsert_teams(conn, teams):
+    conn.executemany(
+        "INSERT OR REPLACE INTO teams VALUES (?,?,?,?,?)",
+        [(t["ID"], t.get("Name",""), t.get("Level",""), t.get("Parent Team ID"), t.get("League",""))
+         for t in teams]
+    )
+
+def _upsert_players(conn, players):
+    conn.executemany(
+        "INSERT OR REPLACE INTO players VALUES (?,?,?,?,?,?,?,?)",
+        [(p["ID"], f"{p.get('First Name','')} {p.get('Last Name','')}".strip(),
+          p.get("Age"), p.get("Team ID"), p.get("Parent Team ID"),
+          p.get("Level"), p.get("Pos"), p.get("Role"))
+         for p in players]
+    )
+
+def _upsert_ratings(conn, ratings, snapshot_date, keep_history=True):
+    # Column names matching the DB schema. The INSERT uses explicit column names
+    # so it works regardless of column order (existing DBs with ALTER TABLE ADD
+    # have new columns appended at the end, not in schema order).
+    _RATING_COLS = (
+        "player_id", "snapshot_date", "ovr", "pot",
+        "cntct", "gap", "pow", "eye", "ks",
+        "babip",
+        "speed", "steal",
+        "stf", "mov", "ctrl", "ctrl_r", "ctrl_l",
+        "hra", "pbabip",
+        "fst", "snk", "crv", "sld", "chg",
+        "splt", "cutt", "cir_chg", "scr",
+        "frk", "kncrv", "knbl", "stm", "vel",
+        "pot_stf", "pot_mov", "pot_ctrl",
+        "pot_hra", "pot_pbabip",
+        "pot_fst", "pot_snk", "pot_crv", "pot_sld",
+        "pot_chg", "pot_splt", "pot_cutt",
+        "pot_cir_chg", "pot_scr", "pot_frk",
+        "pot_kncrv", "pot_knbl",
+        "pot_cntct", "pot_gap", "pot_pow", "pot_eye", "pot_ks",
+        "pot_babip",
+        "c", "ss", "second_b", "third_b",
+        "first_b", "lf", "cf", "rf",
+        "pot_c", "pot_ss", "pot_second_b", "pot_third_b",
+        "pot_first_b", "pot_lf", "pot_cf", "pot_rf",
+        "p", "pot_p",
+        "ofa", "ifa", "c_arm", "c_blk", "c_frm",
+        "ifr", "ofr",
+        "ife", "ofe", "tdp", "gb",
+        "cntct_l", "cntct_r", "gap_l", "gap_r",
+        "pow_l", "pow_r", "eye_l", "eye_r",
+        "ks_l", "ks_r",
+        "babip_l", "babip_r",
+        "stf_l", "stf_r", "mov_l", "mov_r",
+        "hra_l", "hra_r", "pbabip_l", "pbabip_r",
+        "int_", "wrk_ethic", "greed", "loy", "lead",
+        "prone", "acc",
+        "league_id",
+        "height", "bats", "throws",
+        "stl_rt", "run", "sac_bunt", "bunt_hit", "hold",
+    )
+
+    def row(r):
+        # Order MUST match _RATING_COLS above.
+        return (
+            r["ID"], snapshot_date, r.get("Ovr"), r.get("Pot"),
+            r.get("Cntct"), r.get("Gap"), r.get("Pow"), r.get("Eye"), r.get("Ks"),
+            r.get("BABIP"),
+            r.get("Speed"), r.get("Steal"),
+            r.get("Stf"), r.get("Mov"), r.get("Ctrl"), r.get("Ctrl_R"), r.get("Ctrl_L"),
+            r.get("HRA"), r.get("PBABIP"),
+            r.get("Fst"), r.get("Snk"), r.get("Crv"), r.get("Sld"), r.get("Chg"),
+            r.get("Splt"), r.get("Cutt"), r.get("CirChg"), r.get("Scr"),
+            r.get("Frk"), r.get("Kncrv"), r.get("Knbl"), r.get("Stm"), r.get("Vel"),
+            r.get("PotStf"), r.get("PotMov"), r.get("PotCtrl"),
+            r.get("PotHRA"), r.get("PotPBABIP"),
+            r.get("PotFst"), r.get("PotSnk"), r.get("PotCrv"), r.get("PotSld"),
+            r.get("PotChg"), r.get("PotSplt"), r.get("PotCutt"),
+            r.get("PotCirChg"), r.get("PotScr"), r.get("PotFrk"),
+            r.get("PotKncrv"), r.get("PotKnbl"),
+            r.get("PotCntct"), r.get("PotGap"), r.get("PotPow"), r.get("PotEye"), r.get("PotKs"),
+            r.get("PotBABIP"),
+            r.get("C"), r.get("SS"), r.get("2B"), r.get("3B"),
+            r.get("1B"), r.get("LF"), r.get("CF"), r.get("RF"),
+            r.get("PotC"), r.get("PotSS"), r.get("Pot2B"), r.get("Pot3B"),
+            r.get("Pot1B"), r.get("PotLF"), r.get("PotCF"), r.get("PotRF"),
+            r.get("P"), r.get("PotP"),
+            r.get("OFA"), r.get("IFA"), r.get("CArm"), r.get("CBlk"), r.get("CFrm"),
+            r.get("IFR"), r.get("OFR"),
+            r.get("IFE"), r.get("OFE"), r.get("TDP"), r.get("GB"),
+            r.get("Cntct_L"), r.get("Cntct_R"), r.get("Gap_L"), r.get("Gap_R"),
+            r.get("Pow_L"), r.get("Pow_R"), r.get("Eye_L"), r.get("Eye_R"),
+            r.get("Ks_L"), r.get("Ks_R"),
+            r.get("BABIP_L"), r.get("BABIP_R"),
+            r.get("Stf_L"), r.get("Stf_R"), r.get("Mov_L"), r.get("Mov_R"),
+            r.get("HRA_L"), r.get("HRA_R"), r.get("PBABIP_L"), r.get("PBABIP_R"),
+            r.get("Int"), r.get("WrkEthic"), r.get("Greed"), r.get("Loy"), r.get("Lead"),
+            r.get("Prone"), r.get("Acc"),
+            r.get("League"),
+            r.get("Height"), r.get("Bats"), r.get("Throws"),
+            r.get("StlRt"), r.get("Run"), r.get("SacBunt"), r.get("BuntHit"), r.get("Hold"),
+        )
+    if not ratings:
+        log.info("  ratings: empty response, skipping upsert")
+        return
+    col_list = ",".join(_RATING_COLS)
+    placeholders = ",".join(["?"] * len(_RATING_COLS))
+    verb = "INSERT OR IGNORE" if keep_history else "INSERT OR REPLACE"
+    conn.executemany(
+        f"{verb} INTO ratings ({col_list}) VALUES ({placeholders})",
+        [row(r) for r in ratings]
+    )
+    # Backfill demographics (height/bats/throws) on existing rows that have NULLs
+    conn.executemany(
+        "UPDATE ratings SET height=?, bats=?, throws=? WHERE player_id=? AND height IS NULL",
+        [(r.get("Height"), r.get("Bats"), r.get("Throws"), r["ID"])
+         for r in ratings if r.get("Height") is not None]
+    )
+
+def _upsert_contracts(conn, contracts):
+    def row(c):
+        return (
+            c["player_id"], c.get("team_id"), c.get("contract_team_id"), c.get("is_major"),
+            c.get("season_year"), c.get("years"), c.get("current_year"),
+            *[c.get(f"salary{i}") for i in range(15)],
+            c.get("no_trade"), c.get("last_year_team_option"), c.get("last_year_player_option"),
+        )
+    conn.executemany(
+        f"INSERT OR REPLACE INTO contracts VALUES ({','.join(['?']*25)})",
+        [row(c) for c in contracts]
+    )
+
+def _upsert_batting(conn, rows):
+    def _avg(r): return r.get("h", 0) / r["ab"] if r.get("ab") else None
+    def _obp(r):
+        h, bb, hp, ab, sf = r.get("h",0), r.get("bb",0), r.get("hp",0), r.get("ab",0), r.get("sf",0)
+        denom = ab + bb + hp + sf
+        return (h + bb + hp) / denom if denom else None
+    def _slg(r):
+        ab = r.get("ab", 0)
+        if not ab: return None
+        return (r.get("h",0) + r.get("d",0) + 2*r.get("t",0) + 3*r.get("hr",0)) / ab
+
+    conn.executemany(
+        "INSERT OR REPLACE INTO batting_stats VALUES (" + ",".join(["?"]*32) + ")",
+        [(r["player_id"], r.get("year"), r.get("team_id"), r.get("split_id"),
+          r.get("ab"), r.get("h"), r.get("d"), r.get("t"), r.get("hr"),
+          r.get("r"), r.get("rbi"), r.get("sb"), r.get("bb"), r.get("k"),
+          _avg(r), _obp(r), _slg(r), r.get("war"),
+          r.get("pa"), r.get("stint"), r.get("hp"), r.get("sf"),
+          r.get("g"), r.get("gs"), r.get("cs"), r.get("gdp"), r.get("ibb"),
+          r.get("sh"), r.get("ci"), r.get("pitches_seen"), r.get("ubr"), r.get("wpa"))
+         for r in rows]
+    )
+
+def _upsert_pitching(conn, rows):
+    def _ip(outs):
+        return outs / 3 if outs else 0.0
+    def _era(r):
+        outs = r.get("outs") or 0
+        er = r.get("er") or 0
+        return round(er * 27 / outs, 2) if outs > 0 else 0.0
+
+    conn.executemany(
+        "INSERT OR REPLACE INTO pitching_stats VALUES (" + ",".join(["?"]*52) + ")",
+        [(r["player_id"], r.get("year"), r.get("team_id"), r.get("split_id"),
+          _ip(r.get("outs")), r.get("g"), r.get("gs"), r.get("w"), r.get("l"), r.get("s"),
+          _era(r), r.get("k"), r.get("bb"), r.get("ha"), r.get("war"),
+          r.get("outs"), r.get("stint"), r.get("ra9war"), r.get("hra"), r.get("bf"), r.get("hp"),
+          r.get("ab"), r.get("er"), r.get("r"), r.get("cg"), r.get("sho"), r.get("gf"),
+          r.get("hld"), r.get("bs"), r.get("svo"), r.get("qs"),
+          r.get("gb"), r.get("fb"), r.get("pi"), r.get("wp"), r.get("bk"),
+          r.get("iw"), r.get("ir"), r.get("irs"), r.get("rs"), r.get("dp"),
+          r.get("sb"), r.get("cs"), r.get("sf"), r.get("sh"), r.get("ci"),
+          r.get("tb"), r.get("li"), r.get("wpa"), r.get("ra"), r.get("md"), r.get("sd"))
+         for r in rows]
+    )
+
+
+
+def _upsert_fielding(conn, rows):
+    conn.executemany(
+        "INSERT OR REPLACE INTO fielding_stats VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [(r["player_id"], r.get("year"), r.get("team_id"), r.get("position"),
+          r.get("g"), r.get("gs"), (r.get("ip") or 0) / 3,
+          r.get("tc"), r.get("a"), r.get("po"),
+          r.get("e"), r.get("dp"), r.get("pb"), r.get("sba"), r.get("rto"),
+          r.get("zr"), r.get("framing"), r.get("arm"))
+         for r in rows]
+    )
+
+
+def _upsert_games(conn, rows):
+    conn.executemany("""
+        INSERT OR REPLACE INTO games (game_id, home_team, away_team, date, runs0, runs1, game_type, played, winning_pitcher, losing_pitcher, save_pitcher)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    """, [(r.get("game_id"), r.get("home_team"), r.get("away_team"), r.get("date"),
+           r.get("runs0"), r.get("runs1"), r.get("game_type"), r.get("played"),
+           r.get("winning_pitcher"), r.get("losing_pitcher"), r.get("save_pitcher")) for r in rows])
+
+def _upsert_team_stats(conn, year):
+    tb = client.get_team_batting_stats(year=year, split=1)
+    tp = client.get_team_pitching_stats(year=year, split=1)
+    conn.executemany(
+        "INSERT OR REPLACE INTO team_batting_stats VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [(r["tid"], year, r.get("split_id", 1), r.get("name", ""),
+          r.get("pa"), r.get("ab"), r.get("h"), r.get("k"), r.get("hr"),
+          r.get("r"), r.get("rbi"), r.get("bb"), r.get("sb"),
+          r.get("avg"), r.get("obp"), r.get("slg"), r.get("ops"), r.get("iso"),
+          r.get("k_pct"), r.get("bb_pct"), r.get("babip"), r.get("woba"))
+         for r in tb]
+    )
+    conn.executemany(
+        "INSERT OR REPLACE INTO team_pitching_stats VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [(r["tid"], year, r.get("split_id", 1), r.get("name", ""),
+          r.get("outs") / 3 if r.get("outs") else r.get("ip"),
+          r.get("era"), r.get("k"), r.get("bb"), r.get("ha"),
+          r.get("r"), r.get("er"), r.get("hra"), r.get("g", 0),
+          r.get("k_pct"), r.get("bb_pct"), r.get("fip"), r.get("babip"),
+          r.get("avg"), r.get("obp"))
+         for r in tp]
+    )
+    log.info(f"  team batting: {len(tb)}, team pitching: {len(tp)}")
+
+
+def _detect_league_structure(conn, year):
+    """Auto-detect divisions and leagues from game history and team stats API.
+
+    Returns (divisions, leagues, team_abbr, team_names) or None if insufficient data.
+    Uses game frequency between teams to cluster into divisions, then inter-division
+    frequency to group divisions into leagues.
+    """
+    from collections import Counter, defaultdict
+
+    # Get team ordering + abbreviations from API (teams come grouped by division)
+    bat_stats = client.get_team_batting_stats(year=year, split=1)
+    if not bat_stats:
+        return None
+    seen = set()
+    api_order = []  # [(tid, abbr, name), ...] in API order
+    for s in bat_stats:
+        if s["tid"] not in seen:
+            seen.add(s["tid"])
+            api_order.append((s["tid"], s.get("abbr", "?"), s.get("name", "?")))
+
+    mlb_tids = {t[0] for t in api_order}
+    if len(mlb_tids) < 6:
+        return None
+
+    # Build pairwise game counts from all history
+    games = conn.execute(
+        "SELECT home_team, away_team FROM games WHERE played=1 AND game_type=0"
+    ).fetchall()
+    pair_counts = Counter()
+    for h, a in games:
+        if h in mlb_tids and a in mlb_tids:
+            pair_counts[tuple(sorted([h, a]))] += 1
+
+    team_vs = defaultdict(Counter)
+    for (t1, t2), cnt in pair_counts.items():
+        team_vs[t1][t2] = cnt
+        team_vs[t2][t1] = cnt
+
+    # Cluster into divisions using game frequency.
+    # For each team with enough games, its division mates are the teams it plays
+    # most frequently — identified by the largest gap in opponent frequency.
+    parent = {t: t for t in mlb_tids}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        a, b = find(a), find(b)
+        if a != b:
+            parent[b] = a
+
+    clustered = set()
+    for tid in mlb_tids:
+        opps = team_vs[tid].most_common()
+        if len(opps) < 6:
+            continue  # expansion team with too few games — handle later
+        freqs = [c for _, c in opps]
+        gaps = [(freqs[i] - freqs[i + 1], i + 1) for i in range(min(7, len(freqs) - 1))]
+        best_gap, best_pos = max(gaps, key=lambda x: x[0])
+        if best_gap >= 20:
+            for opp, _ in opps[:best_pos]:
+                union(tid, opp)
+            clustered.add(tid)
+
+    # Group into divisions
+    div_map = defaultdict(set)
+    for tid in mlb_tids:
+        div_map[find(tid)].add(tid)
+
+    # Assign unclustered teams (expansion with few games) using API ordering.
+    # They sit between two division groups in the API — assign to the preceding one.
+    unclustered = mlb_tids - clustered
+    if unclustered:
+        api_tids = [t[0] for t in api_order]
+        for tid in unclustered:
+            idx = api_tids.index(tid)
+            # Walk backward to find the nearest clustered team
+            for i in range(idx - 1, -1, -1):
+                if api_tids[i] in clustered:
+                    union(tid, api_tids[i])
+                    break
+        # Rebuild div_map
+        div_map = defaultdict(set)
+        for tid in mlb_tids:
+            div_map[find(tid)].add(tid)
+
+    divisions_list = list(div_map.values())
+
+    # --- Standard 30-team MLB fallback ---
+    # When we detect exactly 30 teams in 6 divisions of 5, use the canonical
+    # MLB division/league assignments. The inter-division game frequency
+    # heuristic can't reliably distinguish AL from NL in interleague-heavy
+    # schedules, but the team-to-division mapping is unambiguous.
+    _STANDARD_MLB = {
+        "AL": {
+            "East":    {"BAL", "BOS", "NYY", "TB", "TOR"},
+            "Central": {"CWS", "CLE", "DET", "KC", "MIN"},
+            "West":    {"HOU", "LAA", "OAK", "SEA", "TEX"},
+        },
+        "NL": {
+            "East":    {"ATL", "MIA", "NYM", "PHI", "WSH"},
+            "Central": {"CHC", "CIN", "MIL", "PIT", "STL"},
+            "West":    {"ARI", "COL", "LAD", "SD", "SF"},
+        },
+    }
+
+    if (len(mlb_tids) == 30
+            and len(divisions_list) == 6
+            and all(len(d) == 5 for d in divisions_list)):
+        # Map abbreviations to team IDs
+        abbr_to_tid = {t[1]: t[0] for t in api_order}
+        # Check if every team's abbreviation matches the standard set
+        all_abbrs = {t[1] for t in api_order}
+        std_abbrs = set()
+        for lg in _STANDARD_MLB.values():
+            for div in lg.values():
+                std_abbrs.update(div)
+        if std_abbrs <= all_abbrs:
+            log.info("  30/6/5 detected — using standard MLB divisions")
+            abbr_map = {t[0]: t[1] for t in api_order}
+            name_rows = conn.execute(
+                "SELECT t.team_id, t.name FROM teams t WHERE t.team_id IN ({})".format(
+                    ",".join(str(t) for t in mlb_tids))
+            ).fetchall()
+            full_names = {r[0]: r[1] for r in name_rows}
+            api_teams = client.get_teams()
+            nick_map = {t["ID"]: t.get("Nickname", "") for t in api_teams}
+            team_names_out = {str(tid): f"{full_names.get(tid, '?')} {nick_map.get(tid, '')}".strip()
+                              for tid in mlb_tids}
+            team_abbr_out = {str(tid): abbr_map.get(tid, "?") for tid in mlb_tids}
+            leagues_out = []
+            divisions_out = {}
+            colors = ["#508cff", "#ff6b6b"]
+            for lg_idx, (lg_name, divs) in enumerate(_STANDARD_MLB.items()):
+                lg_obj = {"name": lg_name, "short": lg_name,
+                          "color": colors[lg_idx], "divisions": {}}
+                for div_name, abbrs in divs.items():
+                    tids = sorted(abbr_to_tid[a] for a in abbrs if a in abbr_to_tid)
+                    lg_obj["divisions"][div_name] = tids
+                    divisions_out[f"{lg_name} {div_name}"] = tids
+                leagues_out.append(lg_obj)
+            return divisions_out, leagues_out, team_abbr_out, team_names_out
+
+    # --- General case: group divisions into leagues by game frequency ---
+    n_divs = len(divisions_list)
+    inter_avg = {}
+    for i in range(n_divs):
+        for j in range(i + 1, n_divs):
+            total = sum(pair_counts.get(tuple(sorted([t1, t2])), 0)
+                        for t1 in divisions_list[i] for t2 in divisions_list[j])
+            pairs = len(divisions_list[i]) * len(divisions_list[j])
+            inter_avg[(i, j)] = total / pairs if pairs else 0
+
+    # Cluster divisions into leagues: union-find on divisions
+    div_parent = list(range(n_divs))
+
+    def dfind(x):
+        while div_parent[x] != x:
+            div_parent[x] = div_parent[div_parent[x]]
+            x = div_parent[x]
+        return x
+
+    def dunion(a, b):
+        a, b = dfind(a), dfind(b)
+        if a != b:
+            div_parent[b] = a
+
+    # Threshold: same-league divisions play ~40+ games/pair on average
+    threshold = 35
+    for (i, j), avg in inter_avg.items():
+        if avg >= threshold:
+            dunion(i, j)
+
+    league_groups = defaultdict(list)
+    for i in range(n_divs):
+        league_groups[dfind(i)].append(i)
+
+    # Name divisions and leagues using API order.
+    # API returns teams grouped by division within each league.
+    # Use the API ordering to assign division names (East/Central/West).
+    api_tids = [t[0] for t in api_order]
+
+    def div_api_position(div_set):
+        """Average position of division's teams in API order."""
+        return sum(api_tids.index(t) for t in div_set if t in api_tids) / len(div_set)
+
+    # Build team_abbr and team_names from API data
+    abbr_map = {t[0]: t[1] for t in api_order}
+    # Get full names from teams table
+    name_rows = conn.execute(
+        "SELECT t.team_id, t.name FROM teams t WHERE t.team_id IN ({})".format(
+            ",".join(str(t) for t in mlb_tids))
+    ).fetchall()
+    full_names = {r[0]: r[1] for r in name_rows}
+    # Get nicknames from API
+    api_teams = client.get_teams()
+    nick_map = {t["ID"]: t.get("Nickname", "") for t in api_teams}
+    team_names_out = {str(tid): f"{full_names.get(tid, '?')} {nick_map.get(tid, '')}".strip()
+                      for tid in mlb_tids}
+    team_abbr_out = {str(tid): abbr_map.get(tid, "?") for tid in mlb_tids}
+
+    # Standard division name patterns by count
+    _DIV_NAMES = {
+        2: ["East", "West"],
+        3: ["East", "Central", "West"],
+        4: ["East", "North", "South", "West"],
+    }
+
+    # Traditional AL team IDs — used to assign AL/NL labels when there are 2 leagues
+    _TRAD_AL = {33, 34, 35, 38, 40, 42, 43, 44, 47, 48, 50, 54, 57, 58, 59}
+
+    # Build leagues array and flat divisions dict
+    leagues_out = []
+    divisions_out = {}
+    colors = ["#508cff", "#ff6b6b", "#50c878", "#ffa500"]
+
+    sorted_groups = sorted(league_groups.items())
+    n_leagues = len(sorted_groups)
+
+    # For 2-league setups, determine which is AL by traditional team membership
+    if n_leagues == 2:
+        group_al_counts = []
+        for _, div_indices in sorted_groups:
+            tids_in_group = set()
+            for di in div_indices:
+                tids_in_group.update(divisions_list[di])
+            group_al_counts.append(len(tids_in_group & _TRAD_AL))
+        # Put the group with more traditional AL teams first
+        if group_al_counts[0] < group_al_counts[1]:
+            sorted_groups = [sorted_groups[1], sorted_groups[0]]
+
+    for lg_idx, (lg_root, div_indices) in enumerate(sorted_groups):
+        # Sort divisions within league by API position
+        div_indices_sorted = sorted(div_indices, key=lambda i: div_api_position(divisions_list[i]))
+        div_names = _DIV_NAMES.get(len(div_indices_sorted),
+                                    [f"Division {j+1}" for j in range(len(div_indices_sorted))])
+
+        if n_leagues == 2:
+            lg_name = "AL" if lg_idx == 0 else "NL"
+        else:
+            lg_name = f"League {lg_idx + 1}"
+
+        lg_obj = {
+            "name": lg_name, "short": lg_name,
+            "color": colors[lg_idx % len(colors)],
+            "divisions": {},
+        }
+
+        for j, di in enumerate(div_indices_sorted):
+            div_name = div_names[j]
+            full_div_name = f"{lg_name} {div_name}"
+            tids = sorted(divisions_list[di])
+            lg_obj["divisions"][div_name] = tids
+            divisions_out[full_div_name] = tids
+
+        leagues_out.append(lg_obj)
+
+    return divisions_out, leagues_out, team_abbr_out, team_names_out
+
+
+def refresh_league(year):
+    """Pull all teams into DB for the active league."""
+    import time as _time
+    log.info("=== refresh_league started (year=%s) ===", year)
+    league_dir = get_league_dir()
+    _db.init_schema(league_dir)
+    conn = _db.get_conn(league_dir)
+
+    # Kick off ratings export first — it takes 30s+ to generate on the server.
+    # If RATINGS_POLL_URL is set (from onboarding auth check), reuse it.
+    ratings_poll_url = os.environ.get("RATINGS_POLL_URL", "")
+    if ratings_poll_url:
+        log.info("── ratings (reusing poll URL from auth check)")
+    else:
+        log.info("── ratings (kicked off — will collect later)")
+        ratings_poll_url = client.start_ratings_export()
+    ratings_start = _time.monotonic()
+
+    log.info("── teams")
+    _upsert_teams(conn, client.get_teams())
+
+    log.info("── players (all orgs)")
+    players = client.get_players()
+    _upsert_players(conn, players)
+
+    log.info("── contracts (all orgs)")
+    contracts = client.get_contracts()
+    _upsert_contracts(conn, contracts)
+
+    log.info("── batting (all orgs)")
+    _upsert_batting(conn, client.get_player_batting_stats(year=year, split=1))
+
+    log.info("── pitching (all orgs)")
+    _upsert_pitching(conn, client.get_player_pitching_stats(year=year, split=1))
+
+    # Historical stats — up to 15 prior years for $/WAR, player history, etc.
+    # Only pull years not already in the DB.
+    existing_years = {r[0] for r in conn.execute(
+        "SELECT DISTINCT year FROM batting_stats").fetchall()}
+    hist_start = max(year - 15, 2005)  # don't go before OOTP data exists
+    hist_years = [y for y in range(hist_start, year) if y not in existing_years]
+    if hist_years:
+        log.info(f"── historical stats ({hist_years[0]}–{hist_years[-1]}, {len(hist_years)} years)")
+        for y in hist_years:
+            bat = client.get_player_batting_stats(year=y, split=1)
+            _upsert_batting(conn, bat)
+            pit = client.get_player_pitching_stats(year=y, split=1)
+            _upsert_pitching(conn, pit)
+            log.info(f"  {y}: {len(bat)} bat, {len(pit)} pit")
+        conn.commit()
+
+    log.info("── fielding (all orgs)")
+    fielding = client.get_player_fielding_stats(year=year)
+    _upsert_fielding(conn, fielding)
+    log.info(f"  {len(fielding)} rows")
+
+    log.info("── team stats")
+    _upsert_team_stats(conn, year)
+
+    log.info("── game history")
+    games = client.get_game_history(year=year)
+    _upsert_games(conn, games)
+    log.info(f"  {len(games)} games")
+
+    conn.commit()
+
+    # Now collect ratings — wait for the minimum 30s if other pulls were fast
+    elapsed = _time.monotonic() - ratings_start
+    remaining = 30 - elapsed
+    if remaining > 0:
+        log.info("── ratings (waiting for export...)")
+        _time.sleep(remaining)
+    else:
+        log.info("── ratings (collecting...)")
+
+    state = json.loads((league_dir / "config" / "state.json").read_text())
+    snapshot_date = state.get("game_date", "unknown")
+    org_id = _cfg.my_team_id
+    all_ratings = client.get_ratings(poll_url=ratings_poll_url, skip_initial_wait=elapsed >= 30)
+    my_ids = {p["ID"] for p in players if p.get("Team ID") == org_id or p.get("Parent Team ID") == org_id}
+    my_ratings    = [r for r in all_ratings if r["ID"] in my_ids]
+    other_ratings = [r for r in all_ratings if r["ID"] not in my_ids]
+    _upsert_ratings(conn, my_ratings,    snapshot_date, keep_history=True)
+    _upsert_ratings(conn, other_ratings, snapshot_date, keep_history=False)
+
+    # Fix intl complex players: API reports level=1 but league_id is negative
+    intl_ids = [r["ID"] for r in all_ratings if (r.get("League") or 0) < 0]
+    if intl_ids:
+        conn.executemany(
+            "UPDATE players SET level = 8 WHERE player_id = ? AND level = '1'",
+            [(pid,) for pid in intl_ids]
+        )
+        log.info(f"  reclassified {len(intl_ids)} intl complex players to level=8")
+
+    conn.commit()
+
+    log.info("── league structure")
+    structure = _detect_league_structure(conn, year)
+    conn.close()
+    if structure:
+        divisions, leagues, team_abbr, team_names = structure
+        settings_path = league_dir / "config" / "league_settings.json"
+        s = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+        s["divisions"] = divisions
+        s["leagues"] = leagues
+        s["team_abbr"] = team_abbr
+        s["team_names"] = team_names
+        settings_path.write_text(json.dumps(s, indent=2) + "\n")
+        log.info(f"  {len(leagues)} leagues, {len(divisions)} divisions, {len(team_abbr)} teams")
+    else:
+        log.info("  insufficient data — skipped")
+
+    log.info("── league averages")
+    _refresh_league_averages(year)
+    _refresh_dollar_per_war(year)
+    _detect_minimum_salary()
+    log.info("=== refresh_league complete ===")
+
+
+def _refresh_dollar_per_war(year):
+    """Compute market $/WAR from contracts signed in the current season."""
+    league_dir = get_league_dir()
+    conn = _db.get_conn(league_dir)
+
+    signed_rows = conn.execute("""
+        SELECT p.player_id, c.salary_0
+        FROM contracts c JOIN players p ON c.player_id = p.player_id
+        WHERE p.level = 1 AND c.is_major = 1
+          AND c.season_year = ? AND c.salary_0 >= 5000000
+          AND c.years > 1
+    """, (year,)).fetchall()
+
+    if not signed_rows:
+        conn.close()
+        return
+
+    pids = [r["player_id"] for r in signed_rows]
+    total_salary = sum(r["salary_0"] for r in signed_rows)
+
+    placeholders = ",".join("?" * len(pids))
+    bat_war = conn.execute(
+        f"SELECT SUM(war) FROM (SELECT player_id, SUM(war) as war FROM batting_stats "
+        f"WHERE year=? AND split_id=1 AND player_id IN ({placeholders}) GROUP BY player_id)",
+        [year - 1] + pids  # use prior season WAR — current season is incomplete
+    ).fetchone()[0] or 0
+    pit_war = conn.execute(
+        f"SELECT SUM(war) FROM (SELECT player_id, SUM(war) as war FROM pitching_stats "
+        f"WHERE year=? AND split_id=1 AND player_id IN ({placeholders}) GROUP BY player_id)",
+        [year - 1] + pids
+    ).fetchone()[0] or 0
+    total_war = bat_war + pit_war
+    conn.close()
+
+    if total_war <= 0:
+        return
+
+    dpw = round(total_salary / total_war)
+    avg_path = league_dir / "config" / "league_averages.json"
+    averages = json.loads(avg_path.read_text())
+    averages["dollar_per_war"] = dpw
+    averages["dollar_per_war_note"] = (
+        f"Current-market rate: {len(pids)} MLB contracts signed in {year} "
+        f"(salary >= $5M), total salary ${total_salary:,} / prior-season WAR {total_war:.1f}. "
+        f"Recalculated each league refresh."
+    )
+    avg_path.write_text(json.dumps(averages, indent=2))
+    log.info(f"  $/WAR calibrated: ${dpw:,} ({len(pids)} contracts signed {year}, "
+          f"payroll ${total_salary:,} / WAR {total_war:.1f})")
+
+
+def _avg(rows, field):
+    vals = [r[field] for r in rows if isinstance(r.get(field), float)]
+    return round(sum(vals) / len(vals), 4) if vals else None
+
+
+def _write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2))
+    log.info(f"  → {path.relative_to(BASE)}")
+
+
+def _detect_minimum_salary():
+    """Detect league minimum salary from the mode of lowest MLB contract salaries."""
+    league_dir = get_league_dir()
+    conn = _db.get_conn(league_dir)
+    rows = conn.execute("""
+        SELECT c.salary_0 FROM contracts c
+        JOIN players p ON c.player_id = p.player_id
+        WHERE p.level = '1' AND c.is_major = 1 AND c.salary_0 > 0
+        ORDER BY c.salary_0 LIMIT 200
+    """).fetchall()
+    conn.close()
+    if not rows:
+        return
+    # Mode of the bottom 200 salaries — the minimum salary cluster dominates
+    from collections import Counter
+    salary, count = Counter(r[0] for r in rows).most_common(1)[0]
+    settings_path = league_dir / "config" / "league_settings.json"
+    s = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+    s["minimum_salary"] = salary
+    settings_path.write_text(json.dumps(s, indent=2) + "\n")
+    log.info(f"  minimum salary: ${salary:,} (mode of bottom 200 MLB contracts)")
+
+
+def _refresh_league_averages(year):
+    bat = client.get_team_batting_stats(year=year, split=1)
+    pit = client.get_team_pitching_stats(year=year, split=1)
+    league_dir = get_league_dir()
+    avg_path = league_dir / "config" / "league_averages.json"
+    existing = json.loads(avg_path.read_text()) if avg_path.exists() else {}
+    averages = {
+        "year": year,
+        "teams_in_sample": len(bat),
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+        "batting": {f: _avg(bat, f) for f in
+            ["avg", "obp", "slg", "ops", "woba", "babip", "iso", "k_pct", "bb_pct"]},
+        "pitching": {f: _avg(pit, f) for f in
+            ["era", "fip", "x_fip", "k_pct", "bb_pct", "k_bb_pct", "babip", "avg", "obp"]},
+    }
+    # Preserve dollar_per_war if already calculated — only league refresh recalculates it
+    for key in ("dollar_per_war", "dollar_per_war_note"):
+        if key in existing:
+            averages[key] = existing[key]
+    _write_json(avg_path, averages)
+
+
+def update_state(game_date, year):
+    league_dir = get_league_dir()
+    state_path = league_dir / "config" / "state.json"
+    existing = json.loads(state_path.read_text()) if state_path.exists() else {}
+    state = {
+        "game_date": game_date,
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+        "year": int(year),
+        "my_team_id": existing.get("my_team_id", _cfg.my_team_id),
+    }
+    _write_json(state_path, state)
+
+
+def _run_fv_calc():
+    """Run fv_calc.py as a subprocess to compute league-wide FV + surplus."""
+    import subprocess
+    log.info("── fv_calc")
+    result = subprocess.run(
+        [sys.executable, str(BASE / "scripts" / "fv_calc.py")],
+        capture_output=True, text=True
+    )
+    if result.stdout:
+        log.info(f"  {result.stdout.strip()}")
+    if result.returncode != 0:
+        msg = result.stderr.strip().splitlines()
+        last = msg[-1] if msg else "unknown error"
+        log.error("fv_calc failed: %s", last)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    default_year = _cfg.year
+    if args and args[0] == "state":
+        game_date = args[1] if len(args) > 1 else "unknown"
+        year      = int(args[2]) if len(args) > 2 else default_year
+        update_state(game_date, year)
+    else:
+        if args and args[0] == "--league":
+            args = args[1:]
+        skip_fv = False
+        if args and args[0] == "--no-fv":
+            skip_fv = True
+            args = args[1:]
+        year = int(args[0]) if args else default_year
+        game_date = client.get_date()
+        update_state(game_date, year)
+        refresh_league(year)
+        if not skip_fv:
+            _run_fv_calc()

@@ -1,0 +1,266 @@
+"""
+db.py — SQLite connection and schema initialization.
+
+Resolves DB path from the active league directory (data/<league>/league.db).
+Falls back to legacy emlb.db at project root for pre-migration compat.
+"""
+
+import sqlite3
+from pathlib import Path
+
+from league_context import get_league_dir
+
+_LEGACY_DB = Path(__file__).parent.parent / "emlb.db"
+
+
+def _resolve_db_path(league_dir: Path | None = None, create: bool = False) -> Path:
+    if league_dir is None:
+        league_dir = get_league_dir()
+        explicit = False
+    else:
+        explicit = True
+    db_path = league_dir / "league.db"
+    if db_path.exists() or explicit or create:
+        return db_path
+    # Legacy fallback — only for implicit resolution (pre-migration compat)
+    if _LEGACY_DB.exists():
+        return _LEGACY_DB
+    return db_path
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS teams (
+    team_id        INTEGER PRIMARY KEY,
+    name           TEXT,
+    level          TEXT,
+    parent_team_id INTEGER,
+    league         TEXT
+);
+
+CREATE TABLE IF NOT EXISTS players (
+    player_id      INTEGER PRIMARY KEY,
+    name           TEXT,
+    age            INTEGER,
+    team_id        INTEGER,
+    parent_team_id INTEGER,
+    level          TEXT,
+    pos            INTEGER,
+    role           INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS ratings (
+    player_id     INTEGER,
+    snapshot_date TEXT,
+    ovr           INTEGER,
+    pot           INTEGER,
+    cntct INTEGER, gap INTEGER, pow INTEGER, eye INTEGER, ks INTEGER,
+    babip INTEGER,
+    speed INTEGER, steal INTEGER,
+    stf INTEGER, mov INTEGER, ctrl INTEGER, ctrl_r INTEGER, ctrl_l INTEGER,
+    hra INTEGER, pbabip INTEGER,
+    fst INTEGER, snk INTEGER, crv INTEGER, sld INTEGER, chg INTEGER,
+    splt INTEGER, cutt INTEGER, cir_chg INTEGER, scr INTEGER,
+    frk INTEGER, kncrv INTEGER, knbl INTEGER, stm INTEGER, vel TEXT,
+    pot_stf INTEGER, pot_mov INTEGER, pot_ctrl INTEGER,
+    pot_hra INTEGER, pot_pbabip INTEGER,
+    pot_fst INTEGER, pot_snk INTEGER, pot_crv INTEGER, pot_sld INTEGER,
+    pot_chg INTEGER, pot_splt INTEGER, pot_cutt INTEGER,
+    pot_cir_chg INTEGER, pot_scr INTEGER, pot_frk INTEGER,
+    pot_kncrv INTEGER, pot_knbl INTEGER,
+    pot_cntct INTEGER, pot_gap INTEGER, pot_pow INTEGER, pot_eye INTEGER, pot_ks INTEGER,
+    pot_babip INTEGER,
+    c INTEGER, ss INTEGER, second_b INTEGER, third_b INTEGER,
+    first_b INTEGER, lf INTEGER, cf INTEGER, rf INTEGER,
+    pot_c INTEGER, pot_ss INTEGER, pot_second_b INTEGER, pot_third_b INTEGER,
+    pot_first_b INTEGER, pot_lf INTEGER, pot_cf INTEGER, pot_rf INTEGER,
+    p INTEGER, pot_p INTEGER,
+    ofa INTEGER, ifa INTEGER, c_arm INTEGER, c_blk INTEGER, c_frm INTEGER,
+    ifr INTEGER, ofr INTEGER,
+    ife INTEGER, ofe INTEGER, tdp INTEGER, gb INTEGER,
+    cntct_l INTEGER, cntct_r INTEGER, gap_l INTEGER, gap_r INTEGER,
+    pow_l INTEGER, pow_r INTEGER, eye_l INTEGER, eye_r INTEGER,
+    ks_l INTEGER, ks_r INTEGER,
+    babip_l INTEGER, babip_r INTEGER,
+    stf_l INTEGER, stf_r INTEGER, mov_l INTEGER, mov_r INTEGER,
+    hra_l INTEGER, hra_r INTEGER, pbabip_l INTEGER, pbabip_r INTEGER,
+    int_ TEXT, wrk_ethic TEXT, greed TEXT, loy TEXT, lead TEXT,
+    prone TEXT, acc TEXT,
+    league_id INTEGER,
+    height INTEGER, bats TEXT, throws TEXT,
+    stl_rt INTEGER, run INTEGER, sac_bunt INTEGER, bunt_hit INTEGER, hold INTEGER,
+    PRIMARY KEY (player_id, snapshot_date)
+);
+
+CREATE TABLE IF NOT EXISTS contracts (
+    player_id               INTEGER PRIMARY KEY,
+    team_id                 INTEGER,
+    contract_team_id        INTEGER,
+    is_major                INTEGER,
+    season_year             INTEGER,
+    years                   INTEGER,
+    current_year            INTEGER,
+    salary_0  INTEGER, salary_1  INTEGER, salary_2  INTEGER, salary_3  INTEGER,
+    salary_4  INTEGER, salary_5  INTEGER, salary_6  INTEGER, salary_7  INTEGER,
+    salary_8  INTEGER, salary_9  INTEGER, salary_10 INTEGER, salary_11 INTEGER,
+    salary_12 INTEGER, salary_13 INTEGER, salary_14 INTEGER,
+    no_trade                INTEGER,
+    last_year_team_option   INTEGER,
+    last_year_player_option INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS batting_stats (
+    player_id INTEGER, year INTEGER, team_id INTEGER, split_id INTEGER,
+    ab INTEGER, h INTEGER, d INTEGER, t INTEGER, hr INTEGER,
+    r INTEGER, rbi INTEGER, sb INTEGER, bb INTEGER, k INTEGER,
+    avg REAL, obp REAL, slg REAL, war REAL,
+    pa INTEGER, stint INTEGER, hbp INTEGER, sf INTEGER,
+    g INTEGER, gs INTEGER, cs INTEGER, gdp INTEGER, ibb INTEGER,
+    sh INTEGER, ci INTEGER, pitches_seen INTEGER, ubr REAL, wpa REAL,
+    PRIMARY KEY (player_id, year, split_id, team_id)
+);
+
+CREATE TABLE IF NOT EXISTS pitching_stats (
+    player_id INTEGER, year INTEGER, team_id INTEGER, split_id INTEGER,
+    ip REAL, g INTEGER, gs INTEGER, w INTEGER, l INTEGER, sv INTEGER,
+    era REAL, k INTEGER, bb INTEGER, ha INTEGER, war REAL,
+    outs INTEGER, stint INTEGER, ra9war REAL, hra INTEGER, bf INTEGER, hp INTEGER,
+    ab INTEGER, er INTEGER, r INTEGER, cg INTEGER, sho INTEGER, gf INTEGER,
+    hld INTEGER, bs INTEGER, svo INTEGER, qs INTEGER,
+    gb INTEGER, fb INTEGER, pi INTEGER, wp INTEGER, bk INTEGER,
+    iw INTEGER, ir REAL, irs REAL, rs INTEGER, dp INTEGER,
+    sb INTEGER, cs INTEGER, sf INTEGER, sh INTEGER, ci INTEGER,
+    tb INTEGER, li REAL, wpa REAL, relief_app INTEGER, md INTEGER, sd INTEGER,
+    PRIMARY KEY (player_id, year, split_id, team_id)
+);
+
+CREATE TABLE IF NOT EXISTS prospect_fv (
+    player_id       INTEGER,
+    eval_date       TEXT,
+    fv              INTEGER,
+    fv_str          TEXT,
+    level           TEXT,
+    bucket          TEXT,
+    prospect_surplus INTEGER,
+    PRIMARY KEY (player_id, eval_date)
+);
+
+CREATE TABLE IF NOT EXISTS org_reports (
+    team_id     INTEGER,
+    report_date TEXT,
+    report_md   TEXT,
+    PRIMARY KEY (team_id, report_date)
+);
+
+CREATE TABLE IF NOT EXISTS player_surplus (
+    player_id      INTEGER,
+    eval_date      TEXT,
+    name           TEXT,
+    bucket         TEXT,
+    age            INTEGER,
+    ovr            INTEGER,
+    fv             INTEGER,
+    fv_str         TEXT,
+    surplus        INTEGER,
+    level          TEXT,
+    team_id        INTEGER,
+    parent_team_id INTEGER,
+    PRIMARY KEY (player_id, eval_date)
+);
+
+CREATE TABLE IF NOT EXISTS fielding_stats (
+    player_id INTEGER,
+    year      INTEGER,
+    team_id   INTEGER,
+    position  INTEGER,
+    g INTEGER, gs INTEGER, ip REAL, tc INTEGER, a INTEGER, po INTEGER,
+    e INTEGER, dp INTEGER, pb INTEGER, sba INTEGER, rto INTEGER,
+    zr REAL, framing REAL, arm REAL,
+    PRIMARY KEY (player_id, year, team_id, position)
+);
+
+CREATE TABLE IF NOT EXISTS team_batting_stats (
+    team_id  INTEGER,
+    year     INTEGER,
+    split_id INTEGER,
+    name     TEXT,
+    pa INTEGER, ab INTEGER, h INTEGER, k INTEGER, hr INTEGER,
+    r INTEGER, rbi INTEGER, bb INTEGER, sb INTEGER,
+    avg REAL, obp REAL, slg REAL, ops REAL, iso REAL,
+    k_pct REAL, bb_pct REAL, babip REAL, woba REAL,
+    PRIMARY KEY (team_id, year, split_id)
+);
+
+CREATE TABLE IF NOT EXISTS team_pitching_stats (
+    team_id  INTEGER,
+    year     INTEGER,
+    split_id INTEGER,
+    name     TEXT,
+    ip REAL, era REAL, k INTEGER, bb INTEGER, ha INTEGER,
+    r INTEGER, er INTEGER, hra INTEGER, g INTEGER,
+    k_pct REAL, bb_pct REAL, fip REAL, babip REAL, avg REAL, obp REAL,
+    PRIMARY KEY (team_id, year, split_id)
+);
+
+CREATE TABLE IF NOT EXISTS games (
+    game_id   INTEGER PRIMARY KEY,
+    home_team INTEGER,
+    away_team INTEGER,
+    date      TEXT,
+    runs0     INTEGER,
+    runs1     INTEGER,
+    game_type INTEGER,
+    played    INTEGER,
+    winning_pitcher INTEGER,
+    losing_pitcher  INTEGER,
+    save_pitcher    INTEGER
+);
+
+CREATE VIEW IF NOT EXISTS latest_ratings AS
+SELECT * FROM ratings
+WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM ratings);
+"""
+
+
+def get_conn(league_dir: Path | None = None) -> sqlite3.Connection:
+    db_path = _resolve_db_path(league_dir)
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _migrate_ratings(conn: sqlite3.Connection):
+    """Add columns introduced after the initial schema."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(ratings)").fetchall()}
+    new_cols = [
+        ("ctrl", "INTEGER", "AFTER mov"),
+        ("p", "INTEGER", "AFTER pot_rf"),
+        ("pot_p", "INTEGER", "AFTER p"),
+        ("stl_rt", "INTEGER", "AFTER throws"),
+        ("run", "INTEGER", "AFTER stl_rt"),
+        ("sac_bunt", "INTEGER", "AFTER run"),
+        ("bunt_hit", "INTEGER", "AFTER sac_bunt"),
+        ("hold", "INTEGER", "AFTER bunt_hit"),
+        ("babip", "INTEGER", None),
+        ("babip_l", "INTEGER", None),
+        ("babip_r", "INTEGER", None),
+        ("pot_babip", "INTEGER", None),
+        ("hra", "INTEGER", None),
+        ("hra_l", "INTEGER", None),
+        ("hra_r", "INTEGER", None),
+        ("pot_hra", "INTEGER", None),
+        ("pbabip", "INTEGER", None),
+        ("pbabip_l", "INTEGER", None),
+        ("pbabip_r", "INTEGER", None),
+        ("pot_pbabip", "INTEGER", None),
+        ("prone", "TEXT", None),
+    ]
+    for col, typ, _ in new_cols:
+        if col not in existing:
+            # SQLite ignores AFTER clause but we include it for documentation
+            conn.execute(f"ALTER TABLE ratings ADD COLUMN {col} {typ}")
+
+
+def init_schema(league_dir: Path | None = None):
+    with get_conn(league_dir) as conn:
+        conn.executescript(SCHEMA)
+        _migrate_ratings(conn)

@@ -1,0 +1,488 @@
+{% extends "base.html" %}
+{% block content %}
+
+{# ── Summary Bar ── #}
+<div class="summary-bar">
+  <div class="summary-item">
+    <span class="label">Game Date</span>
+    <span class="value">{{ summary.game_date }}</span>
+  </div>
+  <div class="summary-item">
+    <span class="label">Season</span>
+    <span class="value">{{ summary.year }}</span>
+  </div>
+  <div class="summary-item">
+    <span class="label">Phase</span>
+    <span class="value" style="font-size:16px">Regular Season</span>
+  </div>
+  <div class="summary-item">
+    <span class="label">Lg AVG</span>
+    <span class="value" style="font-size:18px">{{ "%.3f"|format(lg_avg.batting.avg) }}</span>
+  </div>
+  <div class="summary-item">
+    <span class="label">Lg ERA</span>
+    <span class="value" style="font-size:18px">{{ "%.2f"|format(lg_avg.pitching.era) }}</span>
+  </div>
+  <div class="summary-item">
+    <span class="label">Lg OPS</span>
+    <span class="value" style="font-size:18px">{{ "%.3f"|format(lg_avg.batting.ops) }}</span>
+  </div>
+  <div class="summary-item">
+    <span class="label">$/WAR</span>
+    <span class="value" style="font-size:18px">{% if lg_avg.dollar_per_war %}${{ "%.1f"|format(lg_avg.dollar_per_war / 1e6) }}M{% else %}—{% endif %}</span>
+  </div>
+</div>
+<hr class="kpi-divider">
+<div class="tab-bar">
+  <button class="tab active" data-tab="overview">Overview</button>
+  <button class="tab" data-tab="prospects">Prospects</button>
+</div>
+
+{# ══════ Overview Tab ══════ #}
+<div class="tab-content active" id="tab-overview">
+<div class="league-main">
+
+  {# ── Left column: Standings + Power Rankings ── #}
+  <div class="league-col-left">
+
+    {# Standings Grid — dynamic from league_groups #}
+    <div class="standings-grid" style="grid-template-columns: repeat({{ league_groups[0].divisions|length if league_groups else 3 }}, 1fr);">
+      {% macro div_card(div, color) %}
+      <div class="div-card panel" style="border-top: 2px solid {{ color }}80;">
+        <h2>{{ div.name }}</h2>
+        <table class="div-table">
+          <thead>
+            <tr><th class="left">Team</th><th>W</th><th>L</th><th>Pct</th><th>GB</th></tr>
+          </thead>
+          <tbody>
+            {% for r in div.rows %}
+            {% set gb_num = 0 if r.div_gb == '-' else r.div_gb|float %}
+            <tr{% if r.is_mine %} class="highlight"{% elif gb_num >= 10 %} class="div-faded"{% endif %}>
+              <td class="left">
+                {%- if r.div_rank == 1 %}<span class="div-leader-badge">1st</span>{% elif r.is_wc %}<span class="div-wc-badge">WC</span>{% else %}<span class="div-badge-spacer"></span>{% endif -%}
+                <a class="team-link" href="/team/{{ r.tid }}">{{ r.name }}</a>
+              </td>
+              <td>{{ r.w }}</td>
+              <td>{{ r.l }}</td>
+              <td>
+                <span class="pct-track"><span class="pct-bar" style="width:{{ (r.pct * 100)|round|int }}%"></span><span class="pct-val">{{ "%.3f"|format(r.pct) }}</span></span>
+              </td>
+              <td>{{ r.div_gb }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endmacro %}
+      {% for lg in league_groups %}
+        {% for div in lg.divisions %}{{ div_card(div, lg.color) }}{% endfor %}
+      {% endfor %}
+    </div>
+
+    {# Power Rankings — scrollable #}
+    <div class="panel league-power-panel">
+      <h2>Power Rankings</h2>
+      <div class="power-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th data-sort="num">#</th><th data-sort="str" class="left">Team</th>
+              <th data-sort="num">Score</th><th data-sort="num">W</th><th data-sort="num" data-sort-best="low">L</th>
+              <th data-sort="num">Pct</th><th data-sort="str">L10</th><th data-sort="str">Strk</th>
+              <th data-sort="num">RD/G</th><th data-sort="num">MLB $</th><th data-sort="num">Farm $</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in power %}
+            {% set score_pct = (r.score / power[0].score * 100)|round|int if power[0].score else 0 %}
+            <tr{% if r.is_mine %} class="highlight"{% endif %}>
+              <td>{{ r.rank }}</td>
+              <td class="left"><a class="team-link" href="/team/{{ r.tid }}">{{ r.abbr }}</a></td>
+              <td class="score-cell"><span class="score-bar" style="width:{{ score_pct }}%"></span><span class="score-val">{{ r.score }}</span></td>
+              <td>{{ r.w }}</td>
+              <td>{{ r.l }}</td>
+              <td>{{ "%.3f"|format(r.pct) }}</td>
+              <td>{{ r.l10 }}</td>
+              <td class="{{ 'streak-w' if r.streak.startswith('W') else 'streak-l' if r.streak.startswith('L') else '' }}">{{ r.streak }}</td>
+              <td>{{ "%+.2f"|format(r.rdpg) }}</td>
+              <td>${{ r.mlb_surplus }}M</td>
+              <td>${{ r.farm_surplus }}M</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  {# ── Right column: Leaders ── #}
+  <div class="league-col-right">
+    <div class="panel-stack league-leaders-panel">
+      <div class="leaders-filter">
+        <button class="leaders-btn active" data-lg="All">All</button>
+        {% for lg in league_groups %}
+        <button class="leaders-btn" data-lg="{{ lg.short }}">{{ lg.short }}</button>
+        {% endfor %}
+      </div>
+      {% for group_label, group_key in [("Batting Leaders", "bat"), ("Pitching Leaders", "pit")] %}
+      <div class="panel" id="leaders-{{ group_key }}">
+        <h2>{{ group_label }}</h2>
+        <div class="leaders-grid" id="grid-{{ group_key }}"></div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+</div>
+</div>
+
+{# ══════ Prospects Tab ══════ #}
+<div class="tab-content" id="tab-prospects">
+
+  {# Table + side panel layout #}
+  <div class="prospect-layout">
+    <div class="prospect-table-wrap">
+      {# Sub-tabs with inline dropdowns #}
+      <div class="prospect-modes">
+        <button class="prospect-mode active" data-mode="top100">Top 100</button>
+        <div class="prospect-mode-group">
+          <select class="prospect-mode-select" id="select-team">
+            <option value="" disabled selected>Top 30 by Team</option>
+          </select>
+        </div>
+        <div class="prospect-mode-group">
+          <select class="prospect-mode-select" id="select-position">
+            <option value="" disabled selected>Top 10 by Position</option>
+          </select>
+        </div>
+        <div class="prospect-filters" id="top100-filter">
+          <select id="top100-team-filter">
+            <option value="">All Teams</option>
+          </select>
+          <input type="text" id="prospect-search" class="prospect-search" placeholder="Find a Player">
+        </div>
+      </div>
+      <table id="prospect-table">
+        <thead id="prospect-thead"></thead>
+        <tbody id="prospect-tbody"></tbody>
+      </table>
+    </div>
+
+    {# Side panel #}
+    <div class="prospect-panel" id="prospect-panel" style="display:none">
+      <button class="panel-close" id="panel-close">✕</button>
+      <div id="panel-content"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ── Stat Leaders ── */
+const BAT_LEADERS = {{ bat_leaders|tojson }};
+const PIT_LEADERS = {{ pit_leaders|tojson }};
+const MY_ABBR = {{ my_abbr|tojson }};
+
+function renderLeaders(data, gridId) {
+  const grid = document.getElementById(gridId);
+  grid.innerHTML = '';
+  Object.keys(data).forEach(cat => {
+    const players = data[cat];
+    if (!players || !players.length) return;
+    const card = document.createElement('div');
+    card.className = 'leader-card';
+    const top = players[0];
+    const topHl = top.team === MY_ABBR ? ' leader-hl' : '';
+    let html = `<div class="leader-hero${topHl}">
+      <span class="leader-cat">${cat}</span>
+      <div class="leader-hero-row">
+        <a class="player-link" href="/player/${top.pid}">${top.name}</a>
+        <span class="leader-team dim">${top.team}</span>
+        <span class="leader-hero-val">${top.val}</span>
+      </div>
+    </div>`;
+    for (let i = 1; i < players.length; i++) {
+      const p = players[i];
+      const hl = p.team === MY_ABBR ? ' leader-hl' : '';
+      html += `<div class="leader-row${hl}">` +
+        `<span class="leader-rank">${i+1}.</span>` +
+        `<a class="player-link" href="/player/${p.pid}">${p.name}</a>` +
+        `<span class="leader-team dim">${p.team}</span>` +
+        `<span class="leader-val">${p.val}</span></div>`;
+    }
+    card.innerHTML = html;
+    grid.appendChild(card);
+  });
+}
+
+function setLeague(lg) {
+  document.querySelectorAll('.leaders-btn').forEach(b => b.classList.toggle('active', b.dataset.lg === lg));
+  renderLeaders(BAT_LEADERS[lg], 'grid-bat');
+  renderLeaders(PIT_LEADERS[lg], 'grid-pit');
+}
+document.querySelectorAll('.leaders-btn').forEach(b =>
+  b.addEventListener('click', () => setLeague(b.dataset.lg)));
+setLeague('All');
+
+/* ── Prospects ── */
+const TOP100 = {{ prospects|tojson }};
+const ALL_PROSPECTS = {{ all_prospects|tojson }};
+
+const TEAMS = [...new Set(ALL_PROSPECTS.map(p => p.team))].sort();
+const TEAM_NAMES = {};
+ALL_PROSPECTS.forEach(p => { if (p.team_name) TEAM_NAMES[p.team] = p.team_name; });
+const POS_ORDER = ['C','1B','2B','3B','SS','OF','SP','RP'];
+const OF_BUCKETS = new Set(['CF','LF','RF','OF','COF']);
+
+const selTeam = document.getElementById('select-team');
+const selPos = document.getElementById('select-position');
+const top100Btn = document.querySelector('[data-mode="top100"]');
+const top100Filter = document.getElementById('top100-team-filter');
+const top100FilterWrap = document.getElementById('top100-filter');
+const prospectSearch = document.getElementById('prospect-search');
+
+// Populate selects
+TEAMS.forEach(t => {
+  const o1 = document.createElement('option'); o1.value = t; o1.textContent = TEAM_NAMES[t] || t; selTeam.appendChild(o1);
+  const o2 = document.createElement('option'); o2.value = t; o2.textContent = TEAM_NAMES[t] || t; top100Filter.appendChild(o2);
+});
+POS_ORDER.forEach(p => { const o = document.createElement('option'); o.value = p; o.textContent = p; selPos.appendChild(o); });
+
+let currentMode = 'top100';
+
+const COLS = {
+  top100:   ['#','Player','Position','Team','Level','ETA','Age','Ht','B/T','FV','Surplus'],
+  team:     ['#','Player','Position','Level','ETA','Age','Ht','B/T','FV','Surplus'],
+  position: ['#','Player','Team','Level','ETA','Age','Ht','B/T','FV','Surplus'],
+};
+const LEFT_COLS = new Set(['Player','Team','Level']);
+
+function renderHead() {
+  document.getElementById('prospect-thead').innerHTML = '<tr>' +
+    COLS[currentMode].map(c => LEFT_COLS.has(c) ? `<th class="left">${c}</th>` : `<th>${c}</th>`).join('') + '</tr>';
+}
+
+function renderProspects(list, maxRows) {
+  const rows = maxRows ? list.slice(0, maxRows) : list;
+  const mode = currentMode;
+  const useOrigRank = mode === 'top100';
+  const maxSurplus = Math.max(...rows.map(p => p.surplus || 0), 1);
+  document.getElementById('prospect-tbody').innerHTML = rows.map((p, i) => {
+    const hl = (mode === 'top100' && p.team === MY_ABBR) ? ' class="highlight"' : '';
+    const rank = useOrigRank && p.rank ? p.rank : i + 1;
+    const dots = levelDots(p.level);
+    const etaCls = (p.eta == CURRENT_YEAR) ? 'eta-now' : (p.eta >= CURRENT_YEAR + 2) ? 'eta-far' : '';
+    const surpPct = Math.round((p.surplus || 0) / maxSurplus * 60);
+    let c = `<td>${rank}</td>`;
+    c += `<td class="left"><a class="player-link" href="/player/${p.pid}">${p.name}</a></td>`;
+    if (mode !== 'position') c += `<td>${p.bucket}</td>`;
+    if (mode !== 'team') c += `<td class="left"><a class="team-link" href="/team/${p.tid}">${p.team_name || p.team}</a></td>`;
+    c += `<td class="level-cell">${lvlBadge(p.level)}<span class="level-dots">${dots}</span></td>`;
+    c += `<td class="${etaCls}">${p.eta}</td><td>${p.age}</td>`;
+    c += `<td class="ht-cell">${p.height}</td><td>${p.bats}/${p.throws}</td>`;
+    c += `<td>${fvBadge(p.fv, p.fv_str)}</td>`;
+    c += `<td class="surplus-cell"><span class="surplus-track"><span class="surplus-bar" style="width:${surpPct}%"></span><span class="surplus-val">$${p.surplus}M</span></span></td>`;
+    return `<tr${hl}>${c}</tr>`;
+  }).join('');
+}
+
+const LEVEL_DOTS = {AAA:4, AA:3, A:2, 'A-Short':2, Rookie:1, USL:1, DSL:1, Intl:1};
+function levelDots(level) {
+  const filled = LEVEL_DOTS[level] || 1;
+  let s = '';
+  for (let i = 0; i < 5; i++) s += `<span class="dot${i < filled ? ' dot-filled' : ''}"></span>`;
+  return s;
+}
+
+function fvClass(fv) {
+  if (fv >= 65) return 'fv-elite';
+  if (fv >= 55) return 'fv-plus';
+  if (fv >= 50) return 'fv-avg';
+  return 'fv-fringe';
+}
+
+function fvBadge(fv, fvStr) {
+  const cls = fv >= 65 ? 'fv-badge-gold' : fv >= 55 ? 'fv-badge-blue' : fv >= 50 ? 'fv-badge-green' : 'fv-badge-gray';
+  return `<span class="fv-badge ${cls}">${fvStr}</span>`;
+}
+
+function lvlBadge(level) {
+  const cls = level === 'AAA' ? 'lvl-aaa' : level === 'AA' ? 'lvl-aa' : (level === 'A' || level === 'A-Short') ? 'lvl-a' : 'lvl-low';
+  return `<span class="lvl-badge ${cls}">${level}</span>`;
+}
+
+const CURRENT_YEAR = {{ summary.year }};
+
+function clearActive() {
+  top100Btn.classList.remove('active');
+  selTeam.classList.remove('active');
+  selPos.classList.remove('active');
+}
+
+// Top 100 click
+top100Btn.addEventListener('click', () => {
+  currentMode = 'top100';
+  clearActive();
+  top100Btn.classList.add('active');
+  selTeam.selectedIndex = 0;
+  selPos.selectedIndex = 0;
+  top100FilterWrap.style.display = '';
+  top100Filter.value = '';
+  prospectSearch.value = '';
+  renderHead();
+  renderProspects(TOP100, 100);
+});
+
+// Team select
+selTeam.addEventListener('change', () => {
+  currentMode = 'team';
+  clearActive();
+  selTeam.classList.add('active');
+  selPos.selectedIndex = 0;
+  top100FilterWrap.style.display = 'none';
+  renderHead();
+  renderProspects(ALL_PROSPECTS.filter(p => p.team === selTeam.value), 30);
+});
+
+// Position select
+selPos.addEventListener('change', () => {
+  currentMode = 'position';
+  clearActive();
+  selPos.classList.add('active');
+  selTeam.selectedIndex = 0;
+  top100FilterWrap.style.display = 'none';
+  renderHead();
+  const val = selPos.value;
+  const match = val === 'OF' ? p => OF_BUCKETS.has(p.bucket) : p => p.bucket === val;
+  renderProspects(ALL_PROSPECTS.filter(match), 10);
+});
+
+// Top 100 team filter
+top100Filter.addEventListener('change', applyTop100Filters);
+prospectSearch.addEventListener('input', applyTop100Filters);
+
+function applyTop100Filters() {
+  const team = top100Filter.value;
+  const query = prospectSearch.value.toLowerCase().trim();
+  let list = TOP100;
+  if (team) list = list.filter(p => p.team === team);
+  if (query) list = list.filter(p => p.name.toLowerCase().includes(query));
+  renderProspects(list, 100);
+}
+
+// Init
+top100FilterWrap.style.display = '';
+renderHead();
+renderProspects(TOP100, 100);
+
+/* ── Prospect Side Panel ── */
+const panel = document.getElementById('prospect-panel');
+const panelContent = document.getElementById('panel-content');
+let activePid = null;
+
+document.getElementById('panel-close').addEventListener('click', () => {
+  panel.style.display = 'none';
+  activePid = null;
+  document.querySelectorAll('#prospect-tbody tr.row-active').forEach(r => r.classList.remove('row-active'));
+});
+
+document.getElementById('prospect-tbody').addEventListener('click', (e) => {
+  const link = e.target.closest('a.player-link');
+  if (!link) return;
+  e.preventDefault();
+  const href = link.getAttribute('href');
+  const pid = parseInt(href.split('/').pop());
+  if (pid === activePid) return;
+  activePid = pid;
+  document.querySelectorAll('#prospect-tbody tr.row-active').forEach(r => r.classList.remove('row-active'));
+  link.closest('tr').classList.add('row-active');
+  panelContent.innerHTML = '<div class="panel-loading">Loading...</div>';
+  panel.style.display = '';
+  fetch(`/api/prospect/${pid}`)
+    .then(r => r.json())
+    .then(d => { if (d.pid === activePid) renderPanel(d); })
+    .catch(() => { panelContent.innerHTML = '<div class="panel-loading">Error loading data</div>'; });
+});
+
+function gradeBar(cur, fut) {
+  if (!cur) return '—';
+  const pot = (fut && fut > cur) ? fut : cur;
+  const curPct = cur > 20 ? Math.round((cur - 20) / 60 * 100) : 5;
+  const potPct = pot > 20 ? Math.round((pot - 20) / 60 * 100) : 5;
+  const label = pot > cur ? `${cur}/${pot}` : `${cur}`;
+  return `<span class="grade" data-g="${cur}"><span class="grade-label-chip" data-g="${cur}">${label}</span><span class="grade-track"><span class="grade-pot" data-g="${pot}" style="width:${potPct}%"></span><span class="grade-cur" data-g="${cur}" style="width:${curPct}%"></span></span></span>`;
+}
+
+function renderPanel(d) {
+  let html = `<div class="panel-header">
+    <div class="panel-name"><a class="player-link" href="/player/${d.pid}">${d.name}</a></div>
+    <div class="panel-meta">${d.bucket} · ${d.team_name || d.team} · Age ${d.age}</div>
+    <div class="panel-meta">${d.height || ''} · ${d.bats}/${d.throws} · ${d.level}</div>
+  </div>`;
+
+  html += `<div class="panel-grades">
+    <div class="panel-grade-row">
+      <span class="panel-grade-label">OVR</span><span class="panel-grade-val">${d.ovr}</span>
+      <span class="panel-grade-label">POT</span><span class="panel-grade-val">${d.pot}</span>
+    </div>
+    <div class="panel-grade-row">
+      <span class="panel-grade-label">FV</span><span class="panel-grade-val ${fvClass(d.fv)}">${d.fv_str}</span>
+      <span class="panel-grade-label">ETA</span><span class="panel-grade-val">${d.eta}</span>
+    </div>
+    <div class="panel-grade-row">
+      <span class="panel-grade-label">Surplus</span><span class="panel-grade-val">$${d.surplus}M</span>
+    </div>
+  </div>`;
+
+  // Tools with grade bars
+  if (d.tools && d.tools.length) {
+    html += '<div class="panel-tools"><div class="panel-section-title">Tools</div>';
+    html += '<table class="grade-table panel-grade-table"><tbody>';
+    d.tools.forEach(t => {
+      html += `<tr><td>${t.name}</td><td>${gradeBar(t.cur, t.fut)}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+  }
+
+  // Pitches (pitchers only)
+  if (d.pitches && d.pitches.length) {
+    html += '<div class="panel-tools"><div class="panel-section-title">Pitches' +
+      (d.velocity ? ` <span class="panel-vel">${d.velocity}</span>` : '') + '</div>';
+    html += '<table class="grade-table panel-grade-table"><tbody>';
+    d.pitches.forEach(p => {
+      html += `<tr><td>${p.name}</td><td>${gradeBar(p.cur, p.fut)}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+  }
+
+  // Defense (hitters only)
+  if (d.defense && d.defense.length) {
+    html += '<div class="panel-tools"><div class="panel-section-title">Defense</div>';
+    html += '<table class="grade-table panel-grade-table"><tbody>';
+    d.defense.forEach(df => {
+      html += `<tr><td>${df.pos}</td><td>${gradeBar(df.cur, df.fut)}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+  }
+
+  if (d.summary) {
+    html += `<div class="panel-summary"><div class="panel-section-title">Scouting Report</div>
+      <p>${d.summary}</p></div>`;
+  }
+
+  panelContent.innerHTML = html;
+}
+
+/* ── Tabs ── */
+document.querySelectorAll('.tab-bar .tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-bar .tab').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+</script>
+
+{% endblock %}

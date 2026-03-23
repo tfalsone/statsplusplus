@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="settings-page">
+  <div class="panel" style="max-width:{{ '700px' if step == 3 else '550px' }}">
+    <h2>Add a New League — Step {{ step }} of 4</h2>
+    <div class="wizard-progress">
+      {% for i in range(1, 5) %}
+      <span class="wizard-dot{{ ' active' if i == step else ' done' if i < step else '' }}">{{ i }}</span>
+      {% endfor %}
+    </div>
+
+    {% if step == 1 %}
+    {# ── Connect ── #}
+    <form method="post" action="/onboard/step1">
+      <p>Enter the StatsPlus URL slug for this league and your session credentials.</p>
+      <div class="form-grid">
+        <label>League Slug</label>
+        <input type="text" name="slug" value="{{ slug or '' }}" placeholder="e.g. emlb" required style="width:180px">
+        <label>Session ID</label>
+        <input type="text" name="session_id" value="{{ session_id or '' }}" placeholder="Paste sessionid value" required style="width:380px">
+        <label>CSRF Token <span class="dim">(optional)</span></label>
+        <input type="text" name="csrf_token" value="{{ csrf_token or '' }}" placeholder="Paste csrftoken value" style="width:380px">
+      </div>
+      <details style="margin-top:10px">
+        <summary class="dim" style="cursor:pointer; font-size:0.85em">Where do I find these?</summary>
+        <div style="margin-top:6px; padding:10px; background:#1a1a2e; border-radius:6px; font-size:0.85em; line-height:1.6">
+          <ol style="margin:0; padding-left:18px">
+            <li>Open <a href="https://statsplus.net" target="_blank">statsplus.net</a> and <strong>log in</strong>.</li>
+            <li>Press <kbd>F12</kbd> to open DevTools.</li>
+            <li>Go to <strong>Application</strong> (Chrome) or <strong>Storage</strong> (Firefox).</li>
+            <li>Expand <strong>Cookies</strong> → click <strong>https://statsplus.net</strong>.</li>
+            <li>Copy the <strong>Value</strong> for <code>sessionid</code> and <code>csrftoken</code>.</li>
+          </ol>
+        </div>
+      </details>
+      {% if error %}<p class="form-error">{{ error }}</p>{% endif %}
+      <button type="submit" style="margin-top:12px">Connect & Verify →</button>
+    </form>
+
+    {% elif step == 2 %}
+    {# ── Pull Data (auto-start) ── #}
+    <div id="refresh-running">
+      <div style="display:flex; align-items:center; gap:10px; margin:16px 0">
+        <div class="spinner"></div>
+        <span>Pulling data for <strong>{{ slug }}</strong>... <span id="elapsed-timer" class="dim" style="font-size:0.85em"></span></span>
+      </div>
+      <div id="refresh-stage" class="dim" style="font-size:0.9em">Starting...</div>
+      <div style="margin-top:12px; background:#1a1a2e; border-radius:4px; height:6px; overflow:hidden">
+        <div id="progress-bar" style="height:100%; background:#508cff; width:0%; transition:width 0.5s"></div>
+      </div>
+      <p class="dim" style="font-size:0.8em; margin-top:6px">Ratings export takes the longest — please be patient.</p>
+    </div>
+    <div id="refresh-error" style="display:none">
+      <p class="form-error" id="error-msg"></p>
+      <div style="margin-top:12px; display:flex; gap:8px">
+        <a href="/onboard" class="nav-btn" style="text-decoration:none">← Back</a>
+        <button type="button" onclick="startRefresh()">Retry →</button>
+      </div>
+    </div>
+    <script>
+    const STAGES = ['Starting', 'teams', 'players', 'contracts', 'batting', 'pitching',
+                    'historical', 'fielding', 'team stats', 'game history',
+                    'ratings (waiting', 'ratings (collecting', 'league structure', 'league averages'];
+    function stageProgress(stage) {
+      const s = stage.toLowerCase();
+      for (let i = STAGES.length - 1; i >= 0; i--) {
+        if (s.includes(STAGES[i].toLowerCase())) return Math.min(((i + 1) / STAGES.length) * 100, 95);
+      }
+      return 5;
+    }
+    let _timerStart, _timerInterval;
+    function _updateTimer() {
+      const s = Math.floor((Date.now() - _timerStart) / 1000);
+      const m = Math.floor(s / 60);
+      document.getElementById('elapsed-timer').textContent = m > 0 ? `${m}m ${s%60}s` : `${s}s`;
+    }
+    function startRefresh() {
+      document.getElementById('refresh-error').style.display = 'none';
+      document.getElementById('refresh-running').style.display = 'block';
+      _timerStart = Date.now();
+      _timerInterval = setInterval(_updateTimer, 1000);
+      _updateTimer();
+      fetch('/onboard/start-refresh', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({slug:'{{ slug }}', ratings_poll_url:'{{ ratings_poll_url|default("") }}'})
+      }).then(() => pollStatus());
+    }
+    function _stopTimer() { clearInterval(_timerInterval); }
+    function pollStatus() {
+      fetch('/onboard/refresh-status').then(r=>r.json()).then(data => {
+        if (data.error) {
+          _stopTimer();
+          document.getElementById('refresh-running').style.display = 'none';
+          document.getElementById('error-msg').textContent = data.error;
+          document.getElementById('refresh-error').style.display = 'block';
+          return;
+        }
+        if (data.done) {
+          _stopTimer();
+          document.getElementById('progress-bar').style.width = '100%';
+          document.getElementById('refresh-stage').textContent = 'Complete!';
+          setTimeout(() => { window.location = '/onboard/step3?slug={{ slug }}'; }, 500);
+          return;
+        }
+        if (!data.running && !data.done) {
+          _stopTimer();
+          document.getElementById('refresh-running').style.display = 'none';
+          document.getElementById('error-msg').textContent = 'Refresh process lost — the server may have restarted. Click below to retry.';
+          document.getElementById('refresh-error').style.display = 'block';
+          return;
+        }
+        if (data.stage) {
+          document.getElementById('refresh-stage').textContent = data.stage;
+          document.getElementById('progress-bar').style.width = stageProgress(data.stage) + '%';
+        }
+        setTimeout(pollStatus, 1500);
+      }).catch(() => setTimeout(pollStatus, 3000));
+    }
+    // Auto-start on page load
+    startRefresh();
+    </script>
+
+    {% elif step == 3 %}
+    {# ── Configure ── #}
+    <form method="post" action="/onboard/step3">
+      <input type="hidden" name="slug" value="{{ slug }}">
+      <p>Data loaded. Configure your league.</p>
+      <div class="form-grid">
+        <label>League Name</label>
+        <input type="text" name="league_name" value="{{ league_name or slug.upper() }}" style="width:200px">
+        <label>StatsPlus Slug</label>
+        <input type="text" name="statsplus_slug" value="{{ slug }}" style="width:160px" placeholder="e.g. emlb">
+        <label>My Team</label>
+        <select name="team_id">
+          {% for tid, name in teams %}
+          <option value="{{ tid }}">{{ name }}</option>
+          {% endfor %}
+        </select>
+        <label>Wild Cards / League</label>
+        <input type="number" name="wild_cards_per_league" value="3" min="0" max="8" style="width:80px">
+        <label>DH Rule</label>
+        <select name="dh_rule" style="width:200px">
+          <option value="Universal DH">Universal DH</option>
+          <option value="No DH">No DH</option>
+          <option value="AL Only DH">AL Only DH</option>
+        </select>
+        <label>Minimum Salary</label>
+        <input type="number" name="minimum_salary" value="{{ min_salary or 500000 }}" style="width:120px">
+      </div>
+      {% if leagues is defined and leagues %}
+      <div style="margin-top:14px">
+        <h3 style="font-size:0.9em; margin-bottom:6px">League Structure</h3>
+        <p class="dim" style="font-size:0.8em; margin-bottom:8px">Auto-detected from game history. Drag teams to adjust, or add/rename divisions.</p>
+        {% include '_structure_editor.html' %}
+      </div>
+      {% endif %}
+      <div style="margin-top:12px; display:flex; gap:8px">
+        <a href="/onboard" class="nav-btn" style="text-decoration:none">← Back to Start</a>
+        <button type="submit">Save & Finish →</button>
+      </div>
+    </form>
+
+    {% elif step == 4 %}
+    {# ── Done ── #}
+    <p>League <strong>{{ league_name }}</strong> is ready.</p>
+    <a href="/" class="nav-btn" style="display:inline-block;margin-top:12px;text-decoration:none">Go to Dashboard →</a>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Data (league DBs, configs, logs — user-specific)
+data/
+
+# Environment / secrets
+.env
+statsplus/.env
+
+# IDE
+.vscode/
+.idea/
+
+# Testing cache
+.pytest_cache/
+
+# Sample screenshots (development reference only)
+samples/
+
+# OS
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
+
+# Logs
+*.log

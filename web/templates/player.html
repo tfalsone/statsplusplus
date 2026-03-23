@@ -1,0 +1,704 @@
+{% extends "base.html" %}
+
+{# Grade bar: label chip (darkened tier color) + current fill + potential fill #}
+{% macro grade(cur, fut=None) %}
+{% if cur %}
+{% set pot = fut if fut and fut > cur else cur %}
+{% set cur_pct = ((cur - 20) / 60 * 100)|int if cur > 20 else 2 %}
+{% set pot_pct = ((pot - 20) / 60 * 100)|int if pot > 20 else 2 %}
+<span class="grade" data-g="{{ cur }}"><span class="grade-label-chip" data-g="{{ cur }}">{% if pot > cur %}{{ cur }}/{{ pot }}{% else %}{{ cur }}{% endif %}</span><span class="grade-track"><span class="grade-pot" data-g="{{ pot }}" style="width:{{ pot_pct }}%"></span><span class="grade-cur" data-g="{{ cur }}" style="width:{{ cur_pct }}%"></span></span></span>
+{% else %}-{% endif %}
+{% endmacro %}
+
+{# Percentile grid macro #}
+{% macro pctile_grid(stats, css_class="") %}
+<div class="pctile-grid{% if stats[0] and not stats[0].qualified %} pctile-unqualified{% endif %} {{ css_class }}">
+  {% for s in stats %}
+  <div class="pctile-row">
+    <span class="pctile-label">{{ s.label }}</span>
+    <span class="pctile-val">{{ ("{:"+s.fmt+"}").format(s.value) }}{% if s.label in ("BB%","SO%","K%") %}%{% endif %}</span>
+    <span class="pctile-track">{% if s.expected_range %}<span class="pctile-expected-range" style="left:{{ s.expected_range[0] }}%; width:{{ s.expected_range[1] - s.expected_range[0] }}%"></span>{% endif %}{% if s.expected is not none %}<span class="pctile-expected" style="left:{{ s.expected }}%"></span>{% endif %}<span class="pctile-fill" style="width:{{ s.pctile }}%; --pctile:{{ s.pctile }}"></span><span class="pctile-dot" style="left:{{ s.pctile }}%; --pctile:{{ s.pctile }}"></span></span>
+    <span class="pctile-num" style="--pctile:{{ s.pctile }}">{{ s.pctile }}</span>
+    <span class="pctile-tag{% if s.tag %} tag-{{ s.tag }}{% endif %}">{% if s.tag %}{{ {"hot":"▲ Hot","cold":"▼ Cold","lucky":"🍀 Lucky","unlucky":"▽ Unlucky"}[s.tag] }}{% endif %}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endmacro %}
+
+{# ═══ Reusable content blocks ═══ #}
+
+{# Ratings panel (pitcher or hitter) #}
+{% macro ratings_panel_pit(r) %}
+{% if r %}
+<div class="panel">
+  <h2>Ratings
+    {% if r.splits %}<span class="split-toggle" onclick="toggleSplits(this)">vs L / R</span>{% endif %}
+  </h2>
+  <table class="grade-table split-overall">
+    <thead><tr><th>Attribute</th><th>Grade</th></tr></thead>
+    <tbody>
+      <tr><td>Stuff</td><td>{{ grade(r.stuff[0], r.stuff[1]) }}</td></tr>
+      <tr><td>Movement</td><td>{{ grade(r.movement[0], r.movement[1]) }}</td></tr>
+      {% if r.hra is defined and r.hra %}<tr class="grade-sub"><td>HR Allow</td><td>{{ grade(r.hra[0], r.hra[1]) }}</td></tr>{% endif %}
+      {% if r.pbabip is defined and r.pbabip %}<tr class="grade-sub"><td>BABIP Allow</td><td>{{ grade(r.pbabip[0], r.pbabip[1]) }}</td></tr>{% endif %}
+      <tr><td>Control</td><td>{{ grade(r.control[0], r.control[1]) }}</td></tr>
+      <tr><td>Stamina</td><td>{{ grade(r.stamina) }}</td></tr>
+      {% if r.gb is defined %}<tr><td>GB%</td><td>{{ r.gb }}%</td></tr>{% endif %}
+      {% if r.velocity %}<tr><td>Velocity</td><td>{{ r.velocity }}</td></tr>{% endif %}
+    </tbody>
+  </table>
+  {% if r.splits %}
+  <table class="grade-table split-lr" style="display:none">
+    <thead><tr><th>Attribute</th><th>vs L</th><th>vs R</th></tr></thead>
+    <tbody>
+      <tr><td>Stuff</td><td>{{ grade(r.splits.stuff[0]) }}</td><td>{{ grade(r.splits.stuff[1]) }}</td></tr>
+      <tr><td>Movement</td><td>{{ grade(r.splits.movement[0]) }}</td><td>{{ grade(r.splits.movement[1]) }}</td></tr>
+      {% if r.splits.hra is defined %}<tr class="grade-sub"><td>HR Allow</td><td>{{ grade(r.splits.hra[0]) }}</td><td>{{ grade(r.splits.hra[1]) }}</td></tr>{% endif %}
+      {% if r.splits.pbabip is defined %}<tr class="grade-sub"><td>BABIP Allow</td><td>{{ grade(r.splits.pbabip[0]) }}</td><td>{{ grade(r.splits.pbabip[1]) }}</td></tr>{% endif %}
+      <tr><td>Control</td><td>{{ grade(r.splits.control[0]) }}</td><td>{{ grade(r.splits.control[1]) }}</td></tr>
+      <tr><td>Stamina</td><td colspan="2">{{ grade(r.stamina) }}</td></tr>
+      {% if r.gb is defined %}<tr><td>GB%</td><td colspan="2">{{ r.gb }}%</td></tr>{% endif %}
+      {% if r.velocity %}<tr><td>Velocity</td><td colspan="2">{{ r.velocity }}</td></tr>{% endif %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if r.pitches %}
+  <h2 style="margin-top:12px">Pitches</h2>
+  <table class="grade-table">
+    <thead><tr><th>Pitch</th><th>Grade</th></tr></thead>
+    <tbody>
+      {% for pitch in r.pitches %}
+      <tr><td>{{ pitch.name }}</td><td>{{ grade(pitch.cur, pitch.fut) }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{% macro ratings_panel_hit(r) %}
+{% if r %}
+<div class="panel">
+  <h2>Ratings
+    {% if r.splits %}<span class="split-toggle" onclick="toggleSplits(this)">vs L / R</span>{% endif %}
+  </h2>
+  <table class="grade-table split-overall">
+    <thead><tr><th>Tool</th><th>Grade</th></tr></thead>
+    <tbody>
+      <tr><td>Hit</td><td>{{ grade(r.hit[0], r.hit[1]) }}</td></tr>
+      {% if r.babip is defined and r.babip %}<tr class="grade-sub"><td>BABIP</td><td>{{ grade(r.babip[0], r.babip[1]) }}</td></tr>{% endif %}
+      <tr{% if r.babip is defined and r.babip %} class="grade-sub"{% endif %}><td>Avoid K's</td><td>{{ grade(r.krate[0], r.krate[1]) }}</td></tr>
+      <tr><td>Gap</td><td>{{ grade(r.gap[0], r.gap[1]) }}</td></tr>
+      <tr><td>Power</td><td>{{ grade(r.power[0], r.power[1]) }}</td></tr>
+      <tr><td>Eye</td><td>{{ grade(r.eye[0], r.eye[1]) }}</td></tr>
+    </tbody>
+  </table>
+  {% if r.splits %}
+  <table class="grade-table split-lr" style="display:none">
+    <thead><tr><th>Tool</th><th>vs L</th><th>vs R</th></tr></thead>
+    <tbody>
+      <tr><td>Hit</td><td>{{ grade(r.splits.hit[0]) }}</td><td>{{ grade(r.splits.hit[1]) }}</td></tr>
+      {% if r.splits.babip is defined %}<tr class="grade-sub"><td>BABIP</td><td>{{ grade(r.splits.babip[0]) }}</td><td>{{ grade(r.splits.babip[1]) }}</td></tr>{% endif %}
+      <tr{% if r.babip is defined and r.babip %} class="grade-sub"{% endif %}><td>Avoid K's</td><td>{{ grade(r.splits.krate[0]) }}</td><td>{{ grade(r.splits.krate[1]) }}</td></tr>
+      <tr><td>Gap</td><td>{{ grade(r.splits.gap[0]) }}</td><td>{{ grade(r.splits.gap[1]) }}</td></tr>
+      <tr><td>Power</td><td>{{ grade(r.splits.power[0]) }}</td><td>{{ grade(r.splits.power[1]) }}</td></tr>
+      <tr><td>Eye</td><td>{{ grade(r.splits.eye[0]) }}</td><td>{{ grade(r.splits.eye[1]) }}</td></tr>
+    </tbody>
+  </table>
+  {% endif %}
+  {% if r.speed is defined %}
+  <h2 style="margin-top:12px">Running</h2>
+  <table class="grade-table">
+    <thead><tr><th>Tool</th><th>Grade</th></tr></thead>
+    <tbody>
+      <tr><td>Speed</td><td>{{ grade(r.speed) }}</td></tr>
+      {% if r.steal is defined %}<tr><td>Steal</td><td>{{ grade(r.steal) }}</td></tr>{% endif %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if r.defense %}
+  <h2 style="margin-top:12px">Positions</h2>
+  <table class="grade-table">
+    <thead><tr><th>Pos</th><th>Grade</th></tr></thead>
+    <tbody>
+      {% for d in r.defense %}
+      <tr><td>{{ d.pos }}</td><td>{{ grade(d.cur, d.fut) }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <h2 style="margin-top:12px">Defense</h2>
+  <table class="grade-table">
+    <thead><tr><th>Attribute</th><th>Grade</th></tr></thead>
+    <tbody>
+      {% if r.blocking is defined %}
+      <tr><td>Blocking</td><td>{{ grade(r.blocking) }}</td></tr>
+      <tr><td>Framing</td><td>{{ grade(r.framing) }}</td></tr>
+      {% if r.arm %}<tr><td>Arm</td><td>{{ grade(r.arm) }}</td></tr>{% endif %}
+      {% else %}
+      {% if r.range is defined %}<tr><td>Range</td><td>{{ grade(r.range) }}</td></tr>{% endif %}
+      {% if r.error is defined %}<tr><td>Error</td><td>{{ grade(r.error) }}</td></tr>{% endif %}
+      {% if r.arm %}<tr><td>Arm</td><td>{{ grade(r.arm) }}</td></tr>{% endif %}
+      {% if r.tdp is defined %}<tr><td>Turn DP</td><td>{{ grade(r.tdp) }}</td></tr>{% endif %}
+      {% endif %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{% macro ratings_panel() %}
+{% if p.is_two_way %}
+<div class="tw-pit">{{ ratings_panel_pit(p.ratings) }}</div>
+<div class="tw-hit" style="display:none">{{ ratings_panel_hit(p.hit_ratings) }}</div>
+{% elif p.is_pitcher %}
+{{ ratings_panel_pit(p.ratings) }}
+{% else %}
+{{ ratings_panel_hit(p.ratings) }}
+{% endif %}
+{% endmacro %}
+
+{# Character panel #}
+{% macro character_panel() %}
+{% if p.ratings and p.ratings.personality %}
+<div class="panel">
+  {% set pers = p.ratings.personality %}
+  <h2>Character</h2>
+  <table class="grade-table"><tbody>
+    {% for label, key in [("Intelligence", "int"), ("Work Ethic", "ethic"), ("Greed", "greed"), ("Loyalty", "loy"), ("Leadership", "lead")] %}
+    {% if pers[key] %}
+    {% set v = pers[key] %}
+    {% set cls = "char-vh" if v == "Very High" else "char-h" if v == "High" else "char-l" if v == "Low" else "char-vl" if v == "Very Low" else "" %}
+    <tr><td class="grade-label">{{ label }}</td><td class="grade-val {{ cls }}">{{ v }}</td></tr>
+    {% endif %}
+    {% endfor %}
+    {% if p.ratings.prone %}
+    {% set pv = p.ratings.prone %}
+    {% set pcls = "char-vh" if pv in ("Iron Man", "Durable") else "char-vl" if pv in ("Fragile", "Wrecked") else "" %}
+    <tr><td class="grade-label">Durability</td><td class="grade-val {{ pcls }}">{{ pv }}</td></tr>
+    {% endif %}
+  </tbody></table>
+</div>
+{% endif %}
+{% endmacro %}
+
+{# Scouting report panel #}
+{% macro scouting_panel() %}
+{% if p.summary %}
+<div class="panel">
+  <h2>Scouting Report</h2>
+  <p class="scouting-text">{{ p.summary }}</p>
+</div>
+{% endif %}
+{% endmacro %}
+
+{# Current-year stats snapshot for Overview tab #}
+{% macro stats_snapshot_pit() %}
+{% if p.pit_stats %}
+{% set s = p.pit_stats[-1] %}
+{% set svl = p.pit_splits.vl[-1] if p.pit_splits.vl else none %}
+{% set svr = p.pit_splits.vr[-1] if p.pit_splits.vr else none %}
+<div class="panel">
+  <h2>{{ s.year }} Stats
+    {% if svl or svr %}<span class="split-toggle" onclick="toggleSplits(this)">vs L / R</span>{% endif %}
+  </h2>
+  <table class="snapshot-table split-overall">
+    <thead><tr><th>G</th><th>GS</th><th>IP</th><th>ERA</th><th>FIP</th><th>K%</th><th>BB%</th><th>K-BB%</th><th>GB%</th><th>W</th><th>SV</th><th>WAR</th></tr></thead>
+    <tbody><tr>
+      <td>{{ s.g }}</td><td>{{ s.gs }}</td><td>{{ s.ip|fmt_ip }}</td><td>{{ "%.2f"|format(s.era) if s.era is not none else "-" }}</td><td>{{ "%.2f"|format(s.fip) }}</td>
+      <td>{{ "%.1f"|format(s.k_pct) }}</td><td>{{ "%.1f"|format(s.bb_pct) }}</td><td>{{ "%.1f"|format(s.k_bb_pct) }}</td><td>{{ "%.1f"|format(s.gb_pct) }}</td>
+      <td>{{ s.w }}</td><td>{{ s.sv if s.sv else s.hld }}</td><td>{{ s.war }}</td>
+    </tr></tbody>
+  </table>
+  {% if svl or svr %}
+  <table class="snapshot-table split-lr" style="display:none">
+    <thead><tr><th>Split</th><th>IP</th><th>ERA</th><th>FIP</th><th>K%</th><th>BB%</th><th>K-BB%</th><th>GB%</th></tr></thead>
+    <tbody>
+      {% for sp, label in [(svl,"vs L"),(svr,"vs R")] %}
+      {% if sp %}
+      <tr><td>{{ label }}</td><td>{{ sp.ip|fmt_ip }}</td><td>{{ "%.2f"|format(sp.era) if sp.era is not none else "-" }}</td><td>{{ "%.2f"|format(sp.fip) }}</td>
+      <td>{{ "%.1f"|format(sp.k_pct) }}</td><td>{{ "%.1f"|format(sp.bb_pct) }}</td><td>{{ "%.1f"|format(sp.k_bb_pct) }}</td><td>{{ "%.1f"|format(sp.gb_pct) }}</td></tr>
+      {% endif %}{% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{% macro stats_snapshot_hit() %}
+{% if p.bat_stats %}
+{% set s = p.bat_stats[-1] %}
+{% set svl = p.bat_splits.vl[-1] if p.bat_splits.vl else none %}
+{% set svr = p.bat_splits.vr[-1] if p.bat_splits.vr else none %}
+<div class="panel">
+  <h2>{{ s.year }} Stats
+    {% if svl or svr %}<span class="split-toggle" onclick="toggleSplits(this)">vs L / R</span>{% endif %}
+  </h2>
+  <table class="snapshot-table split-overall">
+    <thead><tr><th>G</th><th>PA</th><th>AVG</th><th>OBP</th><th>SLG</th><th>ISO</th><th>BB%</th><th>K%</th><th>HR</th><th>SB</th><th>WAR</th></tr></thead>
+    <tbody><tr>
+      <td>{{ s.g }}</td><td>{{ s.pa }}</td><td>{{ "%.3f"|format(s.avg) }}</td><td>{{ "%.3f"|format(s.obp) }}</td><td>{{ "%.3f"|format(s.slg) }}</td><td>{{ "%.3f"|format(s.iso) }}</td>
+      <td>{{ "%.1f"|format(s.bb_pct) }}</td><td>{{ "%.1f"|format(s.so_pct) }}</td><td>{{ s.hr }}</td><td>{{ s.sb }}</td><td>{{ s.war }}</td>
+    </tr></tbody>
+  </table>
+  {% if svl or svr %}
+  <table class="snapshot-table split-lr" style="display:none">
+    <thead><tr><th>Split</th><th>PA</th><th>AVG</th><th>OBP</th><th>SLG</th><th>ISO</th><th>BB%</th><th>K%</th><th>HR</th></tr></thead>
+    <tbody>
+      {% for sp, label in [(svl,"vs L"),(svr,"vs R")] %}
+      {% if sp %}
+      <tr><td>{{ label }}</td><td>{{ sp.pa }}</td><td>{{ "%.3f"|format(sp.avg) }}</td><td>{{ "%.3f"|format(sp.obp) }}</td><td>{{ "%.3f"|format(sp.slg) }}</td><td>{{ "%.3f"|format(sp.iso) }}</td>
+      <td>{{ "%.1f"|format(sp.bb_pct) }}</td><td>{{ "%.1f"|format(sp.so_pct) }}</td><td>{{ sp.hr }}</td></tr>
+      {% endif %}{% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{% macro stats_snapshot() %}
+{% if p.is_two_way %}
+<div class="tw-pit">{{ stats_snapshot_pit() }}</div>
+<div class="tw-hit" style="display:none">{{ stats_snapshot_hit() }}</div>
+{% elif p.pit_stats %}
+{{ stats_snapshot_pit() }}
+{% elif p.bat_stats %}
+{{ stats_snapshot_hit() }}
+{% endif %}
+{% endmacro %}
+
+{# Percentile rankings panel (batting/pitching) #}
+{% macro percentile_panel() %}
+{% if p.is_two_way %}
+<div class="tw-pit">
+{% if p.percentiles %}
+<div class="panel">
+  <h2>Percentile Rankings{% if p.percentiles[0] and not p.percentiles[0].qualified %} <span style="font-size:10px; font-weight:400; color:var(--text-dim)">(small sample)</span>{% endif %}
+    {% if p.pctile_splits %}<span class="split-toggle" onclick="toggleSplits(this)">vs L / R</span>{% endif %}
+  </h2>
+  <div class="split-overall">{{ pctile_grid(p.percentiles) }}</div>
+  {% if p.pctile_splits %}
+  <div class="split-lr" style="display:none">
+    {% if p.pctile_splits.vl %}<h3 class="split-label">vs LHP</h3>{{ pctile_grid(p.pctile_splits.vl) }}{% endif %}
+    {% if p.pctile_splits.vr %}<h3 class="split-label">vs RHP</h3>{{ pctile_grid(p.pctile_splits.vr) }}{% endif %}
+  </div>
+  {% endif %}
+  <div class="pctile-legend"><div><div><span class="pctile-tag tag-hot">▲ Hot</span> Stat outpacing ratings</div><div><span class="pctile-tag tag-cold">▼ Cold</span> Stat trailing ratings</div></div><div><div><span class="pctile-tag tag-lucky">🍀 Lucky</span> BABIP above expected</div><div><span class="pctile-tag tag-unlucky">▽ Unlucky</span> BABIP below expected</div></div></div>
+</div>
+{% endif %}
+</div>
+<div class="tw-hit" style="display:none">
+{% if p.bat_percentiles %}
+<div class="panel">
+  <h2>Percentile Rankings{% if p.bat_percentiles[0] and not p.bat_percentiles[0].qualified %} <span style="font-size:10px; font-weight:400; color:var(--text-dim)">(small sample)</span>{% endif %}
+    {% if p.bat_pctile_splits %}<span class="split-toggle" onclick="toggleSplits(this)">vs L / R</span>{% endif %}
+  </h2>
+  <div class="split-overall">{{ pctile_grid(p.bat_percentiles) }}</div>
+  {% if p.bat_pctile_splits %}
+  <div class="split-lr" style="display:none">
+    {% if p.bat_pctile_splits.vl %}<h3 class="split-label">vs LHP</h3>{{ pctile_grid(p.bat_pctile_splits.vl) }}{% endif %}
+    {% if p.bat_pctile_splits.vr %}<h3 class="split-label">vs RHP</h3>{{ pctile_grid(p.bat_pctile_splits.vr) }}{% endif %}
+  </div>
+  {% endif %}
+  <div class="pctile-legend"><div><div><span class="pctile-tag tag-hot">▲ Hot</span> Stat outpacing ratings</div><div><span class="pctile-tag tag-cold">▼ Cold</span> Stat trailing ratings</div></div><div><div><span class="pctile-tag tag-lucky">🍀 Lucky</span> BABIP above expected</div><div><span class="pctile-tag tag-unlucky">▽ Unlucky</span> BABIP below expected</div></div></div>
+</div>
+{% endif %}
+</div>
+{% elif p.percentiles %}
+<div class="panel">
+  <h2>Percentile Rankings{% if p.percentiles[0] and not p.percentiles[0].qualified %} <span style="font-size:10px; font-weight:400; color:var(--text-dim)">(small sample)</span>{% endif %}
+    {% if p.pctile_splits %}<span class="split-toggle" onclick="toggleSplits(this)">vs L / R</span>{% endif %}
+  </h2>
+  <div class="split-overall">{{ pctile_grid(p.percentiles) }}</div>
+  {% if p.pctile_splits %}
+  <div class="split-lr" style="display:none">
+    {% if p.pctile_splits.vl %}<h3 class="split-label">vs LHP</h3>{{ pctile_grid(p.pctile_splits.vl) }}{% endif %}
+    {% if p.pctile_splits.vr %}<h3 class="split-label">vs RHP</h3>{{ pctile_grid(p.pctile_splits.vr) }}{% endif %}
+  </div>
+  {% endif %}
+  <div class="pctile-legend"><div><div><span class="pctile-tag tag-hot">▲ Hot</span> Stat outpacing ratings</div><div><span class="pctile-tag tag-cold">▼ Cold</span> Stat trailing ratings</div></div><div><div><span class="pctile-tag tag-lucky">🍀 Lucky</span> BABIP above expected</div><div><span class="pctile-tag tag-unlucky">▽ Unlucky</span> BABIP below expected</div></div></div>
+</div>
+{% endif %}
+{% endmacro %}
+
+{# Fielding percentile panel #}
+{% macro fielding_pctile_panel() %}
+{% if p.fielding_pctiles %}
+<div class="panel">
+  <h2>Fielding Percentiles</h2>
+  {% for fp in p.fielding_pctiles %}
+  <h3 style="margin:12px 0 4px; font-size:12px; color:var(--text-dim)">{{ fp.pos }}{% if not fp.qualified %} <span style="font-size:10px">(small sample)</span>{% endif %}</h3>
+  {{ pctile_grid(fp.stats) }}
+  {% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{# Contract panel #}
+{% macro contract_panel() %}
+{% if p.contract and p.contract.remaining %}
+<div class="panel">
+  <h2>Contract{% if p.contract.no_trade %} <span class="opt-badge opt-ntc">NTC</span>{% endif %}</h2>
+  <table>
+    <thead><tr><th>Year</th><th>Salary</th><th></th></tr></thead>
+    <tbody>
+      {% for yr, sal in p.contract.remaining %}
+      <tr{% if loop.first %} class="highlight"{% endif %}>
+        <td>{{ yr }}</td><td>{{ sal }}</td>
+        <td>{% if loop.last %}{% if p.contract.team_option %}<span class="opt-badge opt-to">TO</span>{% endif %}{% if p.contract.player_option %}<span class="opt-badge opt-po">PO</span>{% endif %}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endmacro %}
+
+{# Surplus projection panel #}
+{% macro surplus_panel() %}
+{% if p.surplus_detail %}
+<div class="panel">
+  <h2>Surplus Projection</h2>
+  <table>
+    <thead><tr><th>Year</th><th>Age</th><th>WAR</th><th>Value</th><th>Salary</th><th>Surplus</th></tr></thead>
+    <tbody>
+      {% for r in p.surplus_detail.rows %}
+      <tr>
+        <td>{{ r.year }}</td><td>{{ r.age }}</td><td>{{ r.war }}</td>
+        <td>${{ r.value }}M</td><td>${{ r.salary }}M</td>
+        <td class="{% if r.surplus > 0 %}pos{% elif r.surplus < 0 %}neg{% endif %}">${{ r.surplus }}M</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td></td><td></td><td></td><td></td>
+        <td style="text-align:right; color:var(--text-dim)">Total</td>
+        <td class="{% if p.surplus_detail.total.base > 0 %}pos{% elif p.surplus_detail.total.base < 0 %}neg{% endif %}">${{ p.surplus_detail.total.base }}M</td>
+      </tr>
+      {% if p.surplus_detail.total.pessimistic is defined %}
+      <tr style="font-size:11px; color:var(--text-dim)">
+        <td></td><td></td><td></td><td></td>
+        <td style="text-align:right">Range</td>
+        <td>${{ p.surplus_detail.total.pessimistic }}M – ${{ p.surplus_detail.total.optimistic }}M</td>
+      </tr>
+      {% endif %}
+    </tfoot>
+  </table>
+  {% if p.surplus_detail.flags %}
+  <div style="margin-top:8px; font-size:11px; color:var(--text-dim)">
+    {{ p.surplus_detail.flags|join(" · ") }}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{% block content %}
+
+{# ── Player Header ── #}
+<div class="summary-bar">
+  <div class="summary-item">
+    <span class="label"><a class="team-link" href="/team/{{ p.tid }}">{{ p.team_abbr }}</a> · {{ p.level }}</span>
+    <span class="value">{{ p.name }} <a href="{{ statsplus_base }}/player/{{ p.pid }}" target="_blank" class="ext-link" title="View on StatsPlus">↗</a></span>
+  </div>
+  <div class="summary-item">
+    <span class="label">Position</span>
+    <span class="value">{{ p.pos }}{% if p.is_two_way %} <span class="tw-toggle"><button class="tw-btn active" onclick="twSwitch('pit')">Pitcher</button><button class="tw-btn" onclick="twSwitch('hit')">Hitter</button></span>{% endif %}</span>
+  </div>
+  <div class="summary-item">
+    <span class="label">Age</span>
+    <span class="value">{{ p.age }}</span>
+  </div>
+  {% if p.ratings %}
+  <div class="summary-item">
+    <span class="label">Ovr / Pot</span>
+    <span class="value"><span class="ovr-color" data-g="{{ p.ratings.ovr }}">{{ p.ratings.ovr }}</span> / <span class="ovr-color" data-g="{{ p.ratings.pot }}">{{ p.ratings.pot }}</span></span>
+  </div>
+  {% if p.ratings.height %}
+  <div class="summary-item">
+    <span class="label">Ht / B-T</span>
+    <span class="value">{{ p.ratings.height }} {{ p.ratings.bats }}/{{ p.ratings.throws }}</span>
+  </div>
+  {% endif %}
+  {% endif %}
+  {% if p.valuation %}
+  {% if p.valuation.type == "prospect" %}
+  <div class="summary-item">
+    <span class="label">FV</span>
+    <span class="value">{{ p.valuation.fv_str }}</span>
+  </div>
+  {% endif %}
+  <div class="summary-item">
+    <span class="label">Surplus</span>
+    <span class="value {% if p.valuation.surplus > 0 %}pos{% elif p.valuation.surplus < 0 %}neg{% endif %}">${{ p.valuation.surplus }}M</span>
+  </div>
+  {% endif %}
+  {% if p.percentiles %}
+  {% set ns = namespace(gap_sum=0, gap_n=0) %}
+  {% for s in p.percentiles %}{% if s.expected is not none %}{% set ns.gap_sum = ns.gap_sum + (s.pctile - s.expected) %}{% set ns.gap_n = ns.gap_n + 1 %}{% endif %}{% endfor %}
+  {% if ns.gap_n > 0 %}
+  {% set avg_gap = (ns.gap_sum / ns.gap_n)|round|int %}
+  <div class="summary-item">
+    <span class="label">Performance</span>
+    <span class="value {% if avg_gap >= 10 %}pos{% elif avg_gap <= -10 %}neg{% endif %}">{% if avg_gap >= 10 %}▲ Over{% elif avg_gap <= -10 %}▼ Under{% else %}≈ Expected{% endif %}</span>
+  </div>
+  {% endif %}
+  {% endif %}
+</div>
+
+{% set has_stats = p.bat_stats or p.pit_stats %}
+
+{# ═══════════════════════════════════════════════════════════════════════ #}
+{# MLB PLAYERS — tabbed layout                                           #}
+{# ═══════════════════════════════════════════════════════════════════════ #}
+{% if has_stats %}
+
+<div class="tab-bar">
+  <button class="tab active" data-tab="overview">Overview</button>
+  <button class="tab" data-tab="stats">Stats</button>
+  <button class="tab" data-tab="contract">Contract</button>
+</div>
+
+{# ══ Overview tab ══ #}
+<div class="tab-content active" id="tab-overview">
+  <div class="columns">
+    <div class="panel-stack">
+      {{ ratings_panel() }}
+      {{ character_panel() }}
+    </div>
+    <div class="panel-stack">
+      {{ scouting_panel() }}
+      {{ stats_snapshot() }}
+      {{ percentile_panel() }}
+      {{ fielding_pctile_panel() }}
+    </div>
+  </div>
+</div>
+
+{# ══ Stats tab ══ #}
+<div class="tab-content" id="tab-stats">
+
+{% macro bat_row(s, show_year=true) %}
+<tr>
+  {% if show_year %}<td>{{ s.year }}</td>{% endif %}<td>{{ s.g }}</td><td>{{ s.pa }}</td>
+  <td>{{ "%.3f"|format(s.avg) }}</td><td>{{ "%.3f"|format(s.obp) }}</td><td>{{ "%.3f"|format(s.slg) }}</td><td>{{ "%.3f"|format(s.ops) }}</td><td>{{ "%.3f"|format(s.iso) }}</td>
+  <td>{{ "%.1f"|format(s.bb_pct) }}</td><td>{{ "%.1f"|format(s.so_pct) }}</td><td>{{ "%.3f"|format(s.babip) }}</td>
+  <td>{{ s.hr }}</td><td>{{ s.rbi }}</td><td>{{ s.sb }}/{{ s.cs }}</td>
+  <td>{{ s.ops_plus }}</td><td>{{ s.war }}</td>
+</tr>
+{% endmacro %}
+
+{% if p.bat_stats %}
+<div class="panel">
+  <h2>Batting Stats</h2>
+  {% if p.bat_splits.vl or p.bat_splits.vr %}
+  <div class="split-selector">
+    <button class="split-btn active" onclick="switchSplit(this, 'overall')">Overall</button>
+    <button class="split-btn" onclick="switchSplit(this, 'vl')">vs L</button>
+    <button class="split-btn" onclick="switchSplit(this, 'vr')">vs R</button>
+  </div>
+  {% endif %}
+  <table class="split-view" data-split="overall">
+    <thead>
+      <tr>
+        <th data-sort="num">Year</th><th data-sort="num">G</th><th data-sort="num">PA</th>
+        <th data-sort="num">AVG</th><th data-sort="num">OBP</th><th data-sort="num">SLG</th><th data-sort="num">OPS</th><th data-sort="num">ISO</th>
+        <th data-sort="num">BB%</th><th data-sort="num">SO%</th><th data-sort="num">BABIP</th>
+        <th data-sort="num">HR</th><th data-sort="num">RBI</th><th data-sort="num">SB/CS</th>
+        <th data-sort="num">OPS+</th><th data-sort="num">WAR</th>
+      </tr>
+    </thead>
+    <tbody>{% for s in p.bat_stats %}{{ bat_row(s) }}{% endfor %}</tbody>
+  </table>
+  {% for key in ["vl","vr"] %}
+  {% if p.bat_splits[key] %}
+  <table class="split-view" data-split="{{ key }}" style="display:none">
+    <thead>
+      <tr>
+        <th>Year</th><th>G</th><th>PA</th>
+        <th>AVG</th><th>OBP</th><th>SLG</th><th>OPS</th><th>ISO</th>
+        <th>BB%</th><th>SO%</th><th>BABIP</th>
+        <th>HR</th><th>RBI</th><th>SB/CS</th>
+      </tr>
+    </thead>
+    <tbody>{% for s in p.bat_splits[key] %}{{ bat_row(s) }}{% endfor %}</tbody>
+  </table>
+  {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if p.pit_stats %}
+<div class="panel" style="margin-top:16px">
+  <h2>Pitching Stats</h2>
+  {% if p.pit_splits.vl or p.pit_splits.vr %}
+  <div class="split-selector">
+    <button class="split-btn active" onclick="switchSplit(this, 'overall')">Overall</button>
+    <button class="split-btn" onclick="switchSplit(this, 'vl')">vs L</button>
+    <button class="split-btn" onclick="switchSplit(this, 'vr')">vs R</button>
+  </div>
+  {% endif %}
+  <table class="split-view" data-split="overall">
+    <thead>
+      <tr>
+        <th data-sort="num">Year</th><th data-sort="num">G</th><th data-sort="num">GS</th><th data-sort="num">IP</th>
+        <th data-sort="num" data-sort-best="low">ERA</th><th data-sort="num">ERA+</th><th data-sort="num" data-sort-best="low">FIP</th><th data-sort="num" data-sort-best="low">SIERA</th>
+        <th data-sort="num">K%</th><th data-sort="num" data-sort-best="low">BB%</th><th data-sort="num">K-BB%</th><th data-sort="num">GB%</th><th data-sort="num">BABIP</th>
+        <th data-sort="num">W</th><th data-sort="num" data-sort-best="low">L</th><th data-sort="num">SV</th><th data-sort="num">HLD</th>
+        <th data-sort="num">WAR</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in p.pit_stats %}
+      <tr>
+        <td>{{ s.year }}</td><td>{{ s.g }}</td><td>{{ s.gs }}</td><td>{{ s.ip|fmt_ip }}</td>
+        <td>{{ "%.2f"|format(s.era) if s.era is not none else "-" }}</td><td>{{ s.era_plus }}</td>
+        <td>{{ "%.2f"|format(s.fip) }}</td><td>{{ "%.2f"|format(s.siera) }}</td>
+        <td>{{ "%.1f"|format(s.k_pct) }}</td><td>{{ "%.1f"|format(s.bb_pct) }}</td><td>{{ "%.1f"|format(s.k_bb_pct) }}</td><td>{{ "%.1f"|format(s.gb_pct) }}</td>
+        <td>{{ "%.3f"|format(s.babip) }}</td>
+        <td>{{ s.w }}</td><td>{{ s.l }}</td><td>{{ s.sv }}</td><td>{{ s.hld }}</td>
+        <td>{{ s.war }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% for key in ["vl","vr"] %}
+  {% if p.pit_splits[key] %}
+  <table class="split-view" data-split="{{ key }}" style="display:none">
+    <thead>
+      <tr>
+        <th>Year</th><th>G</th><th>IP</th>
+        <th>ERA</th><th>FIP</th>
+        <th>K%</th><th>BB%</th><th>K-BB%</th><th>GB%</th><th>BABIP</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in p.pit_splits[key] %}
+      <tr>
+        <td>{{ s.year }}</td><td>{{ s.g }}</td><td>{{ s.ip|fmt_ip }}</td>
+        <td>{{ "%.2f"|format(s.era) if s.era is not none else "-" }}</td>
+        <td>{{ "%.2f"|format(s.fip) }}</td>
+        <td>{{ "%.1f"|format(s.k_pct) }}</td><td>{{ "%.1f"|format(s.bb_pct) }}</td><td>{{ "%.1f"|format(s.k_bb_pct) }}</td><td>{{ "%.1f"|format(s.gb_pct) }}</td>
+        <td>{{ "%.3f"|format(s.babip) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if p.fielding_stats %}
+<div class="panel" style="margin-top:16px">
+  <h2>Fielding Stats</h2>
+  <table>
+    <thead>
+      <tr>
+        <th data-sort="num">Year</th><th class="left">Pos</th><th data-sort="num">G</th>
+        <th data-sort="num">IP</th><th data-sort="num">TC</th><th data-sort="num">A</th>
+        <th data-sort="num">E</th><th data-sort="num">DP</th><th data-sort="num">FPCT</th>
+        <th data-sort="num">ZR</th><th data-sort="num">Arm</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in p.fielding_stats %}
+      <tr>
+        <td>{{ f.year }}</td><td class="left">{{ f.pos }}</td><td>{{ f.g }}</td>
+        <td>{{ f.ip|fmt_ip }}</td><td>{{ f.tc }}</td><td>{{ f.a }}</td>
+        <td>{{ f.e }}</td><td>{{ f.dp }}</td>
+        <td>{{ "%.3f"|format(f.fpct) }}</td>
+        <td>{{ "%.1f"|format(f.zr) if f.zr is not none else "-" }}</td>
+        <td>{{ "%.1f"|format(f.arm) if f.arm is not none else "-" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+</div>
+
+{# ══ Contract tab ══ #}
+<div class="tab-content" id="tab-contract">
+  <div class="columns">
+    <div class="panel-stack">
+      {{ contract_panel() }}
+    </div>
+    <div class="panel-stack">
+      {{ surplus_panel() }}
+    </div>
+  </div>
+</div>
+
+{% else %}
+{# ═══════════════════════════════════════════════════════════════════════ #}
+{# PROSPECTS — single page, no tabs                                      #}
+{# ═══════════════════════════════════════════════════════════════════════ #}
+
+<div class="columns">
+  <div class="panel-stack">
+    {{ ratings_panel() }}
+    {{ character_panel() }}
+  </div>
+  <div class="panel-stack">
+    {{ scouting_panel() }}
+    {{ surplus_panel() }}
+  </div>
+</div>
+
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Ovr/Pot tier coloring
+(function() {
+  var tiers = [[80,'#3a6fd8'],[70,'#2196a8'],[60,'#27ae60'],[55,'#7daf24'],[50,'#b7b020'],[45,'#d4ac0d'],[40,'#f1c40f'],[35,'#f39c12'],[30,'#e67e22'],[25,'#d35400'],[20,'#c0392b']];
+  document.querySelectorAll('.ovr-color').forEach(function(el) {
+    var g = parseInt(el.dataset.g);
+    for (var i = 0; i < tiers.length; i++) { if (g >= tiers[i][0]) { el.style.color = tiers[i][1]; break; } }
+  });
+})();
+
+function toggleSplits(btn) {
+  var panel = btn.closest('.panel');
+  var showing = panel.querySelector('.split-overall').style.display === 'none';
+  panel.querySelectorAll('.split-overall').forEach(function(el) { el.style.display = showing ? '' : 'none'; });
+  panel.querySelectorAll('.split-lr').forEach(function(el) { el.style.display = showing ? 'none' : ''; });
+  btn.classList.toggle('active', !showing);
+}
+
+function twSwitch(view) {
+  var showPit = view === 'pit';
+  document.querySelectorAll('.tw-pit').forEach(function(el) { el.style.display = showPit ? '' : 'none'; });
+  document.querySelectorAll('.tw-hit').forEach(function(el) { el.style.display = showPit ? 'none' : ''; });
+  document.querySelectorAll('.tw-btn').forEach(function(b) { b.classList.remove('active'); });
+  event.target.classList.add('active');
+}
+
+function switchSplit(btn, split) {
+  var panel = btn.closest('.panel');
+  panel.querySelectorAll('.split-btn').forEach(function(b) { b.classList.remove('active'); });
+  btn.classList.add('active');
+  panel.querySelectorAll('.split-view').forEach(function(t) {
+    t.style.display = t.dataset.split === split ? '' : 'none';
+  });
+}
+
+// Tab switching
+document.querySelectorAll('.tab-bar .tab').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.tab-bar .tab').forEach(function(b) { b.classList.remove('active'); });
+    document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+</script>
+{% endblock %}
