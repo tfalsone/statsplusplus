@@ -40,7 +40,7 @@ cd web
 python3 app.py
 ```
 
-The server starts on `http://localhost:5000`. You'll be redirected to the onboarding wizard on first visit.
+The server starts on `http://localhost:5001`. You'll be redirected to the onboarding wizard on first visit.
 
 ### 3. Onboard a league
 
@@ -175,4 +175,4 @@ Cookies expire periodically — if refreshes start failing with authentication e
 
 **Empty data after refresh** — Some StatsPlus leagues don't expose minor league stats via the API. MLB-level stats should always populate. Check the DB validation counts in the Settings page.
 
-**Port already in use** — The default port is 5000. If it's taken, set the `PORT` environment variable or edit `app.py`.
+**Port already in use** — The default port is 5001. If it's taken, edit the `app.run()` call in `web/app.py`.
