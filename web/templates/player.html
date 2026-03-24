@@ -362,7 +362,7 @@
 {% if p.outcome_probs %}
 {% set oc = p.outcome_probs %}
 <div class="panel">
-  <h2>Career Outcome Probs.</h2>
+  <h2>Career Outcome Probabilities</h2>
   <div class="outcome-thresholds">
     {% for name, prob in oc.thresholds.items() %}
     <span class="outcome-thresh">{{ name }} <strong>{{ (prob * 100)|round|int }}%</strong></span>
