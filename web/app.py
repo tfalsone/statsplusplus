@@ -36,6 +36,9 @@ def _set_league_context():
     g.league_slug = slug
     g.league_dir = league_dir
     g.league_config = cfg
+    # Reset cached ratings scale so norm() picks up current settings
+    import player_utils
+    player_utils._ratings_scale = None
     # Check if league has enough data to render data pages
     g.league_ready = (league_dir / "league.db").exists() and (
         league_dir / "config" / "league_averages.json").exists()
