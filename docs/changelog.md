@@ -4,6 +4,32 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 36 (2026-03-24)
+
+### RP-Specific Career Outcome Model
+- Compression center shifted from 3.0 → 1.8 WAR for RPs — stops the curve from crushing probabilities in the RP ceiling range.
+- RP thresholds: Contributor @ 0.5 WAR, Quality @ 1.0, Elite @ 1.5 (vs 1.0/2.0/3.0 for hitters/SP).
+- WAR cap: 3.0 for RPs (24 bars) vs 5.0 for everyone else (40 bars).
+- Template renders threshold names dynamically — no template changes needed.
+
+### Current-Season Surplus on Team Stats
+- Added `surplus_yr1` column to `player_surplus` table — stores first-year surplus from contract breakdown.
+- Hitter and pitcher stats tables on team page now show current-season surplus instead of total remaining contract surplus.
+- `fv_calc.py` drops and recreates `player_surplus` table on each run to ensure correct column order.
+- Tooltip updated: "Current-season surplus (market value minus salary)".
+
+### RP WAR Calibration
+- **IP threshold fix**: Calibration regression now uses IP≥20 for RPs (was IP≥40, the SP threshold). Old threshold excluded most closers/setup men (median RP IP is 34), biasing the regression toward high-IP mop-up arms.
+- **P75 regression shift**: RP regression intercept shifted up to target P75 instead of mean. A team's primary RP at a given OVR is a closer/setup arm, not a mop-up reliever. The shift is computed from the top-quartile residual of the actual data.
+- Combined effect: RP OVR→WAR increased ~0.3 WAR across the board (e.g., OVR 60: 1.22 → 1.61, OVR 70: 1.59 → 2.00). Now matches actual P75 WAR production closely.
+- FV_TO_PEAK_WAR_RP updated proportionally (e.g., FV 60: 1.4 → 1.8, FV 70: 1.8 → 2.2).
+
+### Bug Fixes
+- **Career outcome chart missing for rookie-eligible MLB players** — players in both `player_surplus` and `prospect_fv` took the MLB code path, skipping outcome probability computation. Added fallback: if MLB player also has a `prospect_fv` row, compute outcome probs from the prospect data.
+- **Ratings scale cache** — (continued from Session 35) `app.py` `before_request` now resets `player_utils._ratings_scale = None` each request.
+
+---
+
 ## Session 35 (2026-03-23)
 
 ### Career Outcome Probability Chart

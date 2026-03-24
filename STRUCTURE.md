@@ -90,7 +90,7 @@ statsplusplus/
 | `team_pitching_stats` | `refresh.py` | Team-level pitching aggregates by year/split |
 | `games` | `refresh.py` | Game results with scores, WP/LP/SV |
 | `prospect_fv` | `fv_calc.py` | FV grades for all non-MLB prospects |
-| `player_surplus` | `fv_calc.py` | Surplus value for all MLB players |
+| `player_surplus` | `fv_calc.py` | Surplus value for all MLB players (includes `surplus_yr1` for current-season) |
 
 | View | Description |
 |---|---|
