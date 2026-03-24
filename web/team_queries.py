@@ -287,7 +287,7 @@ def get_roster_hitters(team_id=None):
     # Position players
     players = conn.execute("""
         SELECT p.player_id, p.name, p.age, p.pos, p.role,
-               ps.ovr, ps.surplus
+               ps.ovr, ps.surplus, ps.surplus_yr1
         FROM players p
         LEFT JOIN player_surplus ps ON p.player_id=ps.player_id AND ps.eval_date=?
         WHERE p.team_id=? AND p.level='1' AND COALESCE(p.role,0) NOT IN (11,12,13)
@@ -296,7 +296,7 @@ def get_roster_hitters(team_id=None):
     # Two-way pitchers with meaningful batting (PA >= 30)
     twp = conn.execute("""
         SELECT p.player_id, p.name, p.age, p.pos, p.role,
-               ps.ovr, ps.surplus
+               ps.ovr, ps.surplus, ps.surplus_yr1
         FROM players p
         LEFT JOIN player_surplus ps ON p.player_id=ps.player_id AND ps.eval_date=?
         JOIN batting_stats b ON b.player_id=p.player_id AND b.year=? AND b.split_id=1 AND b.pa>=30
@@ -364,7 +364,7 @@ def get_roster_hitters(team_id=None):
             "pid": pid, "name": p["name"], "age": p["age"],
             "ovr": p["ovr"] or 0, "pos": pos,
             "pos_order": pos_order().get(pos, 99),
-            "surplus": round(p["surplus"] / 1e6, 1) if p["surplus"] else 0,
+            "surplus": round(p["surplus_yr1"] / 1e6, 1) if p["surplus_yr1"] else 0,
             "is_two_way": pid in twp_pids,
             "splits": {
                 "1": _fmt_split(splits.get(1)),
@@ -386,7 +386,7 @@ def get_roster_pitchers(team_id=None):
 
     players = conn.execute("""
         SELECT p.player_id, p.name, p.age, p.pos, p.role,
-               ps.ovr, ps.surplus
+               ps.ovr, ps.surplus, ps.surplus_yr1
         FROM players p
         LEFT JOIN player_surplus ps ON p.player_id=ps.player_id AND ps.eval_date=?
         WHERE p.team_id=? AND p.level='1' AND p.role IN (11,12,13)
@@ -444,7 +444,7 @@ def get_roster_pitchers(team_id=None):
             "pid": p["player_id"], "name": p["name"], "age": p["age"],
             "ovr": p["ovr"] or 0, "role": role_str,
             "role_order": pos_order().get(role_str, 99),
-            "surplus": round(p["surplus"] / 1e6, 1) if p["surplus"] else 0,
+            "surplus": round(p["surplus_yr1"] / 1e6, 1) if p["surplus_yr1"] else 0,
             "is_two_way": p["player_id"] in twp_pids,
             "splits": {
                 "1": _fmt_split(splits.get(1)),

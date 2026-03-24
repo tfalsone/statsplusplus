@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS player_surplus (
     fv             INTEGER,
     fv_str         TEXT,
     surplus        INTEGER,
+    surplus_yr1    INTEGER,
     level          TEXT,
     team_id        INTEGER,
     parent_team_id INTEGER,
@@ -326,3 +327,7 @@ def init_schema(league_dir: Path | None = None):
     with get_conn(league_dir) as conn:
         conn.executescript(SCHEMA)
         _migrate_ratings(conn)
+        # player_surplus: add surplus_yr1 if missing
+        ps_cols = {r[1] for r in conn.execute("PRAGMA table_info(player_surplus)").fetchall()}
+        if "surplus_yr1" not in ps_cols:
+            conn.execute("ALTER TABLE player_surplus ADD COLUMN surplus_yr1 INTEGER")

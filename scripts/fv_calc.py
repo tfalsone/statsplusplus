@@ -119,12 +119,16 @@ def run():
         if int(level) == 1:
             ovr      = int(p.get("Ovr") or 0)
             surplus = 0
+            surplus_yr1 = 0
             cv = _contract_value(pid, _conn=conn, _hist=_cv_hist)
             if cv:
                 surplus = cv["total_surplus"].get("base", 0)
+                bd = cv.get("breakdown")
+                if bd:
+                    surplus_yr1 = round(bd[0].get("surplus", 0))
             surplus_rows.append((
                 pid, game_date, p["Name"], bucket, age,
-                ovr, ovr, str(ovr), surplus,
+                ovr, ovr, str(ovr), surplus, surplus_yr1,
                 "MLB", p["team_id"], p["parent_team_id"]
             ))
             # Rookie-eligible: <130 career AB AND <50 career IP, age ≤ 24
@@ -178,9 +182,15 @@ def run():
             ))
 
     conn.execute("DELETE FROM prospect_fv")
-    conn.execute("DELETE FROM player_surplus")
+    conn.execute("DROP TABLE IF EXISTS player_surplus")
+    conn.execute("""CREATE TABLE player_surplus (
+        player_id INTEGER, eval_date TEXT, name TEXT, bucket TEXT,
+        age INTEGER, ovr INTEGER, fv INTEGER, fv_str TEXT,
+        surplus INTEGER, surplus_yr1 INTEGER, level TEXT,
+        team_id INTEGER, parent_team_id INTEGER,
+        PRIMARY KEY (player_id, eval_date))""")
     conn.executemany("INSERT INTO prospect_fv VALUES (?,?,?,?,?,?,?)", prospect_rows)
-    conn.executemany("INSERT INTO player_surplus VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", surplus_rows)
+    conn.executemany("INSERT INTO player_surplus VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", surplus_rows)
     conn.commit()
     conn.close()
 
