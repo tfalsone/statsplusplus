@@ -104,6 +104,12 @@ class LeagueConfig:
         self._load()
         return self._settings.get("minimum_salary", 825000)
 
+    @property
+    def ratings_scale(self):
+        """Rating scale for tool grades: '20-80' or '1-100'. Default '1-100'."""
+        self._load()
+        return self._settings.get("ratings_scale", "1-100")
+
     # --- Teams ---
 
     @property

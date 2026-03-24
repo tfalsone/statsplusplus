@@ -391,6 +391,7 @@ from team_queries import (get_summary, get_standings, get_division_standings,
                           get_age_distribution, get_farm_depth, get_stat_leaders,
                           get_power_rankings, get_recent_games, get_payroll_summary,
                           get_record_breakdown, get_depth_chart,
-                          get_roster_hitters, get_roster_pitchers)
+                          get_roster_hitters, get_roster_pitchers,
+                          get_org_overview)
 from player_queries import get_player
 from percentiles import get_hitter_percentiles, get_pitcher_percentiles

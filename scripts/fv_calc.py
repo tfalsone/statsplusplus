@@ -2,7 +2,7 @@
 """
 fv_calc.py — League-wide FV and surplus calculation.
 
-Prospects (non-MLB, age ≤ 25): FV → prospect_fv
+Prospects (non-MLB, age ≤ 24): FV → prospect_fv
 MLB players: surplus value → player_surplus
 
 Angels org prospects are included — farm_analysis.py will overwrite them
@@ -20,7 +20,7 @@ import db as _db
 from league_config import config as _cfg
 from player_utils import (assign_bucket, calc_fv, LEVEL_NORM_AGE,
                            dollars_per_war, league_minimum,
-                           peak_war_from_ovr, aging_mult, RP_WAR_CAP)
+                           peak_war_from_ovr, aging_mult)
 from prospect_value import prospect_surplus_with_option as _prospect_surplus_opt
 from contract_value import contract_value as _contract_value
 from contract_value import contract_value as _contract_value
@@ -115,7 +115,7 @@ def run():
                 ovr, ovr, str(ovr), surplus,
                 "MLB", p["team_id"], p["parent_team_id"]
             ))
-        elif age <= 25:
+        elif age <= 24:
             level_key = LEVEL_INT_KEY.get(int(level))
             if not level_key:
                 continue
@@ -124,8 +124,19 @@ def run():
             fv_base, fv_plus = calc_fv(p)
             fv_str = f"{fv_base}+" if fv_plus else str(fv_base)
             level_label = LEVEL_INT_LABEL.get(int(level), str(level))
+
+            # For surplus, use raw FV (before RP Pot discount) so the RP WAR
+            # table is the sole positional adjustment — avoids double-discounting.
+            if bucket == "RP":
+                raw_pot = p["Pot"]
+                p["_bucket"] = "SP"          # temporarily remove RP treatment
+                raw_fv, raw_plus = calc_fv(p)
+                p["_bucket"] = bucket
+            else:
+                raw_fv, raw_plus = fv_base, fv_plus
+
             surplus = _prospect_surplus_opt(
-                fv_base, age, level_label, bucket, fv_plus=fv_plus,
+                raw_fv, age, level_label, bucket, fv_plus=raw_plus,
                 ovr=p.get("Ovr"), pot=p.get("Pot")
             )
             prospect_rows.append((
@@ -133,6 +144,7 @@ def run():
                 level_label, bucket, surplus
             ))
 
+    conn.execute("DELETE FROM prospect_fv WHERE eval_date = ?", (game_date,))
     conn.executemany("INSERT OR REPLACE INTO prospect_fv VALUES (?,?,?,?,?,?,?)", prospect_rows)
     conn.executemany("INSERT OR REPLACE INTO player_surplus VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", surplus_rows)
     conn.commit()

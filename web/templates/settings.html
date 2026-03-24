@@ -44,6 +44,12 @@
           <option value="{{ opt }}"{% if cfg.settings.dh_rule == opt %} selected{% endif %}>{{ opt }}</option>
           {% endfor %}
         </select>
+        <label>Ratings Scale</label>
+        <select name="ratings_scale" style="width:200px">
+          {% for opt in ["1-100", "20-80"] %}
+          <option value="{{ opt }}"{% if cfg.settings.get("ratings_scale", "1-100") == opt %} selected{% endif %}>{{ opt }}</option>
+          {% endfor %}
+        </select>
       </div>
       <button type="submit" style="margin-top:8px">Save</button>
     </form>

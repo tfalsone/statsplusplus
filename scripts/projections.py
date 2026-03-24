@@ -5,7 +5,7 @@ Pure functions — no DB access. Takes player dicts as input, returns projection
 Used by web/team_queries.py::get_depth_chart().
 """
 
-from player_utils import peak_war_from_ovr, aging_mult, RP_WAR_CAP
+from player_utils import peak_war_from_ovr, aging_mult
 
 # ---------------------------------------------------------------------------
 # OPS+ model — calibrated from 2,573 qualified hitter-seasons (PA >= 200)
@@ -49,8 +49,6 @@ def project_war(ovr, pot, age, bucket, year_offset=0, stat_war=None):
     proj_ovr = project_ovr(ovr, pot, age, bucket, year_offset)
     future_age = age + year_offset
     ratings_war = peak_war_from_ovr(proj_ovr, bucket) * aging_mult(future_age, bucket)
-    if bucket == "RP":
-        ratings_war = min(ratings_war, RP_WAR_CAP)
     ratings_war = max(ratings_war, 0.0)
 
     if stat_war is not None and stat_war > 0:
@@ -66,10 +64,20 @@ def project_war(ovr, pot, age, bucket, year_offset=0, stat_war=None):
     return ratings_war
 
 
+def _to_model_scale(val):
+    """Convert a tool rating to the 1-100 scale used by projection model coefficients.
+    On 1-100 leagues this is a no-op. On 20-80 leagues, maps 20→0, 50→50, 80→100."""
+    from player_utils import _get_ratings_scale
+    if _get_ratings_scale() == "20-80":
+        return (val - 20) / 60 * 100
+    return val
+
+
 def project_ops_plus(cntct, gap, pow_, eye):
-    """Ratings -> OPS+ projection. Inputs on 1-100 raw scale."""
-    return _OPS_B0 + _OPS_B["cntct"] * cntct + _OPS_B["gap"] * gap \
-        + _OPS_B["pow"] * pow_ + _OPS_B["eye"] * eye
+    """Ratings -> OPS+ projection. Inputs are auto-converted to model scale."""
+    c, g, p, e = _to_model_scale(cntct), _to_model_scale(gap), _to_model_scale(pow_), _to_model_scale(eye)
+    return _OPS_B0 + _OPS_B["cntct"] * c + _OPS_B["gap"] * g \
+        + _OPS_B["pow"] * p + _OPS_B["eye"] * e
 
 
 def _int_or(val, default=50):

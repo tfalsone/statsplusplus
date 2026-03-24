@@ -142,6 +142,19 @@ def _upsert_ratings(conn, ratings, snapshot_date, keep_history=True):
         [(r.get("Height"), r.get("Bats"), r.get("Throws"), r["ID"])
          for r in ratings if r.get("Height") is not None]
     )
+    # Backfill extended ratings (babip/hra/pbabip/prone) on existing rows that have NULLs
+    if any(r.get("BABIP") is not None for r in ratings[:10]):
+        _EXT_COLS = [
+            ("babip", "BABIP"), ("babip_l", "BABIP_L"), ("babip_r", "BABIP_R"), ("pot_babip", "PotBABIP"),
+            ("hra", "HRA"), ("hra_l", "HRA_L"), ("hra_r", "HRA_R"), ("pot_hra", "PotHRA"),
+            ("pbabip", "PBABIP"), ("pbabip_l", "PBABIP_L"), ("pbabip_r", "PBABIP_R"), ("pot_pbabip", "PotPBABIP"),
+            ("prone", "Prone"),
+        ]
+        set_clause = ", ".join(f"{db}=?" for db, _ in _EXT_COLS)
+        conn.executemany(
+            f"UPDATE ratings SET {set_clause} WHERE player_id=? AND babip IS NULL",
+            [tuple(r.get(api) for _, api in _EXT_COLS) + (r["ID"],) for r in ratings]
+        )
 
 def _upsert_contracts(conn, contracts):
     def row(c):
@@ -751,6 +764,23 @@ def update_state(game_date, year):
     _write_json(state_path, state)
 
 
+def _run_calibrate():
+    """Run calibrate.py to derive league-specific model weights."""
+    import subprocess
+    log.info("── calibrate")
+    result = subprocess.run(
+        [sys.executable, str(BASE / "scripts" / "calibrate.py")],
+        capture_output=True, text=True
+    )
+    if result.stdout:
+        for line in result.stdout.strip().splitlines():
+            log.info(f"  {line}")
+    if result.returncode != 0:
+        msg = result.stderr.strip().splitlines()
+        last = msg[-1] if msg else "unknown error"
+        log.warning("calibrate failed (using defaults): %s", last)
+
+
 def _run_fv_calc():
     """Run fv_calc.py as a subprocess to compute league-wide FV + surplus."""
     import subprocess
@@ -787,4 +817,5 @@ if __name__ == "__main__":
         update_state(game_date, year)
         refresh_league(year)
         if not skip_fv:
+            _run_calibrate()
             _run_fv_calc()

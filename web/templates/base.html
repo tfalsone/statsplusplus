@@ -63,6 +63,7 @@
     const modal = document.getElementById('refresh-modal');
     const modalMsg = document.getElementById('refresh-modal-msg');
     const modalOk = document.getElementById('refresh-modal-ok');
+    let refreshRunning = false;
 
     function showModal(text, isError) {
       modalMsg.textContent = text;
@@ -76,14 +77,20 @@
     }
 
     function setRunning() {
+      refreshRunning = true;
       btn.disabled = true;
       btn.innerHTML = '<span class="spin">⚾</span> Running…';
     }
     function setIdle() {
+      refreshRunning = false;
       btn.disabled = false;
       btn.textContent = '⟳ Refresh';
-      // Re-check staleness after refresh
+      updateSyncBadge();
+    }
+
+    function updateSyncBadge() {
       fetch('/api/game-date').then(r => r.json()).then(d => {
+        if (refreshRunning) return;
         if (!d.remote) {
           btn.innerHTML = '⟳ Refresh <span class="sync-badge sync-unknown" title="Could not reach API">?</span>';
         } else if (d.local === d.remote) {
@@ -118,18 +125,8 @@
     // Resume polling if refresh was already running on page load
     fetch('/refresh/status').then(r => r.json()).then(d => {
       if (d.running) { setRunning(); poll(); }
-    });
-
-    // Check if local data is stale vs API
-    fetch('/api/game-date').then(r => r.json()).then(d => {
-      if (!d.remote) {
-        btn.innerHTML = '⟳ Refresh <span class="sync-badge sync-unknown" title="Could not reach API">?</span>';
-      } else if (d.local === d.remote) {
-        btn.innerHTML = '⟳ Refresh <span class="sync-badge sync-ok" title="Up to date: ' + d.local + '">✓</span>';
-      } else {
-        btn.innerHTML = '⟳ Refresh <span class="sync-badge sync-stale" title="Local: ' + (d.local||'none') + ' — API: ' + d.remote + '">!</span>';
-      }
-    }).catch(() => {});
+      else { updateSyncBadge(); }
+    }).catch(() => { updateSyncBadge(); });
   })();
   </script>
 
@@ -279,6 +276,14 @@
       hide();
     });
     popup.addEventListener('mouseleave', hide);
+  })();
+  // Ovr/Pot tier coloring — global, runs on any page with .ovr-color elements
+  (function() {
+    var tiers = [[80,'#3a6fd8'],[70,'#2196a8'],[60,'#27ae60'],[55,'#7daf24'],[50,'#b7b020'],[45,'#d4ac0d'],[40,'#f1c40f'],[35,'#f39c12'],[30,'#e67e22'],[25,'#d35400'],[20,'#c0392b']];
+    document.querySelectorAll('.ovr-color').forEach(function(el) {
+      var g = parseInt(el.dataset.g);
+      for (var i = 0; i < tiers.length; i++) { if (g >= tiers[i][0]) { el.style.color = tiers[i][1]; break; } }
+    });
   })();
   </script>
 </body>

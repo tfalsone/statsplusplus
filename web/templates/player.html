@@ -393,6 +393,11 @@
     {{ p.surplus_detail.flags|join(" · ") }}
   </div>
   {% endif %}
+  {% if p.surplus_detail.discount_note %}
+  <div style="margin-top:4px; font-size:11px; color:var(--text-dim)">
+    ${{ p.surplus_detail.raw_total }}M {{ p.surplus_detail.discount_note }}
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 {% endmacro %}
@@ -657,15 +662,6 @@
 
 {% block scripts %}
 <script>
-// Ovr/Pot tier coloring
-(function() {
-  var tiers = [[80,'#3a6fd8'],[70,'#2196a8'],[60,'#27ae60'],[55,'#7daf24'],[50,'#b7b020'],[45,'#d4ac0d'],[40,'#f1c40f'],[35,'#f39c12'],[30,'#e67e22'],[25,'#d35400'],[20,'#c0392b']];
-  document.querySelectorAll('.ovr-color').forEach(function(el) {
-    var g = parseInt(el.dataset.g);
-    for (var i = 0; i < tiers.length; i++) { if (g >= tiers[i][0]) { el.style.color = tiers[i][1]; break; } }
-  });
-})();
-
 function toggleSplits(btn) {
   var panel = btn.closest('.panel');
   var showing = panel.querySelector('.split-overall').style.display === 'none';

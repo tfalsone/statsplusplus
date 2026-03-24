@@ -60,6 +60,7 @@
 <div class="tab-bar">
   <button class="tab active" data-tab="main">Main</button>
   <button class="tab" data-tab="depth">Depth Chart</button>
+  <button class="tab" data-tab="org">Organization</button>
   <button class="tab" data-tab="hitters">Hitters</button>
   <button class="tab" data-tab="pitchers">Pitchers</button>
   <button class="tab" data-tab="contracts">Contracts</button>
@@ -486,6 +487,166 @@
 })();
 </script>
 {% endif %}
+</div>
+
+{# ══════ Organization ══════ #}
+<div class="tab-content" id="tab-org">
+  {% set org = org_overview %}
+
+  <div class="org-top">
+  {# ── Position Depth ── #}
+  <div class="panel org-depth-panel">
+    <h2>Position Depth</h2>
+    <table class="org-depth-table">
+      <thead>
+        <tr>
+          <th class="left">Pos</th>
+          <th>Rank</th>
+          <th class="left">MLB Starter</th>
+          <th>Age</th>
+          <th>Ovr</th>
+          <th>WAR</th>
+          <th>Surplus</th>
+          <th class="left col-sep">Pos</th>
+          <th class="left">Top Prospect</th>
+          <th>Age</th>
+          <th>FV</th>
+          <th>Level</th>
+          <th>Surplus</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in org.position_depth %}
+        <tr{% if row.is_first and row.pos in ('SP','RP') %} class="org-group-top"{% endif %}>
+          <td class="left" style="font-weight:600">{{ row.pos }}</td>
+          <td>
+            {%- if row.is_first -%}
+              {%- set r = org.pos_rank.get(row.pos) -%}
+              {%- if r -%}
+                {%- if r <= 5 -%}<span class="rank-pill rank-elite">{{ r }}</span>
+                {%- elif r <= 12 -%}<span class="rank-pill rank-good">{{ r }}</span>
+                {%- elif r <= 22 -%}<span class="rank-pill rank-mid">{{ r }}</span>
+                {%- elif r <= 29 -%}<span class="rank-pill rank-poor">{{ r }}</span>
+                {%- else -%}<span class="rank-pill rank-bad">{{ r }}</span>
+                {%- endif -%}
+              {%- endif -%}
+            {%- endif -%}
+          </td>
+          {% if row.mlb %}
+            {% set m = row.mlb[0] %}
+          <td class="left"><a class="player-link" href="/player/{{ m.pid }}">{{ m.name }}</a></td>
+          <td>{{ m.age }}</td>
+          <td><span class="ovr-color" data-g="{{ m.ovr }}">{{ m.ovr }}</span></td>
+          <td>{{ m.war }}</td>
+          <td class="{{ 'pos' if m.surplus > 0 else 'neg' if m.surplus < 0 else '' }}">${{ m.surplus }}M</td>
+          {% else %}
+          <td class="left text-dim">—</td><td></td><td></td><td></td><td></td>
+          {% endif %}
+          {% if row.prospect %}
+            {% set p = row.prospect %}
+          <td class="left col-sep" style="font-weight:600">{% if row.is_first %}{{ p.bucket }}{% endif %}</td>
+          <td class="left"><a class="player-link" href="/player/{{ p.pid }}">{{ p.name }}</a></td>
+          <td>{{ p.age }}</td>
+          <td>
+            {%- set fv = p.fv -%}
+            <span class="fv-badge {% if fv >= 65 %}fv-badge-gold{% elif fv >= 55 %}fv-badge-blue{% elif fv >= 50 %}fv-badge-green{% else %}fv-badge-gray{% endif %}">{{ p.fv_str }}</span>
+          </td>
+          <td>
+            {%- set lv = p.level -%}
+            <span class="lvl-badge {% if lv == 'AAA' %}lvl-aaa{% elif lv == 'AA' %}lvl-aa{% elif lv in ('A','A-Short') %}lvl-a{% else %}lvl-low{% endif %}">{{ lv }}</span>
+          </td>
+          <td class="pos">${{ p.surplus }}M</td>
+          {% else %}
+          <td class="left col-sep text-dim">—</td><td class="left text-dim">—</td><td></td><td></td><td></td><td></td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# ── Retention Priorities ── #}
+  <div class="panel org-retention-panel">
+    <h2>Retention Priorities</h2>
+    {% if org.retention %}
+    <table>
+      <thead>
+        <tr>
+          <th class="left" data-sort="str">Name</th>
+          <th>Pos</th>
+          <th>Ovr</th>
+          <th>Age</th>
+          <th>Ctrl</th>
+          <th>Surplus</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in org.retention %}
+        <tr>
+          <td class="left"><a class="player-link" href="/player/{{ p.pid }}">{{ p.name }}</a></td>
+          <td>{{ p.pos }}</td>
+          <td><span class="ovr-color" data-g="{{ p.ovr }}">{{ p.ovr }}</span></td>
+          <td>{{ p.age }}</td>
+          <td>{{ p.yrs_left }}yr</td>
+          <td class="pos">${{ p.surplus }}M</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-dim">No players with expiring control and positive surplus.</p>
+    {% endif %}
+  </div>
+  </div>
+
+  <div class="columns" style="margin-top:12px">
+    {# ── Surplus Leaders ── #}
+    <div class="panel">
+      <h2>Surplus Leaders</h2>
+      <table>
+        <thead>
+          <tr>
+            <th data-sort="num">#</th>
+            <th class="left" data-sort="str">Name</th>
+            <th data-sort="str">Pos</th>
+            <th data-sort="num">Surplus</th>
+            <th data-sort="str">Level</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in org.surplus_leaders[:20] %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td class="left"><a class="player-link" href="/player/{{ p.pid }}">{{ p.name }}</a></td>
+            <td>{{ p.pos }}</td>
+            <td class="{{ 'pos' if p.surplus > 0 else 'neg' if p.surplus < 0 else '' }}">${{ p.surplus }}M</td>
+            <td>
+              {%- set lv = p.level -%}
+              <span class="lvl-badge {% if lv == 'MLB' %}lvl-mlb{% elif lv == 'AAA' %}lvl-aaa{% elif lv == 'AA' %}lvl-aa{% elif lv in ('A','A-Short') %}lvl-a{% else %}lvl-low{% endif %}">{{ lv }}</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {# ── Payroll Shape ── #}
+    <div class="panel">
+      <h2>Committed Payroll</h2>
+      <div class="payroll-bars">
+        {% set max_pay = org.payroll_shape|map(attribute='total')|max %}
+        {% for yr in org.payroll_shape %}
+        <div class="payroll-bar-row">
+          <span class="payroll-year">{{ yr.year }}</span>
+          <div class="payroll-bar-track">
+            <div class="payroll-bar-fill" style="width:{{ (yr.total / max_pay * 100) if max_pay else 0 }}%"></div>
+          </div>
+          <span class="payroll-val">${{ "%.0f"|format(yr.total / 1000000) }}M</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
 </div>
 
 {# ══════ Hitters ══════ #}

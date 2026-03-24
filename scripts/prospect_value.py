@@ -8,8 +8,8 @@ Implements Step 3 of docs/trade_analysis_guide.md.
 
 import argparse, json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from player_utils import dollars_per_war, league_minimum, POSITIONAL_WAR_ADJUSTMENTS, RP_WAR_CAP, aging_mult, LEVEL_NORM_AGE
-from constants import ARB_PCT, FV_TO_PEAK_WAR, DEVELOPMENT_DISCOUNT, YEARS_TO_MLB, PROSPECT_DISCOUNT_RATE, REPLACEMENT_WAR
+from player_utils import dollars_per_war, league_minimum, POSITIONAL_WAR_ADJUSTMENTS, aging_mult, LEVEL_NORM_AGE, peak_war_from_ovr
+from constants import ARB_PCT, FV_TO_PEAK_WAR, FV_TO_PEAK_WAR_SP, FV_TO_PEAK_WAR_RP, FV_TO_PEAK_WAR_BY_POS, DEVELOPMENT_DISCOUNT, YEARS_TO_MLB, PROSPECT_DISCOUNT_RATE, SCARCITY_MULT
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -20,28 +20,37 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def peak_war(fv, bucket="SP"):
     """Map FV to expected peak WAR/year. Interpolate between defined points.
     Half-grade (+) is handled by the caller passing fv+0.5.
-    RP WAR is capped regardless of FV.
+    RPs use a separate table calibrated to actual RP WAR output.
+    SPs use a separate table when calibrated (pitchers produce less WAR per
+    FV grade than hitters in most leagues).
+    Hitters use per-position tables when calibrated (COF produces less WAR
+    per FV grade than SS).
     """
-    fv_points = sorted(FV_TO_PEAK_WAR.keys())
-    if fv >= max(fv_points):
-        war = FV_TO_PEAK_WAR[max(fv_points)]
-    elif fv <= min(fv_points):
-        war = FV_TO_PEAK_WAR[min(fv_points)]
-    else:
-        war = FV_TO_PEAK_WAR[min(fv_points)]
-        for i in range(len(fv_points) - 1):
-            f0, f1 = fv_points[i], fv_points[i+1]
-            if f0 <= fv <= f1:
-                t = (fv - f0) / (f1 - f0)
-                war = FV_TO_PEAK_WAR[f0] + t * (FV_TO_PEAK_WAR[f1] - FV_TO_PEAK_WAR[f0])
-                break
     if bucket == "RP":
-        war = min(war, RP_WAR_CAP)
-    return war
+        table = FV_TO_PEAK_WAR_RP
+    elif bucket == "SP":
+        table = FV_TO_PEAK_WAR_SP
+    elif FV_TO_PEAK_WAR_BY_POS and bucket in FV_TO_PEAK_WAR_BY_POS:
+        table = FV_TO_PEAK_WAR_BY_POS[bucket]
+    else:
+        table = FV_TO_PEAK_WAR
+    fv_points = sorted(table.keys())
+    if fv >= max(fv_points):
+        return table[max(fv_points)]
+    if fv <= min(fv_points):
+        return table[min(fv_points)]
+    for i in range(len(fv_points) - 1):
+        f0, f1 = fv_points[i], fv_points[i+1]
+        if f0 <= fv <= f1:
+            t = (fv - f0) / (f1 - f0)
+            return table[f0] + t * (table[f1] - table[f0])
+    return table[min(fv_points)]
 
 def _age_adjusted_discount(level, age):
     """Development discount adjusted for age vs level norm.
-    +3% per year younger than norm, -3% per year older. Clamped [0.15, 0.95]."""
+    +4% per year younger than norm, -4% per year older. Clamped [0.15, 0.95].
+    Steeper than the original 3%/yr to better reward young-for-level prospects
+    (Session 33): a 19yo in A-ball gets 0.80 instead of 0.77."""
     base = DEVELOPMENT_DISCOUNT.get(level, 0.45)
     norm_key = level.lower().replace(" ", "-")
     # "Rookie" level label maps to USL in the norm age table
@@ -50,18 +59,43 @@ def _age_adjusted_discount(level, age):
     norm_age = LEVEL_NORM_AGE.get(norm_key)
     if norm_age is None:
         return base
-    return max(0.15, min(0.95, base + (norm_age - age) * 0.03))
+    return max(0.15, min(0.95, base + (norm_age - age) * 0.04))
 
 
 def _certainty_mult(ovr, pot):
     """Adjust surplus based on how much ceiling is already realized.
-    Realization ~1.0 (maxed out) = +15% (low variance, safe bet).
+    Realization ~1.0 (maxed out) = neutral (no bonus — proximity already
+    rewarded by dev discount and time value).
     Realization ~0.5 = neutral. Realization ~0.3 = -8% to -15% (raw, high variance).
+    Capped at 1.0 to avoid double-counting AAA proximity (Session 33).
     """
     if not ovr or not pot or pot <= 0:
         return 1.0
     realization = ovr / pot
-    return max(0.85, min(1.15, 0.8 + 0.4 * realization))
+    return max(0.85, min(1.0, 0.8 + 0.4 * realization))
+
+
+def _market_value(war, dpw, lg_min):
+    """Smooth market value: linear ramp from lg_min at 0 WAR to war*dpw at 1.0 WAR.
+    Above 1.0 WAR uses standard war*dpw. Below 0 WAR returns lg_min.
+    Eliminates the cliff at REPLACEMENT_WAR that zeroed out sub-1.0 WAR players."""
+    if war <= 0:
+        return lg_min
+    if war >= 1.0:
+        return war * dpw
+    return lg_min + war * (dpw - lg_min)
+
+
+def _scarcity_mult(fv):
+    """Interpolate scarcity multiplier from SCARCITY_MULT table."""
+    pts = sorted(SCARCITY_MULT.keys())
+    if fv <= pts[0]:  return SCARCITY_MULT[pts[0]]
+    if fv >= pts[-1]: return SCARCITY_MULT[pts[-1]]
+    for i in range(len(pts) - 1):
+        if pts[i] <= fv <= pts[i + 1]:
+            t = (fv - pts[i]) / (pts[i + 1] - pts[i])
+            return SCARCITY_MULT[pts[i]] + t * (SCARCITY_MULT[pts[i + 1]] - SCARCITY_MULT[pts[i]])
+    return 1.0
 
 
 def prospect_surplus(fv, age, level, bucket, positional_adjust=False, fv_plus=False,
@@ -82,6 +116,17 @@ def prospect_surplus(fv, age, level, bucket, positional_adjust=False, fv_plus=Fa
     pw        = peak_war(fv_eff, bucket)
     pos_adj   = POSITIONAL_WAR_ADJUSTMENTS.get(bucket, 0.0) if positional_adjust else 0.0
 
+    # For near-maxed prospects (Ovr close to Pot), blend FV-based peak WAR with
+    # Ovr-based current WAR. A maxed player's peak IS their current production;
+    # the FV table overestimates because it assumes further development.
+    # Blend weight = realization^2 (gentle at low realization, strong near max).
+    if ovr and pot and pot > 0:
+        realization = ovr / pot
+        ovr_war = peak_war_from_ovr(ovr, bucket)
+        if realization > 0.7 and ovr_war < pw:
+            blend_w = max(0, (realization - 0.7) / 0.3) ** 2  # 0 at 0.7, 1 at 1.0
+            pw = pw * (1 - blend_w) + ovr_war * blend_w
+
     RAMP = {1: 0.60, 2: 0.80}  # year 3+ = 1.0
 
     rows = []
@@ -96,7 +141,7 @@ def prospect_surplus(fv, age, level, bucket, positional_adjust=False, fv_plus=Fa
 
         war = (pw + pos_adj) * aging_mult(player_age, bucket) * ramp
 
-        market_val = war * dpw * discount if war >= REPLACEMENT_WAR else lg_min
+        market_val = _market_value(war, dpw, lg_min) * discount
 
         # Arb salary uses undiscounted WAR × $/WAR — no ramp (arb is based on prior performance)
         if ctrl_year <= 3:
@@ -118,24 +163,39 @@ def prospect_surplus(fv, age, level, bucket, positional_adjust=False, fv_plus=Fa
         })
 
     cert_mult = _certainty_mult(ovr, pot)
-    base_surplus = max(0, round(total_surplus * dev_discount * cert_mult))
+    scar_mult = _scarcity_mult(pot if pot else fv_eff)
+    combined = dev_discount * cert_mult * scar_mult
+    base_surplus = max(0, round(total_surplus * combined))
+
+    # Apply combined multiplier to surplus so breakdown matches total.
+    # Market value and salary stay raw (real projected economics).
+    # Surplus = trade value after development risk and scarcity adjustment.
+    for r in rows:
+        r["surplus"] = round(r["surplus"] * combined)
 
     return {"fv": fv, "bucket": bucket, "level": level, "age": age,
             "years_to_mlb": years_out, "debut_age": round(debut_age, 1),
             "dev_discount": dev_discount, "certainty_mult": cert_mult,
+            "scarcity_mult": scar_mult,
             "total_surplus": base_surplus, "breakdown": rows}
 
 
 def _ceiling_fv(pot):
     """Map Pot to a ceiling FV grade (discounted slightly — not everyone maxes out)."""
     raw = pot - 5
-    return min(70, max(40, 5 * round(raw / 5)))
+    return max(40, 5 * round(raw / 5))
 
 
 def prospect_surplus_with_option(fv, age, level, bucket, ovr=None, pot=None,
                                   fv_plus=False, positional_adjust=False):
     """Compute surplus including option value from upside scenarios.
-    Returns the higher of base surplus and probability-weighted blended surplus."""
+    Returns the higher of base surplus and probability-weighted blended surplus.
+    
+    Upside probabilities scale with two factors:
+    - Youth: younger players have more development time (+5% per year under 20)
+    - Pot-FV gap: wider gap = more development runway = higher upside probability
+      (a Pot 80 / FV 50 player has much more upside than Pot 52 / FV 50)
+    """
     base = prospect_surplus(fv, age, level, bucket, positional_adjust=positional_adjust,
                             fv_plus=fv_plus, ovr=ovr, pot=pot)
     base_val = base["total_surplus"]
@@ -148,10 +208,10 @@ def prospect_surplus_with_option(fv, age, level, bucket, ovr=None, pot=None,
     s_mid = prospect_surplus(mid_fv, age, level, bucket, ovr=ovr, pot=pot)["total_surplus"]
     s_ceil = prospect_surplus(cfv, age, level, bucket, ovr=ovr, pot=pot)["total_surplus"]
 
-    # Upside probability scales with youth: +5% per year under 20
     youth_bonus = max(0, (20 - age)) * 0.05
-    p_mid = min(0.40, 0.30 + youth_bonus)
-    p_ceil = min(0.20, 0.10 + youth_bonus * 0.5)
+    gap_factor = min(1.0, ((pot or fv) - fv) / 25)
+    p_mid = min(0.45, 0.30 + youth_bonus + gap_factor * 0.15)
+    p_ceil = min(0.25, 0.10 + youth_bonus * 0.5 + gap_factor * 0.10)
     p_base = 1.0 - p_mid - p_ceil
 
     blended = p_base * base_val + p_mid * s_mid + p_ceil * s_ceil
@@ -190,12 +250,18 @@ def print_result(result):
     cert = result.get('certainty_mult', 1.0)
     if cert != 1.0:
         print(f"  Certainty:    {cert:.2f}x")
-    print(f"\n  {'Yr':>2}  {'Age':>5}  {'WAR':>5}  {'Mkt Value':>12}  {'Salary':>10}  {'Surplus':>10}")
-    print(f"  {'--':>2}  {'---':>5}  {'---':>5}  {'---------':>12}  {'------':>10}  {'-------':>10}")
+    scar = result.get('scarcity_mult', 1.0)
+    if scar < 1.0:
+        print(f"  Scarcity:     {scar:.2f}x")
+    combined = result['dev_discount'] * cert * scar
+    print(f"\n  {'Yr':>2}  {'Age':>5}  {'WAR':>5}  {'Mkt Value':>12}  {'Salary':>10}  {'Raw Surp':>10}  {'Adj Surp':>10}")
+    print(f"  {'--':>2}  {'---':>5}  {'---':>5}  {'---------':>12}  {'------':>10}  {'--------':>10}  {'--------':>10}")
     for r in result["breakdown"]:
+        raw = r['market_value'] - r['salary']
         print(f"  {r['control_year']:>2}  {r['player_age']:>5}  {r['war']:>5.2f}  "
-              f"${r['market_value']:>11,}  ${r['salary']:>9,}  ${r['surplus']:>9,}")
-    print(f"\n  Total surplus: ${result['total_surplus']:,}")
+              f"${r['market_value']:>11,}  ${r['salary']:>9,}  ${raw:>9,}  ${r['surplus']:>9,}")
+    raw_total = sum(r['market_value'] - r['salary'] for r in result['breakdown'])
+    print(f"\n  Raw total: ${raw_total:,}  ×  {combined:.2f}  =  ${result['total_surplus']:,}")
 
 # ---------------------------------------------------------------------------
 # CLI

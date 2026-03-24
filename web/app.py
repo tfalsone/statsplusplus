@@ -227,6 +227,7 @@ def team(tid):
     payroll_summary = queries.get_payroll_summary(tid)
     record = queries.get_record_breakdown(tid)
     depth_chart = queries.get_depth_chart(tid)
+    org_overview = queries.get_org_overview(tid)
     my_abbr = queries.get_my_team_abbr()
     return render_template("team.html",
                            tid=tid, team_name=name,
@@ -246,7 +247,8 @@ def team(tid):
                            record=record, depth_chart=depth_chart,
                            roster_hitters=roster_hitters,
                            roster_pitchers=roster_pitchers,
-                           league_avg=league_avg)
+                           league_avg=league_avg,
+                           org_overview=org_overview)
 
 
 @app.route("/league")
@@ -433,6 +435,9 @@ def settings():
             dh = request.form.get("dh_rule", "")
             if dh in ("No DH", "Universal DH", "AL Only DH"):
                 s["dh_rule"] = dh
+            rs = request.form.get("ratings_scale", "")
+            if rs in ("1-100", "20-80"):
+                s["ratings_scale"] = rs
             settings_path = cfg.league_dir / "config" / "league_settings.json"
             settings_path.write_text(_json.dumps(s, indent=2) + "\n")
             cfg.reload()
@@ -775,6 +780,9 @@ def onboard_step3():
     dh = request.form.get("dh_rule", "")
     if dh in ("No DH", "Universal DH", "AL Only DH"):
         s["dh_rule"] = dh
+    rs = request.form.get("ratings_scale", "")
+    if rs in ("1-100", "20-80"):
+        s["ratings_scale"] = rs
     ms = request.form.get("minimum_salary", "")
     if ms.isdigit():
         s["minimum_salary"] = int(ms)
@@ -819,6 +827,12 @@ def api_game_date():
     local_date = queries.get_state().get("game_date", "")
     try:
         from statsplus import client
+        from league_context import get_statsplus_cookie
+        cfg = _get_cfg()
+        slug = cfg.settings.get("statsplus_slug", "emlb")
+        cookie = get_statsplus_cookie()
+        if slug and cookie:
+            client.configure(slug, cookie)
         remote_date = client.get_date().strip()
     except Exception:
         remote_date = None

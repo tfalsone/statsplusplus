@@ -513,6 +513,19 @@ h2.league-header { color: #aaa; font-size: 0.95rem; text-transform: uppercase; l
 .fv-badge-green { background: rgba(46, 204, 113, 0.2); color: #2ecc71; }
 .fv-badge-gray { background: rgba(138, 138, 154, 0.15); color: var(--text-dim); }
 
+/* Org tab */
+.org-top { display: grid; grid-template-columns: 1fr auto; gap: 16px; }
+.org-depth-panel { min-width: 0; }
+.org-retention-panel { min-width: 260px; max-width: 360px; }
+.org-depth-table th, .org-depth-table td { padding: 4px 8px; }
+.org-group-top td { border-top: 1px solid var(--border); }
+.payroll-bars { display: flex; flex-direction: column; gap: 8px; }
+.payroll-bar-row { display: flex; align-items: center; gap: 8px; }
+.payroll-year { width: 36px; font-size: 12px; font-weight: 600; color: var(--text-dim); }
+.payroll-bar-track { flex: 1; height: 18px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.payroll-bar-fill { height: 100%; background: rgba(80, 180, 255, 0.3); border-radius: 4px; transition: width 0.3s; }
+.payroll-val { width: 60px; text-align: right; font-size: 12px; font-weight: 600; }
+
 /* Level badges */
 .lvl-badge {
   display: inline-block; padding: 1px 6px; border-radius: 3px;
@@ -522,6 +535,7 @@ h2.league-header { color: #aaa; font-size: 0.95rem; text-transform: uppercase; l
 .lvl-aa { background: rgba(46, 204, 113, 0.2); color: #2ecc71; }
 .lvl-a { background: rgba(241, 196, 15, 0.2); color: #f1c40f; }
 .lvl-low { background: rgba(138, 138, 154, 0.15); color: var(--text-dim); }
+.lvl-mlb { background: rgba(255, 255, 255, 0.12); color: var(--text); }
 
 /* ETA current year */
 .eta-now { color: #fff; font-weight: 700; }

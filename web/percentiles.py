@@ -4,7 +4,7 @@ import os, sys, json
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(BASE, "scripts"))
-from web_league_context import get_db, get_cfg
+from web_league_context import get_db, get_cfg, has_extended_ratings
 
 # ── constants ────────────────────────────────────────────────────────────
 
@@ -87,12 +87,21 @@ def _babip_expected(pid, cntct, speed, conn, year, babip_rating=None):
     """Expected BABIP from ratings. Uses the BABIP rating directly when available,
     otherwise falls back to the contact+speed regression model."""
     if babip_rating is not None:
-        # BABIP rating is 1-100 scale. Convert to expected stat-line BABIP.
-        # League average BABIP ≈ .300, rating 50 = average.
-        # Scale: each point ≈ 0.002 BABIP (50 → .300, 70 → .340, 30 → .260)
-        model_babip = 0.200 + babip_rating * 0.002
+        # BABIP rating → expected stat-line BABIP.
+        # League average BABIP ≈ .300, rating 50 = average on both scales.
+        # On 1-100: each point ≈ 0.002 BABIP. On 20-80: each point ≈ 0.00333.
+        from player_utils import _get_ratings_scale
+        if _get_ratings_scale() == "20-80":
+            model_babip = 0.200 + (babip_rating - 20) / 60 * 0.200
+        else:
+            model_babip = 0.200 + babip_rating * 0.002
     else:
-        model_babip = _BABIP_B0 + _BABIP_B1 * cntct + _BABIP_B2 * speed
+        from player_utils import _get_ratings_scale
+        c, s = cntct, speed
+        if _get_ratings_scale() == "20-80":
+            c = (cntct - 20) / 60 * 100
+            s = (speed - 20) / 60 * 100
+        model_babip = _BABIP_B0 + _BABIP_B1 * c + _BABIP_B2 * s
     # Historical residual: average (actual - model) over prior qualifying seasons
     rows = conn.execute("""
         SELECT b.h, b.hr, b.ab, b.k, b.sf, r.cntct, r.speed
@@ -106,7 +115,9 @@ def _babip_expected(pid, cntct, speed, conn, year, babip_rating=None):
             if denom <= 0:
                 continue
             actual = (h - hr) / denom
-            pred = _BABIP_B0 + _BABIP_B1 * (rc or 0) + _BABIP_B2 * (rs or 0)
+            pred_c = (rc - 20) / 60 * 100 if _get_ratings_scale() == "20-80" else (rc or 0)
+            pred_s = (rs - 20) / 60 * 100 if _get_ratings_scale() == "20-80" else (rs or 0)
+            pred = _BABIP_B0 + _BABIP_B1 * pred_c + _BABIP_B2 * pred_s
             resids.append(actual - pred)
         if len(resids) >= 2:
             model_babip += sum(resids) / len(resids)
@@ -145,10 +156,11 @@ def get_hitter_percentiles(pid, split_id=1):
         qualified = False
 
     # Compute expected BABIP before closing (needs conn for historical residual)
+    _babip_col = ", babip" if has_extended_ratings() else ""
     _pc = conn.execute(
-        "SELECT cntct, speed, babip FROM ratings WHERE player_id=? ORDER BY snapshot_date DESC LIMIT 1",
+        f"SELECT cntct, speed{_babip_col} FROM ratings WHERE player_id=? ORDER BY snapshot_date DESC LIMIT 1",
         (pid,)).fetchone()
-    exp_babip = _babip_expected(pid, _pc[0] or 0, _pc[1] or 0, conn, year, _pc[2]) if _pc else None
+    exp_babip = _babip_expected(pid, _pc[0] or 0, _pc[1] or 0, conn, year, _pc[2] if len(_pc) > 2 else None) if _pc else None
     conn.close()
 
     if not rows:
@@ -242,7 +254,11 @@ def get_pitcher_percentiles(pid, split_id=1):
     conn.row_factory = None
     year = get_cfg().year
     games = _est_team_games(conn, year)
-    min_ip = max(round(0.5 * games), 5) if split_id == 1 else 5
+    min_ip = max(round(0.7 * games), 5) if split_id == 1 else 5
+
+    # RPs pitch far fewer innings — use a lower pool threshold so relievers
+    # with a full workload aren't flagged as small sample.
+    rp_min_ip = max(round(0.35 * games), 5) if split_id == 1 else 5
 
     from web_league_context import league_averages as _load_la
     lg_era = _load_la()["pitching"]["era"]
@@ -254,33 +270,49 @@ def get_pitcher_percentiles(pid, split_id=1):
     fip_const = (tp[0] - ((13 * tp[1] + 3 * tp[2] - 2 * tp[3]) / tp[4])) if tp and tp[4] else 3.1
 
     # Use split-specific ratings for L/R expected percentiles
+    _ext = has_extended_ratings()
     if split_id == 2:    # vs L batters
-        rcols = "r.stf_l, r.mov_l, r.ctrl_l, r.ctrl_l, r.hra_l, r.pbabip_l"
+        rcols = "r.stf_l, r.mov_l, r.ctrl_l, r.ctrl_l" + (", r.hra_l, r.pbabip_l" if _ext else ", NULL, NULL")
     elif split_id == 3:  # vs R batters
-        rcols = "r.stf_r, r.mov_r, r.ctrl_r, r.ctrl_r, r.hra_r, r.pbabip_r"
+        rcols = "r.stf_r, r.mov_r, r.ctrl_r, r.ctrl_r" + (", r.hra_r, r.pbabip_r" if _ext else ", NULL, NULL")
     else:
-        rcols = "r.stf, r.mov, r.ctrl, r.ctrl, r.hra, r.pbabip"
+        rcols = "r.stf, r.mov, r.ctrl, r.ctrl" + (", r.hra, r.pbabip" if _ext else ", NULL, NULL")
 
     q = ("SELECT ps.player_id, ps.ip, ps.era, ps.k, ps.bb, ps.ha, ps.war, ps.hra, ps.bf, ps.hp, "
-         f"{rcols} "
+         f"{rcols}, ps.gs, ps.g "
          "FROM pitching_stats ps JOIN latest_ratings r ON ps.player_id=r.player_id "
          "WHERE ps.year=? AND ps.split_id=? AND ps.ip>=?")
-    rows = conn.execute(q, (year, split_id, min_ip)).fetchall()
+    rows = conn.execute(q, (year, split_id, rp_min_ip)).fetchall()
+
+    # Detect if this player is an RP (few or no starts)
+    player_gs_row = conn.execute(
+        "SELECT gs, g FROM pitching_stats WHERE player_id=? AND year=? AND split_id=?",
+        (pid, year, split_id)).fetchone()
+    is_rp = player_gs_row and player_gs_row[1] and player_gs_row[0] / player_gs_row[1] < 0.25
 
     qualified = True
     player_row = None
-    if pid not in {r[0] for r in rows}:
+    is_in_pool = pid in {r[0] for r in rows}
+    if not is_in_pool:
         player_row = conn.execute(
             q.replace("ps.ip>=?", "ps.player_id=?"), (year, split_id, pid)
         ).fetchone()
         qualified = False
+    elif not is_rp:
+        # SP must meet the higher threshold to be qualified
+        player_ip_check = next((r[1] for r in rows if r[0] == pid), 0)
+        if player_ip_check < min_ip:
+            qualified = False
+
+    # Pre-fetch league-wide extended ratings before closing conn
+    _ext_lgw = None
     conn.close()
 
     if not rows:
         return None
 
     def _parse(r):
-        _, ip, era, k, bb, ha, war, hra, bf, hp, stf, mov, ctrl_r, ctrl_l, hra_rat, pbabip_rat = r
+        _, ip, era, k, bb, ha, war, hra, bf, hp, stf, mov, ctrl_r, ctrl_l, hra_rat, pbabip_rat, _gs, _g = r
         hra = hra or 0; bf = bf or 0; hp = hp or 0; ha = ha or 0
         if not ip:
             return None, None, 0
@@ -314,7 +346,7 @@ def get_pitcher_percentiles(pid, split_id=1):
             if r[0] == pid:
                 player_ip = ip
 
-    if not qualified:
+    if not qualified and not is_in_pool:
         if not player_row:
             return None
         s, rt, ip = _parse(player_row)
@@ -330,7 +362,10 @@ def get_pitcher_percentiles(pid, split_id=1):
     player = pool[pid]
     player_rat = ratings_pool[pid]
     rat_vals = {k: [ratings_pool[p][k] for p in pool] for k in ("stf", "mov", "ctrl")}
-    # Extended ratings: hra and pbabip (None when league doesn't have them)
+    # Extended ratings: use MLB pool for HRA (sufficient spread).
+    # For BABIP, use a regression model (pbabip → expected BABIP) instead of
+    # rating percentiles — the MLB pbabip distribution is too compressed for
+    # percentile ranking to be meaningful.
     _has_hra = player_rat.get("hra") is not None
     _has_pbabip = player_rat.get("pbabip") is not None
     if _has_hra:
@@ -359,11 +394,18 @@ def get_pitcher_percentiles(pid, split_id=1):
                 thresh = _tag_threshold(r_pctile)
                 tag = "hot" if gap >= thresh else ("cold" if gap <= -thresh else None)
             elif label == "BABIP":
-                rk = "pbabip" if _has_pbabip else "mov"
-                r_pctile = _pctile(player_rat.get(rk) or 0, rat_vals[rk])
-                expected = r_pctile
-                gap = pctile - r_pctile
-                thresh = _tag_threshold(r_pctile)
+                # Pitcher BABIP expected: regression model from pbabip rating.
+                # BABIP ≈ 0.439 - 0.0028 * pbabip (r=-0.18, from 362 qualifying seasons).
+                # Rating percentiles don't work here — MLB pbabip distribution is too
+                # compressed (stdev 3.3) for percentile ranking to be meaningful.
+                if _has_pbabip:
+                    exp_babip = 0.4387 - 0.002797 * (player_rat.get("pbabip") or 50)
+                else:
+                    exp_babip = 0.293  # league average fallback
+                expected = _pctile(exp_babip, [pool[p]["babip"] for p in pool])
+                expected = 100 - expected  # invert (lower BABIP = higher percentile)
+                gap = pctile - expected
+                thresh = _tag_threshold(expected)
                 tag = "lucky" if gap >= thresh else ("unlucky" if gap <= -thresh else None)
             elif label in PITCHER_TAG_MAP:
                 sk, rk, s_inv, r_inv = PITCHER_TAG_MAP[label]
@@ -376,7 +418,7 @@ def get_pitcher_percentiles(pid, split_id=1):
         fmt = "d" if key == "era_plus" else (".1f" if key in ("k9", "bb9", "hr9") else ".2f" if key in ("era", "fip", "siera") else ".3f")
         result.append({"label": label, "value": val, "pctile": pctile, "tag": tag,
                        "qualified": qualified, "expected": expected,
-                       "expected_range": _expected_range(expected, player_ip, min_ip),
+                       "expected_range": _expected_range(expected, player_ip, rp_min_ip if is_rp else min_ip),
                        "fmt": fmt})
     return result
 

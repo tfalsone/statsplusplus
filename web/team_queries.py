@@ -1570,3 +1570,202 @@ def get_depth_chart(team_id):
 
     return {"years": [year, year + 1, year + 2], "by_year": by_year,
             "pos_rank": pos_rank, "num_teams": num_teams}
+
+
+def get_org_overview(team_id):
+    """Cross-level org summary: position depth, payroll shape, retention priorities."""
+    state = _get_state()
+    year = state["year"]
+    conn = get_db()
+    ed_s = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
+    ed_f = conn.execute("SELECT MAX(eval_date) FROM prospect_fv").fetchone()[0]
+
+    def _entry(r, war_key="war"):
+        w = r[war_key]
+        return {"pid": r["player_id"], "name": r["name"], "ovr": r["ovr"] or 0,
+                "war": round(w, 1) if w else 0, "age": r["age"],
+                "surplus": round(r["surplus"] / 1e6, 1) if r["surplus"] else 0}
+
+    # ── Position depth: MLB starters per position ──
+    mlb_by_pos = defaultdict(list)  # pos_label -> [entries] sorted by WAR
+
+    # Position players from fielding_stats
+    fld_rows = conn.execute("""
+        SELECT f.player_id, p.name, f.position, f.g, ps.ovr, ps.surplus,
+               COALESCE(b.war, pt.war, 0) as war, p.age
+        FROM fielding_stats f
+        JOIN players p ON f.player_id = p.player_id
+        LEFT JOIN player_surplus ps ON f.player_id = ps.player_id AND ps.eval_date = ?
+        LEFT JOIN batting_stats b ON f.player_id = b.player_id AND b.year = ? AND b.split_id = 1
+        LEFT JOIN pitching_stats pt ON f.player_id = pt.player_id AND pt.year = ? AND pt.split_id = 1
+        WHERE f.team_id = ? AND f.year = ? AND f.position != 1
+        ORDER BY f.player_id, f.g DESC
+    """, (ed_s, year, year, team_id, year)).fetchall()
+    seen_fld = set()
+    for r in fld_rows:
+        if r["player_id"] in seen_fld:
+            continue
+        seen_fld.add(r["player_id"])
+        pos = pos_map().get(r["position"])
+        if pos:
+            mlb_by_pos[pos].append(_entry(r))
+
+    # Pitchers — collect all, sorted by WAR
+    pit_rows = conn.execute("""
+        SELECT p.player_id, p.name, p.role, ps.ovr, ps.surplus, pt.war, p.age
+        FROM pitching_stats pt
+        JOIN players p ON pt.player_id = p.player_id
+        LEFT JOIN player_surplus ps ON pt.player_id = ps.player_id AND ps.eval_date = ?
+        WHERE pt.team_id = ? AND pt.year = ? AND pt.split_id = 1
+        ORDER BY pt.war DESC
+    """, (ed_s, team_id, year)).fetchall()
+    for r in pit_rows:
+        bucket = "SP" if r["role"] == 11 else "RP"
+        mlb_by_pos[bucket].append(_entry(r))
+
+    for pos in mlb_by_pos:
+        mlb_by_pos[pos].sort(key=lambda x: -x["ovr"])
+
+    # Top prospects per bucket (collect all, sorted by FV then surplus)
+    prospect_by_pos = defaultdict(list)
+    prosp_rows = conn.execute("""
+        SELECT pf.player_id, p.name, pf.bucket, pf.fv, pf.fv_str, pf.level,
+               p.age, p.pos, pf.prospect_surplus
+        FROM prospect_fv pf
+        JOIN players p ON pf.player_id = p.player_id
+        WHERE pf.eval_date = ? AND p.parent_team_id = ? AND p.level != '1'
+        ORDER BY pf.fv DESC, pf.prospect_surplus DESC, p.age ASC
+    """, (ed_f, team_id)).fetchall()
+    for r in prosp_rows:
+        bucket = _display_pos(r["bucket"], r["pos"])
+        prospect_by_pos[bucket].append({
+            "pid": r["player_id"], "name": r["name"],
+            "fv": r["fv"], "fv_str": r["fv_str"],
+            "level": r["level"], "age": r["age"], "bucket": bucket,
+            "surplus": round(r["prospect_surplus"] / 1e6, 1) if r["prospect_surplus"] else 0,
+        })
+
+    # Build position depth rows
+    # SP shows top 5, RP top 3, position players show 1 MLB + 1 prospect
+    of_buckets = {"LF", "CF", "RF", "OF"}
+    pos_slots = {"SP": 5, "RP": 3}
+    pos_order_list = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "SP", "RP"]
+    position_depth = []
+    used_prospect_pids = set()  # deduplicate prospects across positions
+
+    for pos in pos_order_list:
+        n_mlb = pos_slots.get(pos, 1)
+        n_prosp = pos_slots.get(pos, 1)
+        mlb_list = mlb_by_pos.get(pos, [])[:n_mlb]
+
+        # Build deduped prospect list for this position
+        prosp_list = prospect_by_pos.get(pos, [])
+        if not prosp_list and pos in of_buckets:
+            prosp_list = prospect_by_pos.get("OF", [])
+        prosp_deduped = []
+        for p in prosp_list:
+            if p["pid"] not in used_prospect_pids:
+                # Label OF prospects with the specific field position
+                entry = dict(p)
+                if entry["bucket"] == "OF":
+                    entry["bucket"] = pos
+                prosp_deduped.append(entry)
+                if len(prosp_deduped) >= n_prosp:
+                    break
+        for p in prosp_deduped:
+            used_prospect_pids.add(p["pid"])
+
+        n_rows = max(len(mlb_list), len(prosp_deduped), 1)
+        for i in range(n_rows):
+            mlb = [mlb_list[i]] if i < len(mlb_list) else []
+            prosp = prosp_deduped[i] if i < len(prosp_deduped) else None
+            position_depth.append({
+                "pos": pos if i == 0 else "",
+                "mlb": mlb, "prospect": prosp,
+                "is_first": i == 0,
+                "parent_pos": pos,
+            })
+
+    # ── League-wide position rankings ──
+    lg_rankings = _league_pos_rankings(conn, year)
+    num_teams = max(len(v) for v in lg_rankings.values()) if lg_rankings else 34
+    pos_rank = {}
+    for pos, tw in lg_rankings.items():
+        for i, (tid, _war) in enumerate(tw):
+            if tid == team_id:
+                pos_rank[pos] = i + 1
+                break
+
+    # ── Payroll shape (next 4 years) ──
+    payroll_data = get_payroll_summary(team_id)
+    payroll_shape = []
+    for i, yr in enumerate(payroll_data["years"][:4]):
+        payroll_shape.append({"year": yr, "total": payroll_data["totals"][i]})
+
+    # ── Retention priorities: positive surplus, ≤2 years estimated control ──
+    from contract_value import _estimate_control
+    retention = []
+    ctrl_rows = conn.execute("""
+        SELECT c.player_id, p.name, p.age, c.years, c.current_year,
+               c.salary_0, ps.surplus, ps.ovr, ps.bucket, p.role
+        FROM contracts c
+        JOIN players p ON c.player_id = p.player_id
+        LEFT JOIN player_surplus ps ON c.player_id = ps.player_id AND ps.eval_date = ?
+        WHERE c.contract_team_id = ? AND c.is_major = 1
+    """, (ed_s, team_id)).fetchall()
+    for r in ctrl_rows:
+        surplus = r["surplus"]
+        if not surplus or surplus <= 0:
+            continue
+        contract_yrs_left = max(r["years"] - r["current_year"], 1)
+        # Multi-year contracts: control = contract years remaining
+        # 1-year contracts: estimate arb/pre-arb control beyond the contract
+        if r["years"] > 1:
+            total_ctrl = contract_yrs_left
+        else:
+            est = _estimate_control(conn, r["player_id"], r["age"], r["salary_0"] or 0)
+            total_ctrl = est[0] if est[0] else 1
+        if total_ctrl > 2:
+            continue
+        pos = _display_pos(r["bucket"]) if r["bucket"] else ROLE_MAP.get(r["role"], "?")
+        retention.append({
+            "pid": r["player_id"], "name": r["name"], "age": r["age"],
+            "pos": pos, "ovr": r["ovr"] or 0,
+            "surplus": round(surplus / 1e6, 1), "yrs_left": total_ctrl,
+        })
+    retention.sort(key=lambda x: -x["surplus"])
+
+    # ── Surplus leaders (full list, not capped) ──
+    mlb_surp = conn.execute("""
+        SELECT ps.player_id, p.name, ps.bucket, ps.surplus, p.role, p.level
+        FROM player_surplus ps JOIN players p ON ps.player_id = p.player_id
+        WHERE ps.eval_date = ? AND ps.team_id = ?
+    """, (ed_s, team_id)).fetchall()
+    farm_surp = conn.execute("""
+        SELECT pf.player_id, p.name, pf.bucket, pf.prospect_surplus, p.role, pf.level
+        FROM prospect_fv pf JOIN players p ON pf.player_id = p.player_id
+        WHERE pf.eval_date = ? AND p.parent_team_id = ? AND p.level != '1'
+    """, (ed_f, team_id)).fetchall()
+    all_surplus = []
+    for r in mlb_surp:
+        if not r["surplus"]:
+            continue
+        pos = _display_pos(r["bucket"]) if r["bucket"] else ROLE_MAP.get(r["role"], "?")
+        all_surplus.append({"pid": r["player_id"], "name": r["name"], "pos": pos,
+                            "surplus": round(r["surplus"] / 1e6, 1), "level": "MLB"})
+    for r in farm_surp:
+        if not r["prospect_surplus"]:
+            continue
+        pos = _display_pos(r["bucket"]) if r["bucket"] else ROLE_MAP.get(r["role"], "?")
+        all_surplus.append({"pid": r["player_id"], "name": r["name"], "pos": pos,
+                            "surplus": round(r["prospect_surplus"] / 1e6, 1), "level": r["level"]})
+    all_surplus.sort(key=lambda x: -x["surplus"])
+
+    return {
+        "position_depth": position_depth,
+        "pos_rank": pos_rank,
+        "num_teams": num_teams,
+        "surplus_leaders": all_surplus,
+        "payroll_shape": payroll_shape,
+        "retention": retention,
+    }

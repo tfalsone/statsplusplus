@@ -144,6 +144,11 @@
           <option value="No DH">No DH</option>
           <option value="AL Only DH">AL Only DH</option>
         </select>
+        <label>Ratings Scale</label>
+        <select name="ratings_scale" style="width:200px">
+          <option value="1-100">1-100 (raw)</option>
+          <option value="20-80">20-80 (scouting)</option>
+        </select>
         <label>Minimum Salary</label>
         <input type="number" name="minimum_salary" value="{{ min_salary or 500000 }}" style="width:120px">
       </div>

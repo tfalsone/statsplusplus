@@ -59,6 +59,19 @@ def my_team_id():
     return get_cfg().my_team_id
 
 
+def has_extended_ratings():
+    """Check if the ratings table has extended columns (babip, hra, pbabip, prone)."""
+    if has_request_context() and hasattr(g, "_has_ext_ratings"):
+        return g._has_ext_ratings
+    conn = get_db()
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(ratings)").fetchall()}
+    conn.close()
+    result = "babip" in cols
+    if has_request_context():
+        g._has_ext_ratings = result
+    return result
+
+
 def league_averages():
     """Load league_averages.json for the current league, or return zeros."""
     import json

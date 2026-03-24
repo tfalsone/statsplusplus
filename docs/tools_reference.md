@@ -117,7 +117,8 @@ contract info, surplus, and summary rewrite flags.
 
 ### `scripts/refresh.py`
 
-Data pipeline — pulls all data from StatsPlus API into the DB.
+Data pipeline — pulls all data from StatsPlus API into the DB. Runs calibration
+and FV/surplus computation automatically after data pull.
 
 ```bash
 python3 scripts/refresh.py [year]    # Full refresh, all teams
@@ -125,6 +126,17 @@ python3 scripts/refresh.py state <game_date> [year]  # Manual state override
 ```
 
 **Do not run during article writing.** Only run when the game date has advanced.
+
+### `scripts/calibrate.py`
+
+Derives league-specific valuation tables from actual data. Produces
+`config/model_weights.json` with position-specific OVR→WAR, FV→WAR, arb
+percentages, and scarcity curve. Runs automatically during refresh.
+
+```bash
+python3 scripts/calibrate.py           # Write model_weights.json
+python3 scripts/calibrate.py --dry-run # Show results without writing
+```
 
 ---
 
@@ -228,6 +240,7 @@ Import with `sys.path.insert(0, 'web')`. All are read-only against the DB.
 | `get_recent_games(team_id, n)` | Last N games with scores, pitchers, opponents |
 | `get_stat_leaders(team_id)` | Team-internal stat leaders by category |
 | `get_depth_chart(team_id)` | Positional depth with WAR projections |
+| `get_org_overview(team_id)` | Cross-level org summary: position depth, surplus leaders, retention priorities, payroll shape |
 | `get_farm_depth(team_id)` | Farm system depth by positional bucket |
 
 ### Player-Level (`player_queries.py`)

@@ -4,7 +4,7 @@ Used by farm_analysis.py, prospect_value.py, contract_value.py, trade_calculator
 """
 
 import os, json
-from constants import PITCH_FIELDS, RP_WAR_CAP  # noqa: F401 (re-exported)
+from constants import PITCH_FIELDS  # noqa: F401 (re-exported)
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -47,8 +47,24 @@ LEVEL_NORM_AGE = {
 # Rating normalization
 # ---------------------------------------------------------------------------
 
+_ratings_scale = None  # set by init_ratings_scale() or auto-detected
+
+def init_ratings_scale(scale="1-100"):
+    """Set the module-level ratings scale. Called once at startup."""
+    global _ratings_scale
+    _ratings_scale = scale
+
+def _get_ratings_scale():
+    global _ratings_scale
+    if _ratings_scale is None:
+        from league_config import config
+        _ratings_scale = config.ratings_scale
+    return _ratings_scale
+
 def norm(raw):
-    """Convert 1-100 raw rating to 20-80 scouting scale, rounded to nearest 5."""
+    """Normalize a tool rating to 20-80 scouting scale, rounded to nearest 5.
+    On 1-100 leagues: converts via linear mapping.
+    On 20-80 leagues: clamps and rounds (values are already on the scouting scale)."""
     if raw is None:
         return None
     try:
@@ -57,6 +73,8 @@ def norm(raw):
         return None
     if raw <= 0:
         return None
+    if _get_ratings_scale() == "20-80":
+        return max(20, min(80, round(raw / 5) * 5))
     return round((20 + (min(raw, 100) / 100) * 60) / 5) * 5
 
 
@@ -86,14 +104,16 @@ def fmt_table(headers, values):
 def defensive_score(p, bucket):
     """Weighted defensive score on 20-80 scale for a position bucket.
     Returns the position-weighted average of underlying defensive tools."""
+    def _n(val):
+        return norm(val) or 0
     if bucket == "COF":
-        lf = sum(norm(p.get(f, 0) or 0) * w for f, w in DEFENSIVE_WEIGHTS["COF_LF"].items())
-        rf = sum(norm(p.get(f, 0) or 0) * w for f, w in DEFENSIVE_WEIGHTS["COF_RF"].items())
+        lf = sum(_n(p.get(f, 0) or 0) * w for f, w in DEFENSIVE_WEIGHTS["COF_LF"].items())
+        rf = sum(_n(p.get(f, 0) or 0) * w for f, w in DEFENSIVE_WEIGHTS["COF_RF"].items())
         return max(lf, rf)
     weights = DEFENSIVE_WEIGHTS.get(bucket)
     if not weights:
         return 0
-    return sum(norm(p.get(f, 0) or 0) * w for f, w in weights.items())
+    return sum(_n(p.get(f, 0) or 0) * w for f, w in weights.items())
 
 
 def _pos_composite(p, bucket, age):
@@ -207,9 +227,17 @@ def calc_fv(p):
     ovr  = p["Ovr"]
     pot  = effective_pot(p)
     age, norm_age = p["Age"], p["_norm_age"]
+    bucket = p["_bucket"]
+
+    # RP positional discount — RPs produce less WAR per FV grade than other
+    # positions. Scale Pot down so only elite RPs earn high FV grades.
+    # 0.80 factor calibrated to produce ~5% RP share in top prospect lists,
+    # matching real-baseball norms. Elite RPs (Pot 70+) still reach FV 50.
+    if bucket == "RP":
+        pot = round(pot * 0.80)
+
     dw   = dev_weight(age, norm_age, level=p.get("_level"))
     fv   = ovr + (pot - ovr) * dw
-    bucket = p["_bucket"]
 
     if pot >= 45:
         # Unified defensive bonus: composite-driven base + weighted score modifier
@@ -256,25 +284,24 @@ def calc_fv(p):
     # Platoon split penalty — a prospect with a severe weak side is a platoon
     # player (hitter) or gets exposed against one handedness (pitcher).
     # Only applies when split data exists and the weak side is exploitable.
-    # Hitters: weak-side contact < 30 raw AND gap >= 15 raw → -2 FV (gap >= 25 → -3)
-    # Pitchers: weak-side stuff < 30 raw AND gap >= 12 raw → -2 FV (gap >= 20 → -3)
+    # Thresholds on 20-80 scale: weak <= 25, gap >= 10 (2 grades) or >= 15 (3 grades).
     if p.get("_is_pitcher"):
-        sl, sr = p.get("Stf_L", 0) or 0, p.get("Stf_R", 0) or 0
+        sl, sr = norm(p.get("Stf_L", 0) or 0), norm(p.get("Stf_R", 0) or 0)
         if sl and sr:
             gap = abs(sl - sr)
             weak = min(sl, sr)
-            if weak < 30 and gap >= 20:
+            if weak <= 25 and gap >= 15:
                 fv -= 3
-            elif weak < 30 and gap >= 12:
+            elif weak <= 25 and gap >= 10:
                 fv -= 2
     else:
-        cl, cr = p.get("Cntct_L", 0) or 0, p.get("Cntct_R", 0) or 0
+        cl, cr = norm(p.get("Cntct_L", 0) or 0), norm(p.get("Cntct_R", 0) or 0)
         if cl and cr:
             gap = abs(cl - cr)
             weak = min(cl, cr)
-            if weak < 30 and gap >= 25:
+            if weak <= 25 and gap >= 15:
                 fv -= 3
-            elif weak < 30 and gap >= 15:
+            elif weak <= 25 and gap >= 10:
                 fv -= 2
 
     base = round(fv / 5) * 5
@@ -286,7 +313,7 @@ def calc_fv(p):
 # WAR estimation (used by contract_value.py and fv_calc.py)
 # ---------------------------------------------------------------------------
 
-from constants import OVR_TO_WAR, AGING_HITTER, AGING_PITCHER  # noqa: F401 (re-exported)
+from constants import OVR_TO_WAR, OVR_TO_WAR_CALIBRATED, AGING_HITTER, AGING_PITCHER  # noqa: F401 (re-exported)
 
 
 def _interp(table_rows, value, col_idx):
@@ -299,7 +326,25 @@ def _interp(table_rows, value, col_idx):
     return table_rows[-1][col_idx]
 
 
+def _interp_dict(tbl, ovr):
+    """Interpolate from a {ovr: war} dict (calibrated tables)."""
+    pts = sorted(tbl.keys())
+    if ovr >= pts[-1]:
+        return tbl[pts[-1]]
+    if ovr <= pts[0]:
+        return tbl[pts[0]]
+    for i in range(len(pts) - 1):
+        if pts[i] <= ovr <= pts[i + 1]:
+            t = (ovr - pts[i]) / (pts[i + 1] - pts[i])
+            return tbl[pts[i]] + t * (tbl[pts[i + 1]] - tbl[pts[i]])
+    return tbl[pts[0]]
+
+
 def peak_war_from_ovr(ovr, bucket):
+    # Use position-specific calibrated table when available
+    if OVR_TO_WAR_CALIBRATED and bucket in OVR_TO_WAR_CALIBRATED:
+        return _interp_dict(OVR_TO_WAR_CALIBRATED[bucket], ovr)
+    # Fallback: generic 3-column table
     col = 2 if bucket == "SP" else (3 if bucket == "RP" else 1)
     return _interp(OVR_TO_WAR, ovr, col)
 

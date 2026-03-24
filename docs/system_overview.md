@@ -94,7 +94,7 @@ across snapshots). All other teams use `INSERT OR REPLACE` (current snapshot onl
 
 **FV calculation** — `calc_fv()` in `player_utils.py`. Inputs: Ovr, Pot, age vs. level norm,
 bucket, work ethic, scouting accuracy. Key rules:
-- RP FV hard cap at 50 (≤2.0 WAR/season ceiling)
+- RP FV hard cap at 50 (≤2.0 WAR/season ceiling); RP Pot scaled to 80% before FV calc (positional discount — only elite RPs reach FV 50). Surplus uses raw FV to avoid double-counting with RP WAR table.
 - `Acc=L` applies -2 FV penalty + bust-only risk shift
 - Critical tool penalties: Pot Control ≤35 or Pot Movement ≤35 (pitchers), Pot Contact ≤35 (hitters)
 - Pitcher arsenal ceiling override: 3+ pitches Pot ≥80 → effective Pot ≥55
@@ -103,20 +103,37 @@ bucket, work ethic, scouting accuracy. Key rules:
 - Platoon split penalty: -2/-3 FV for severe L/R splits (weak-side Contact < 30 for hitters, Stuff < 30 for pitchers)
 - Knuckleball pitchers (`PotKnbl ≥ 45`) bucketed as SP regardless of supporting arsenal
 
+**League-calibrated model** — `calibrate.py` derives valuation tables from the league's own data:
+- Position-specific `OVR_TO_WAR` regression (9 buckets: C, SS, 2B, 3B, CF, COF, 1B, SP, RP)
+- `FV_TO_PEAK_WAR_BY_POS` for each hitter bucket (COF, SS, C, CF, 2B, 3B, 1B) — derived from OVR_TO_WAR via FV→peak Ovr mapping. COF produces less WAR per FV grade than SS or CF.
+- `FV_TO_PEAK_WAR` (generic hitter average, fallback), `FV_TO_PEAK_WAR_SP`, `FV_TO_PEAK_WAR_RP`
+- `ARB_PCT` from actual arb salary outcomes
+- `SCARCITY_MULT` from mid-season FA availability by Pot (sigmoid mapping, monotonic)
+- Stored in `config/model_weights.json`. `constants.py` loads calibrated values when present, falls back to hardcoded defaults. Runs automatically during refresh (before fv_calc).
+
 **Contract surplus model** — `contract_value()` in `contract_value.py`:
-- Pre-arb control estimation from service time (AB≥300/IP≥100 qualifying seasons)
-- Arb salary projection: Ovr-based exponential model (MAE $0.53M/yr)
+- Pre-arb control estimation from service time (AB≥300/IP≥100 qualifying seasons for hitters/SP; IP≥20 for RPs)
+- Arb salary projection: Ovr-based exponential model (MAE $0.53M/yr); RP-specific model calibrated from 35 arb contracts (566K × e^(0.0294 × Ovr), 25% annual raises)
 - RP arb salary discount (0.80x)
 - Non-tender gate: control truncated when projected arb salary exceeds market value
+- Young player ratings blend: when ratings WAR > stat WAR and age < peak, blends the two (50% ratings at 21, fading to 0% at peak age). Upside-only — prevents undervaluing young players with limited track records.
+- Veteran decline ratings blend: when stat WAR > ratings WAR and age > 31 (30 for pitchers), blends toward ratings. Weight = `age_w × gap_ratio` (capped 0.75). Prevents stale stat history from inflating projections for declining veterans.
 - WAR floor at 0 (teams can release/DFA)
 - Pre-arb age gate: age ≥28 on league minimum treated as 1yr FA deal
 
 **Prospect surplus model** — `prospect_surplus_with_option()` in `prospect_value.py`:
-- Probability-weighted surplus across base/mid/ceiling FV scenarios
-- Age-adjusted development discount (bust probability only, not time value)
-- Certainty multiplier from Ovr/Pot realization ratio
+- Probability-weighted surplus across base/mid/ceiling FV scenarios. Upside probabilities scale with youth (+5%/yr under 20) and Pot-FV gap (wider gap = more development runway, `gap_factor = min(1.0, (pot - fv) / 25)`).
+- Position-specific `FV_TO_PEAK_WAR_BY_POS` for hitters (COF 3.0, SS 3.6, CF 3.9 at FV 50). Falls back to generic hitter average for unknown buckets.
+- Age-adjusted development discount (bust probability only, not time value). Flattened curve: AAA 0.88, AA 0.78, A 0.68, Rookie 0.45, Intl 0.35. Age adjustment at 4%/yr vs level norm.
+- Certainty multiplier from Ovr/Pot realization ratio, capped at 1.0 (no bonus for maxed prospects — proximity already rewarded by dev discount and time value).
+- Realization blend: when Ovr/Pot > 0.7, blends FV-based peak WAR with Ovr-based current WAR (squared weight curve). Maxed players use OVR→WAR; developing players use FV→WAR. Downward-only.
+- Scarcity multiplier by Pot (ceiling) — sigmoid-based mapping from FA availability rate. Calibrated from mid-season data: Pot 40 = 0.0 (12%+ FA rate), Pot 44 = 0.44 (3%), Pot 46 = 0.97 (<1%), Pot 50+ = 1.0 (0%). Monotonic, no single-point cliffs. Stored in `SCARCITY_MULT` (calibrated or default).
+- SP-specific `FV_TO_PEAK_WAR_SP` table (1.5–4.9 WAR) — pitchers produce less WAR per FV grade than hitters
+- RP-specific `FV_TO_PEAK_WAR_RP` table (0.7–1.9 WAR)
 - Time-value discounting at 5%/yr
-- Replacement WAR floor + zero surplus floor
+- Smooth market value ramp (linear from league min at 0 WAR to full $/WAR at 1.0 WAR)
+- Prospect age cutoff: ≤24 (25yo minor leaguers excluded — MLB-bubble, not prospects)
+- Zero surplus floor
 
 **$/WAR** — $8.62M (2033). Calibrated from 70 multi-year MLB contracts (salary ≥$5M, years >1).
 Stored in `config/league_averages.json`, recalculated each league refresh.
@@ -129,8 +146,10 @@ values in the DB are stored as true decimal innings (`outs / 3`). ERA computed f
 concurrent reads during writes so the web UI stays browsable during background refreshes.
 
 **League configuration** — all league-specific settings (team IDs, divisions, mappings,
-year, pyth exponent) live in `config/league_settings.json` and are accessed via
+year, pyth exponent, ratings scale) live in `config/league_settings.json` and are accessed via
 `league_config.config`. No hardcoded team IDs or league assumptions in scripts or web code.
+`ratings_scale` (`"1-100"` or `"20-80"`) controls how `norm()` in `player_utils.py` handles
+tool grades and how projection models interpret raw inputs.
 
 **Summary reuse** — Both scaffold scripts support summary reuse from history files:
 - `farm_analysis.py` reads `history/prospects.json` — dev signals (FV movement, stagnation, new season)
@@ -198,13 +217,14 @@ Local Flask app at `web/`. Dark theme, monospace font, no CSS/JS frameworks.
 
 ### Team Page Features
 
-Four-tab layout (Main / Roster / Contracts / Player Development) with client-side JS tab switching. Page title (`<h1>`) shows full team name. Summary bar persists across all tabs.
+Tabbed layout (Main / Depth Chart / Organization / Hitters / Pitchers / Contracts / Finances / Player Development) with client-side JS tab switching. Page title (`<h1>`) shows full team name. Summary bar persists across all tabs.
 
 - **Summary bar** — game date, MLB surplus, farm surplus, FV 50+ count, payroll, roster composition (SP/RP/Pos counts)
 - **Main tab** — division standings (pythagorean W/L, viewed team highlighted, team names linked) and team batting/pitching stats side-by-side with league rank out of 34 (top-5 bright green, bottom-5 red). Record breakdown panel (Overall/Home/Away/vs Division/1-Run/L10/Streak). Recent games panel (last 10 with linked opponents and pitchers with running records).
 - **Roster tab** — position players and pitchers sorted by WAR (Pos/Role first column), surplus leaders (MLB + farm combined, top 15 by surplus)
 - **Contracts tab** — MLB contracts only (`is_major=1`) sorted by salary with surplus/option flags, upcoming free agents (multi-year deals expiring within 2 years, or age 30+ on 1-year deals — excludes pre-arb/arb players with team control)
 - **Finances tab** — committed payroll table with 6-year horizon. Per-player salary by year with TO/PO option markers and NTC badges. Arb/pre-arb projections shown in italics with `est` superscript. Pre-arb summary row for min-salary players with no projected future. Total committed row in footer.
+- **Organization tab** — cross-level org summary. Position depth table (8 field positions + SP 1-5 + RP top 3: MLB player with color-coded Ovr/WAR/surplus + top prospect with FV/level badge/surplus, deduplicated, OF labeled as LF/CF/RF + league rank pill). Surplus leaders (top 20 combined MLB+Farm with level badges). Retention priorities (positive-surplus players with ≤2yr control; multi-year contracts use contract years, 1-year uses `_estimate_control()`). Committed payroll 4-year bar chart.
 - **Player Development tab** — farm top 15 (sorted by FV with surplus), farm depth (by position bucket and level, with total surplus, league average, and league rank), age distribution (MLB and farm FV 40+ with horizontal bars and league average markers)
 - All queries parameterized by `team_id` — any team's page viewable via `/team/<id>`
 
@@ -216,7 +236,7 @@ MLB players use a three-tab layout (Overview / Stats / Contract). Prospects disp
 - **L/R split toggles** — on Ratings, Percentile Rankings, and Overview stats snapshot. Split percentile expected values use split-specific ratings (e.g. `cntct_l` for vs-L).
 - **Stats tab split selector** — 3-button selector (Overall / vs L / vs R) on batting and pitching stats tables. Each view shows full year-by-year history for that split (2020-2033).
 - **Stats snapshot** — compact current-year stats on Overview tab between scouting report and percentiles. Pitchers show pitching stats, hitters show batting stats. L/R toggle for current year.
-- **Percentile rankings** — Baseball Savant style with fill bars, dots, blue-to-red gradient. Performance tags for rating-to-stat divergence (Hot/Cold/Lucky/Unlucky). Scaled threshold (25 at midrange, 15 at extremes). Unqualified players shown in grey with "(small sample)" label. BABIP expected uses regression model (cntct + speed, R²=0.23) plus historical residual adjustment from 2+ prior qualifying seasons.
+- **Percentile rankings** — Baseball Savant style with fill bars, dots, blue-to-red gradient. Performance tags for rating-to-stat divergence (Hot/Cold/Lucky/Unlucky). Scaled threshold (25 at midrange, 15 at extremes). Unqualified players shown in grey with "(small sample)" label. Hitter BABIP expected uses regression model (cntct + speed, R²=0.23) plus historical residual adjustment from 2+ prior qualifying seasons. Pitcher BABIP expected uses pbabip regression model (BABIP = 0.439 - 0.0028 × pbabip). Pitcher qualification: SP 0.7 IP/team game, RP 0.35 IP/team game (RP detected by GS/G < 0.25).
 - **Fielding percentiles** — per-position FPCT/ZR (all), +Arm (OF), +Framing (C). ZR expected from rating composites (IF: IFR/IFE, OF: OFR, C: IFR/CArm/CBlk). Framing expected from CFrm/CBlk. Qualifier: 1.0 IP per team game.
 - **Fielding stats** — Year/Pos/G/IP/TC/A/E/DP/FPCT/ZR/Arm table.
 - **Contract panel** — year-by-year salary with NTC badge on header, TO/PO badges on final year row.

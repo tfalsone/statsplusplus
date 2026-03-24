@@ -15,7 +15,8 @@ statsplusplus/
 │       ├── config/
 │       │   ├── state.json                      # Current game date, year, my_team_id
 │       │   ├── league_settings.json            # Team names/abbr, divisions, role/pos/level maps, financial settings
-│       │   └── league_averages.json            # League-wide batting/pitching averages + $/WAR
+│       │   ├── league_averages.json            # League-wide batting/pitching averages + $/WAR
+│       │   └── model_weights.json              # Calibrated valuation tables (OVR_TO_WAR, FV, ARB, scarcity)
 │       ├── history/
 │       │   ├── prospects.json                  # Scouting summaries + FV history (keyed by player_id)
 │       │   └── roster_notes.json               # MLB player summaries (keyed by player_id)
@@ -32,6 +33,7 @@ statsplusplus/
 │   ├── player_utils.py         # Shared evaluation (bucketing, FV calc, WAR curves, aging)
 │   ├── refresh.py              # API → DB pipeline (full league refresh)
 │   ├── fv_calc.py              # Batch FV + surplus computation (prospect_fv, player_surplus)
+│   ├── calibrate.py            # League-specific model calibration (OVR_TO_WAR, FV, ARB, scarcity)
 │   ├── projections.py          # Player projections for depth chart planning
 │   ├── contract_value.py       # MLB contract surplus/deficit breakdown
 │   ├── prospect_value.py       # Prospect surplus calculator
@@ -69,6 +71,7 @@ statsplusplus/
 │   └── test_client.py          # API client tests
 │
 └── docs/                       # Design docs, analysis guides, changelog
+    └── valuation_model.md          # Plain-language explanation of FV, surplus, and WAR models
 ```
 
 ## DB Tables (league.db)

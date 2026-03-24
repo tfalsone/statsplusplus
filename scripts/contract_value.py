@@ -9,8 +9,8 @@ import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db
 from player_utils import assign_bucket, dollars_per_war, league_minimum, \
-    peak_war_from_ovr, aging_mult, RP_WAR_CAP, load_stat_history, stat_peak_war
-from constants import ARB_PCT, REPLACEMENT_WAR
+    peak_war_from_ovr, aging_mult, load_stat_history, stat_peak_war
+from constants import ARB_PCT
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -69,30 +69,31 @@ def _resolve(conn, query):
     return pid, name, age, rat["ovr"], rat["pot"], bucket
 
 
-def _estimate_control(conn, player_id, age, salary):
+def _estimate_control(conn, player_id, age, salary, bucket=None):
     """Estimate remaining team control years and salary schedule for 1yr contracts.
 
     Returns (ctrl_years, salaries, pre_arb_left) or (None, None, None) for FA deals.
 
     Logic:
       - salary == league_min ($825K) -> pre-arb. Count qualifying MLB seasons
-        (AB>=100 or IP>=50) as service years. Remaining = 6 - service_years.
+        (AB>=100 or IP>=20 for RP, IP>=40 for SP) as service years.
+        Remaining = 6 - service_years.
       - salary > league_min, age < 30 -> arb-eligible. Floor service at 3
         (arb entry), add any qualifying seasons beyond 3 in our data window.
       - age >= 30 and salary > league_min -> likely a 1yr FA deal. Return None.
     """
     min_sal = league_minimum()
 
-    # Count qualifying MLB seasons — half-season threshold to catch relievers
-    # and part-time players who accrued service time on the 25-man roster.
-    # OOTP accrues service time by days on roster, not playing time.
+    # Count qualifying MLB seasons. RPs use a lower IP threshold (20 vs 40)
+    # because relievers pitch far fewer innings but still accrue service time.
+    ip_thresh = 20 if bucket == "RP" else 40
     svc = conn.execute("""
         SELECT COUNT(DISTINCT year) FROM (
             SELECT year FROM batting_stats WHERE player_id=? AND split_id=1 AND ab >= 100
             UNION
-            SELECT year FROM pitching_stats WHERE player_id=? AND split_id=1 AND ip >= 40
+            SELECT year FROM pitching_stats WHERE player_id=? AND split_id=1 AND ip >= ?
         )
-    """, (player_id, player_id)).fetchone()[0]
+    """, (player_id, player_id, ip_thresh)).fetchone()[0]
 
     if salary <= min_sal:
         # Pre-arb: trust qualifying season count.
@@ -146,7 +147,28 @@ def contract_value(player_id, retention_pct=0.0, _conn=None, _hist=None):
     else:
         bat_hist, pit_hist, two_way = load_stat_history(conn, game_date)
     stat_war = stat_peak_war(pid, bucket, bat_hist, pit_hist, two_way=two_way)
-    pw       = stat_war if stat_war is not None else peak_war_from_ovr(ovr, bucket)
+    ratings_war = peak_war_from_ovr(ovr, bucket)
+    if stat_war is None:
+        pw = ratings_war
+    elif ratings_war > stat_war and age < (27 if bucket in ("SP", "RP") else 28):
+        # Young players: blend stats with ratings when ratings project higher.
+        # Weight fades linearly from 0.5 at age 21 to 0 at peak age.
+        peak_age = 27 if bucket in ("SP", "RP") else 28
+        rtg_w = min(0.5, max(0, (peak_age - age) / (peak_age - 21)))
+        pw = rtg_w * ratings_war + (1 - rtg_w) * stat_war
+    elif ratings_war < stat_war and age > (30 if bucket in ("SP", "RP") else 31):
+        # Declining veterans: blend stats with ratings when ratings show decline
+        # that stat history hasn't fully captured (stale weighted average).
+        # Weight scales with both age past peak and the size of the gap.
+        # At age 32 with a small gap: mostly trust stats.
+        # At age 36 with a large gap: mostly trust ratings.
+        decline_start = 30 if bucket in ("SP", "RP") else 31
+        age_w = min(1.0, (age - decline_start) / 5)
+        gap_ratio = (stat_war - ratings_war) / stat_war if stat_war > 0 else 0
+        rtg_w = min(0.75, age_w * gap_ratio)
+        pw = rtg_w * ratings_war + (1 - rtg_w) * stat_war
+    else:
+        pw = stat_war
 
     dpw     = dollars_per_war()
     min_sal = league_minimum()
@@ -159,7 +181,7 @@ def contract_value(player_id, retention_pct=0.0, _conn=None, _hist=None):
     ctrl_type = "contract"
     pre_arb_left = 0
     if years_total == 1:
-        est_ctrl, est_sals, est_pre_arb = _estimate_control(conn, pid, age, c["salary_0"] or 0)
+        est_ctrl, est_sals, est_pre_arb = _estimate_control(conn, pid, age, c["salary_0"] or 0, bucket=bucket)
         if est_ctrl and est_ctrl > 1:
             remaining = est_ctrl
             pre_arb_left = est_pre_arb or 0
@@ -197,26 +219,26 @@ def contract_value(player_id, retention_pct=0.0, _conn=None, _hist=None):
                 war_base = ratings_war
         else:
             war_base = pw * aging_mult(a, bucket)
-        if bucket == "RP":
-            war_base = min(war_base, RP_WAR_CAP)
         # Floor WAR at 0 — a team can always release/DFA a player
         war_base = max(war_base, 0.0)
 
         # Determine salary for this year
         if ctrl_type == "estimated" and i > 0:
             # Year 0 uses actual contract salary; future years are projected
-            # Arb salary model calibrated to OOTP arb outcomes:
-            #   First arb year (from pre-arb): exponential in Ovr
-            #   Subsequent arb years: prior salary + Ovr-based raise
-            #   RP discount: OOTP pays relievers ~80% of equivalent-Ovr starters
-            rp_mult = 0.80 if bucket == "RP" else 1.0
+            # Arb salary model calibrated to OOTP arb outcomes.
+            # RPs use a separate exponential (566K * exp(0.0294 * Ovr)) with
+            # 25% annual raises — calibrated from 35 RP arb contracts.
+            import math
             if i < pre_arb_left:
                 sal_full = min_sal
+            elif bucket == "RP":
+                rp_base = 566254 * math.exp(0.0294 * ovr)
+                arb_yr = i - pre_arb_left  # 0-indexed arb year
+                sal_full = round(rp_base * (0.75 + 0.25 * arb_yr))
             elif i == pre_arb_left and pre_arb_left > 0:
-                import math
-                sal_full = round(318400 * math.exp(0.0495 * ovr) * rp_mult)
+                sal_full = round(318400 * math.exp(0.0495 * ovr))
             else:
-                arb_raise = max(1_000_000, round((-2_500_000 + 110_000 * ovr) * rp_mult))
+                arb_raise = max(1_000_000, round(-2_500_000 + 110_000 * ovr))
                 prior_sal = breakdown[-1]["salary_full"] if breakdown else min_sal
                 sal_full = prior_sal + arb_raise
             # Non-tender gate: if projected arb salary exceeds market value,
@@ -341,8 +363,6 @@ def contract_breakdown(query):
             war = pw * (curr_mult / base_mult) if base_mult > 0 else 0
         else:
             war = pw * aging_mult(a, bucket)
-        if bucket == "RP":
-            war = min(war, RP_WAR_CAP)
 
         val = war * dpw
         sur = val - sal

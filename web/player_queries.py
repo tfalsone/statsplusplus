@@ -27,45 +27,32 @@ def get_player(pid):
     org_id = team_id if parent_team_id == 0 else parent_team_id
     level_str = level_map().get(str(level), str(level))
 
-    # Ratings (latest snapshot)
-    rcols = ("ovr, pot, cntct, gap, pow, eye, ks, speed, steal, "
-             "stf, mov, ctrl, ctrl_r, ctrl_l, "
-             "fst, snk, crv, sld, chg, splt, cutt, cir_chg, scr, frk, kncrv, knbl, "
-             "pot_stf, pot_mov, pot_ctrl, "
-             "pot_fst, pot_snk, pot_crv, pot_sld, pot_chg, pot_splt, pot_cutt, pot_cir_chg, pot_scr, pot_frk, pot_kncrv, pot_knbl, "
-             "pot_cntct, pot_gap, pot_pow, pot_eye, pot_ks, "
-             "c, ss, second_b, third_b, first_b, lf, cf, rf, "
-             "pot_c, pot_ss, pot_second_b, pot_third_b, pot_first_b, pot_lf, pot_cf, pot_rf, "
-             "ofa, ifa, c_arm, c_blk, c_frm, stm, vel, "
-             "ifr, ofr, ife, ofe, tdp, gb, "
-             "cntct_l, cntct_r, gap_l, gap_r, pow_l, pow_r, eye_l, eye_r, ks_l, ks_r, "
-             "stf_l, stf_r, mov_l, mov_r, "
-             "babip, babip_l, babip_r, pot_babip, "
-             "hra, hra_l, hra_r, pot_hra, "
-             "pbabip, pbabip_l, pbabip_r, pot_pbabip, "
-             "prone, "
-             "height, bats, throws, acc, wrk_ethic, int_, greed, loy, lead")
-    r = conn.execute(f"SELECT {rcols} FROM ratings WHERE player_id=? ORDER BY snapshot_date DESC LIMIT 1", (pid,)).fetchone()
+    # Ratings (latest snapshot) — SELECT * + dict to handle leagues with/without extended columns
+    r = conn.execute("SELECT * FROM ratings WHERE player_id=? ORDER BY snapshot_date DESC LIMIT 1", (pid,)).fetchone()
+    # Build dict from row
+    rd = {}
+    if r:
+        cols = [d[0] for d in conn.execute("SELECT * FROM ratings LIMIT 0").description]
+        rd = dict(zip(cols, r))
 
     ratings = None
-    if r:
-        (ovr, pot, cntct, gap, pw, eye, ks, speed, steal,
-         stf, mov, ctrl_ovr, ctrl_r, ctrl_l,
-         fst, snk, crv, sld, chg, splt, cutt, cir_chg, scr, frk, kncrv, knbl,
-         pot_stf, pot_mov, pot_ctrl,
-         pot_fst, pot_snk, pot_crv, pot_sld, pot_chg, pot_splt, pot_cutt, pot_cir_chg, pot_scr, pot_frk, pot_kncrv, pot_knbl,
-         pot_cntct, pot_gap, pot_pow, pot_eye, pot_ks,
-         c_def, ss_def, second_b, third_b, first_b, lf, cf_def, rf,
-         pot_c, pot_ss, pot_2b, pot_3b, pot_1b, pot_lf, pot_cf, pot_rf,
-         ofa, ifa, c_arm, c_blk, c_frm, stm, vel,
-         ifr, ofr, ife, ofe, tdp, gb,
-         cntct_l, cntct_r, gap_l, gap_r, pow_l, pow_r, eye_l, eye_r, ks_l, ks_r,
-         stf_l, stf_r, mov_l, mov_r,
-         babip, babip_l, babip_r, pot_babip,
-         hra, hra_l, hra_r, pot_hra,
-         pbabip, pbabip_l, pbabip_r, pot_pbabip,
-         prone,
-         height, bats, throws, acc, wrk_ethic, int_, greed, loy, lead) = r
+    if rd:
+        def g(k): return rd.get(k)
+
+        ovr, pot = g("ovr"), g("pot")
+        cntct, gap, pw, eye, ks = g("cntct"), g("gap"), g("pow"), g("eye"), g("ks")
+        speed, steal = g("speed"), g("steal")
+        stf, mov, ctrl_ovr = g("stf"), g("mov"), g("ctrl")
+        ctrl_r, ctrl_l = g("ctrl_r"), g("ctrl_l")
+        stm, vel, gb = g("stm"), g("vel"), g("gb")
+        ofa, ifa, c_arm, c_blk, c_frm = g("ofa"), g("ifa"), g("c_arm"), g("c_blk"), g("c_frm")
+        ifr, ofr, ife, ofe, tdp = g("ifr"), g("ofr"), g("ife"), g("ofe"), g("tdp")
+        height, bats, throws = g("height"), g("bats"), g("throws")
+        # Extended ratings (may be None if league doesn't have them)
+        babip, babip_l, babip_r, pot_babip = g("babip"), g("babip_l"), g("babip_r"), g("pot_babip")
+        hra, hra_l, hra_r, pot_hra = g("hra"), g("hra_l"), g("hra_r"), g("pot_hra")
+        pbabip, pbabip_l, pbabip_r, pot_pbabip = g("pbabip"), g("pbabip_l"), g("pbabip_r"), g("pot_pbabip")
+        prone = g("prone")
 
         def _char_label(v):
             if v in ("VL", "L", "N", "H", "VH"):
@@ -78,7 +65,7 @@ def get_player(pid):
             "WHERE player_id=? AND wrk_ethic IN ('VL','L','N','H','VH') "
             "ORDER BY snapshot_date DESC LIMIT 1", (pid,)).fetchone()
         if not pers_row:
-            pers_row = (int_, wrk_ethic, greed, loy, lead)
+            pers_row = (g("int_"), g("wrk_ethic"), g("greed"), g("loy"), g("lead"))
         p_int, p_ethic, p_greed, p_loy, p_lead = pers_row
 
         ratings = {"ovr": ovr, "pot": pot, "height": _height_str(height), "bats": bats, "throws": throws,
@@ -88,9 +75,9 @@ def get_player(pid):
 
         if is_pitcher:
             ctrl = ctrl_ovr or (round((ctrl_r + ctrl_l) / 2) if ctrl_r and ctrl_l else ctrl_r or ctrl_l)
-            ratings["stuff"] = (_norm(stf), _norm(pot_stf))
-            ratings["movement"] = (_norm(mov), _norm(pot_mov))
-            ratings["control"] = (_norm(ctrl), _norm(pot_ctrl))
+            ratings["stuff"] = (_norm(stf), _norm(g("pot_stf")))
+            ratings["movement"] = (_norm(mov), _norm(g("pot_mov")))
+            ratings["control"] = (_norm(ctrl), _norm(g("pot_ctrl")))
             ratings["stamina"] = _norm(stm)
             ratings["velocity"] = vel
             if gb: ratings["gb"] = gb
@@ -99,8 +86,8 @@ def get_player(pid):
             if pbabip is not None:
                 ratings["pbabip"] = (_norm(pbabip), _norm(pot_pbabip))
             ratings["splits"] = {
-                "stuff": (_norm(stf_l), _norm(stf_r)),
-                "movement": (_norm(mov_l), _norm(mov_r)),
+                "stuff": (_norm(g("stf_l")), _norm(g("stf_r"))),
+                "movement": (_norm(g("mov_l")), _norm(g("mov_r"))),
                 "control": (_norm(ctrl_l), _norm(ctrl_r)),
             }
             if hra_l is not None:
@@ -109,36 +96,43 @@ def get_player(pid):
                 ratings["splits"]["pbabip"] = (_norm(pbabip_l), _norm(pbabip_r))
             pitches = []
             pitch_raw = [
-                (fst, pot_fst, "Fastball"), (snk, pot_snk, "Sinker"), (crv, pot_crv, "Curveball"),
-                (sld, pot_sld, "Slider"), (chg, pot_chg, "Changeup"), (splt, pot_splt, "Splitter"),
-                (cutt, pot_cutt, "Cutter"), (cir_chg, pot_cir_chg, "Circle Change"),
-                (scr, pot_scr, "Screwball"), (frk, pot_frk, "Forkball"),
-                (kncrv, pot_kncrv, "Knuckle Curve"), (knbl, pot_knbl, "Knuckleball"),
+                ("fst", "pot_fst", "Fastball"), ("snk", "pot_snk", "Sinker"), ("crv", "pot_crv", "Curveball"),
+                ("sld", "pot_sld", "Slider"), ("chg", "pot_chg", "Changeup"), ("splt", "pot_splt", "Splitter"),
+                ("cutt", "pot_cutt", "Cutter"), ("cir_chg", "pot_cir_chg", "Circle Change"),
+                ("scr", "pot_scr", "Screwball"), ("frk", "pot_frk", "Forkball"),
+                ("kncrv", "pot_kncrv", "Knuckle Curve"), ("knbl", "pot_knbl", "Knuckleball"),
             ]
-            for cur, fut, label in pitch_raw:
+            for cur_k, fut_k, label in pitch_raw:
+                cur, fut = g(cur_k), g(fut_k)
                 if cur or fut:
                     pitches.append({"name": label, "cur": _norm(cur), "fut": _norm(fut)})
             pitches.sort(key=lambda x: -(x["cur"] or 0))
             ratings["pitches"] = pitches
         else:
-            ratings["hit"] = (_norm(cntct), _norm(pot_cntct))
-            ratings["gap"] = (_norm(gap), _norm(pot_gap))
-            ratings["power"] = (_norm(pw), _norm(pot_pow))
-            ratings["eye"] = (_norm(eye), _norm(pot_eye))
-            ratings["krate"] = (_norm(ks), _norm(pot_ks))
+            ratings["hit"] = (_norm(cntct), _norm(g("pot_cntct")))
+            ratings["gap"] = (_norm(gap), _norm(g("pot_gap")))
+            ratings["power"] = (_norm(pw), _norm(g("pot_pow")))
+            ratings["eye"] = (_norm(eye), _norm(g("pot_eye")))
+            ratings["krate"] = (_norm(ks), _norm(g("pot_ks")))
             if babip is not None:
                 ratings["babip"] = (_norm(babip), _norm(pot_babip))
             ratings["speed"] = _norm(speed)
             ratings["steal"] = _norm(steal)
             ratings["splits"] = {
-                "hit": (_norm(cntct_l), _norm(cntct_r)),
-                "gap": (_norm(gap_l), _norm(gap_r)),
-                "power": (_norm(pow_l), _norm(pow_r)),
-                "eye": (_norm(eye_l), _norm(eye_r)),
-                "krate": (_norm(ks_l), _norm(ks_r)),
+                "hit": (_norm(g("cntct_l")), _norm(g("cntct_r"))),
+                "gap": (_norm(g("gap_l")), _norm(g("gap_r"))),
+                "power": (_norm(g("pow_l")), _norm(g("pow_r"))),
+                "eye": (_norm(g("eye_l")), _norm(g("eye_r"))),
+                "krate": (_norm(g("ks_l")), _norm(g("ks_r"))),
             }
             if babip_l is not None:
                 ratings["splits"]["babip"] = (_norm(babip_l), _norm(babip_r))
+            c_def, ss_def = g("c"), g("ss")
+            second_b, third_b, first_b = g("second_b"), g("third_b"), g("first_b")
+            lf, cf_def, rf = g("lf"), g("cf"), g("rf")
+            pot_c, pot_ss, pot_2b = g("pot_c"), g("pot_ss"), g("pot_second_b")
+            pot_3b, pot_1b = g("pot_third_b"), g("pot_first_b")
+            pot_lf, pot_cf, pot_rf = g("pot_lf"), g("pot_cf"), g("pot_rf")
             def_grades = [
                 ("C", c_def, pot_c), ("1B", first_b, pot_1b), ("2B", second_b, pot_2b),
                 ("3B", third_b, pot_3b), ("SS", ss_def, pot_ss),
@@ -166,24 +160,30 @@ def get_player(pid):
 
     # Two-way: build a full hitter ratings dict so the template can render the standard hitter view
     hit_ratings = None
-    if is_pitcher and r and cntct and cntct >= 20:
+    if is_pitcher and rd and cntct and cntct >= 20:
+        c_def, ss_def = g("c"), g("ss")
+        second_b, third_b, first_b = g("second_b"), g("third_b"), g("first_b")
+        lf, cf_def, rf = g("lf"), g("cf"), g("rf")
+        pot_c, pot_ss, pot_2b = g("pot_c"), g("pot_ss"), g("pot_second_b")
+        pot_3b, pot_1b = g("pot_third_b"), g("pot_first_b")
+        pot_lf, pot_cf, pot_rf = g("pot_lf"), g("pot_cf"), g("pot_rf")
         hit_ratings = {
             "ovr": ratings["ovr"] if ratings else None, "pot": ratings["pot"] if ratings else None,
             "height": ratings.get("height"), "bats": ratings.get("bats"), "throws": ratings.get("throws"),
             "personality": ratings.get("personality") if ratings else None,
-            "hit": (_norm(cntct), _norm(pot_cntct)),
-            "gap": (_norm(gap), _norm(pot_gap)),
-            "power": (_norm(pw), _norm(pot_pow)),
-            "eye": (_norm(eye), _norm(pot_eye)),
-            "krate": (_norm(ks), _norm(pot_ks)),
+            "hit": (_norm(cntct), _norm(g("pot_cntct"))),
+            "gap": (_norm(gap), _norm(g("pot_gap"))),
+            "power": (_norm(pw), _norm(g("pot_pow"))),
+            "eye": (_norm(eye), _norm(g("pot_eye"))),
+            "krate": (_norm(ks), _norm(g("pot_ks"))),
             **({"babip": (_norm(babip), _norm(pot_babip))} if babip is not None else {}),
             "speed": _norm(speed), "steal": _norm(steal),
             "splits": {
-                "hit": (_norm(cntct_l), _norm(cntct_r)),
-                "gap": (_norm(gap_l), _norm(gap_r)),
-                "power": (_norm(pow_l), _norm(pow_r)),
-                "eye": (_norm(eye_l), _norm(eye_r)),
-                "krate": (_norm(ks_l), _norm(ks_r)),
+                "hit": (_norm(g("cntct_l")), _norm(g("cntct_r"))),
+                "gap": (_norm(g("gap_l")), _norm(g("gap_r"))),
+                "power": (_norm(g("pow_l")), _norm(g("pow_r"))),
+                "eye": (_norm(g("eye_l")), _norm(g("eye_r"))),
+                "krate": (_norm(g("ks_l")), _norm(g("ks_r"))),
                 **({"babip": (_norm(babip_l), _norm(babip_r))} if babip_l is not None else {}),
             },
             "defense": [{"pos": lbl, "cur": _norm(c), "fut": _norm(f)}
@@ -237,6 +237,8 @@ def get_player(pid):
         valuation["surplus"] = round(prospect_row[3] / 1e6, 1) if prospect_row[3] else 0
         valuation["type"] = "prospect"
         valuation["level"] = prospect_row[4]
+        valuation["ovr"] = ratings["ovr"] if ratings else None
+        valuation["pot"] = ratings["pot"] if ratings else None
 
     # Contract
     contract = None
@@ -353,17 +355,27 @@ def get_player(pid):
         elif valuation.get("type") == "prospect":
             import prospect_value as _pv
             fv = valuation.get("fv", 0)
-            pv = _pv.prospect_surplus(fv, age, valuation.get("level", level_str), valuation.get("bucket", ""))
+            pv = _pv.prospect_surplus(fv, age, valuation.get("level", level_str), valuation.get("bucket", ""),
+                                      ovr=valuation.get("ovr"), pot=valuation.get("pot"))
             if pv and pv.get("breakdown"):
+                cert = pv.get("certainty_mult", 1.0)
+                scar = pv.get("scarcity_mult", 1.0)
+                combined = pv["dev_discount"] * cert * scar
+                raw_total = sum(b["market_value"] - b["salary"] for b in pv["breakdown"])
                 surplus_detail = {
                     "rows": [{"year": f"Ctrl {b['control_year']}", "age": b["player_age"],
                               "war": round(b["war"], 1),
                               "value": round(b["market_value"] / 1e6, 1),
                               "salary": round(b["salary"] / 1e6, 1),
-                              "surplus": round(b["surplus"] / 1e6, 1)}
+                              "surplus": round((b["market_value"] - b["salary"]) / 1e6, 1)}
                              for b in pv["breakdown"]],
                     "total": {"base": round(pv["total_surplus"] / 1e6, 1)},
-                    "flags": [f"ETA: {pv['years_to_mlb']:.1f} yrs", f"Dev discount: {pv['dev_discount']:.0%}"],
+                    "flags": [f"ETA: {pv['years_to_mlb']:.1f} yrs"],
+                    "discount_note": f"× {pv['dev_discount']:.0%} dev"
+                                     + (f" × {scar:.2f} scarcity" if scar < 1.0 else "")
+                                     + (f" × {cert:.2f} certainty" if cert != 1.0 else "")
+                                     + f" = ${pv['total_surplus']/1e6:.1f}M",
+                    "raw_total": round(raw_total / 1e6, 1),
                 }
     except Exception:
         pass

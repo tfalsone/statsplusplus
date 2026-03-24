@@ -4,6 +4,189 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 33 (2026-03-23)
+
+### Top 100 Prospect Model Tuning
+Session 32 audit found four issues: COF flood (34/100), AAA concentration (81/100), inflated surplus values, and safe-over-ceiling bias. This session addressed all four with six changes.
+
+- **Position-specific FV→WAR for hitters** — `calibrate.py` now derives per-bucket hitter tables (`FV_TO_PEAK_WAR_BY_POS`) instead of averaging all hitter positions. COF FV 50 → 3.0 WAR (was 3.3), SS → 3.6, CF → 3.9, C → 2.9. Stored in `model_weights.json`, loaded by `constants.py`, used by `prospect_value.py` `peak_war()`. Directly addresses COF flood and inflated surplus values.
+- **Flattened development discount** — AAA: 0.88 (was 0.90), AA: 0.78 (was 0.75), A: 0.68 (was 0.60), Rookie: 0.45 (was 0.38), Intl: 0.35 (was 0.25). Old curve dropped too steeply below AAA, causing 81/100 to be AAA. The AA and A increases are the biggest drivers — high-ceiling A-ball arms were being penalized 33% vs AAA.
+- **Certainty multiplier capped at 1.0** — Was up to 1.15x for maxed prospects (Ovr/Pot near 1.0). This double-counted AAA proximity since those players already benefit from higher dev discount and lower time-value discount.
+- **Steeper age adjustment** — 4%/yr (was 3%) for young-for-level bonus and old-for-level penalty. Targeted lift for young A-ball prospects without changing AAA values (already at 0.95 cap).
+- **Gap-scaled option value** — Upside probabilities now scale with the Pot-FV gap in addition to youth. `gap_factor = min(1.0, (pot - fv) / 25)` boosts p_mid and p_ceil for high-ceiling prospects. Ceiling FV cap removed (was 70, now uncapped). A Pot 80 / FV 50 player gets ~30% base / 45% mid / 25% ceiling probabilities (was 42/40/18).
+- **Prospect age cutoff lowered to 24** — 25yo minor leaguers are MLB-bubble players, not prospects. `fv_calc.py` now excludes age 25+. Added `DELETE` before `INSERT` to clear stale rows.
+
+**Results** (VMLB top 100):
+| Metric | Before | After |
+|---|---|---|
+| COF count | 34 | 25 |
+| AAA count | 81 | 60 |
+| A-ball count | 4 | 19 |
+| Age ≤ 20 | 7 | 17 |
+| #50 surplus | $94.7M | $81.8M |
+| #100 surplus | $75.8M | $65.1M |
+
+Key prospect movement: Ricky Sanchez (A 1B, 18, Pot 80) #29→#4, Honor Lara (A COF, 17, Pot 80) #44→#9, Alex Rodriguez (A SP, 19, Pot 68) >100→#59, Angelo Rivera (AA SP, 20, Pot 55) >100→#87.
+
+### Bug Fixes
+- **Refresh button race condition** — Navigating during a refresh showed the green ✓ badge instead of the spinner. Root cause: `/api/game-date` and `/refresh/status` fired in parallel on page load; the game-date response overwrote the spinner because `state.json` updates early in the pipeline. Fix: added `refreshRunning` flag, sequenced the checks so sync badge only renders when no refresh is active.
+- **Cross-league stale date indicator** — After switching leagues, the refresh button showed stale (!) because `/api/game-date` was still querying the previous league's StatsPlus API. The client retained the old league's slug. Fix: `api_game_date` now configures the client with the current league's `statsplus_slug` before each call.
+
+---
+
+## Session 32 (2026-03-23)
+
+### League-Calibrated Valuation Model
+- Built `scripts/calibrate.py` — derives league-specific valuation tables from actual data instead of hand-tuned constants. Produces `config/model_weights.json` with position-specific `OVR_TO_WAR`, `FV_TO_PEAK_WAR` (hitter/SP/RP), `ARB_PCT`, and `SCARCITY_MULT`.
+- **OVR_TO_WAR**: Position-specific Ovr→WAR regression from 3 years of data (2030-2032). 9 buckets (C, SS, 2B, 3B, CF, COF, 1B, SP, RP) with 53-355 seasons each. Falls back to grouped hitter regression when N < 40. Key findings: SS produces 4.44 WAR at Ovr 60 vs C 3.69 vs COF 3.70 — old generic table said 3.2 for all. SP produces 2.96 at Ovr 60 (old: 2.8). RP close to old values.
+- **FV_TO_PEAK_WAR**: Derived from OVR_TO_WAR by mapping FV+5 to expected peak Ovr. Now has separate hitter, SP, and RP tables. FV 45 hitter = 2.6 WAR (was 1.2), FV 50 SP = 2.5 (was 2.0). Old table was calibrated for a different league and significantly undervalued mid-tier prospects.
+- **ARB_PCT**: Calibrated from 104 arb-eligible players. Arb 1: 21% (was 20%), Arb 2: 18% (was 22%), Arb 3: 34% (was 33%). Minor changes.
+- **SCARCITY_MULT**: Sigmoid-based mapping from FA availability rate to scarcity. Uses 2-point Pot bands for smoothing, monotonic enforcement. Mid-season only (offseason FA pool is flooded). Pot 40: 0.0, Pot 42: 0.03, Pot 44: 0.44, Pot 46: 0.97, Pot 50: 1.0.
+- `constants.py` now loads from `model_weights.json` when present, falling back to hardcoded defaults. New exports: `FV_TO_PEAK_WAR_SP`, `OVR_TO_WAR_CALIBRATED`.
+- `player_utils.py` `peak_war_from_ovr()` uses position-specific calibrated tables when available.
+- `prospect_value.py` `peak_war()` uses SP-specific FV→WAR table for starting pitchers.
+- `refresh.py` runs calibration before fv_calc in the refresh pipeline. Calibration failure is non-fatal (logs warning, uses defaults).
+- Key value changes: Mead $68.2M → $100.5M, Teschler $67.5M → $83.8M, Showalter $49.2M → $86.9M, Jobe $32.6M → $71.6M. Increases driven by calibrated FV→WAR tables showing mid-tier players produce more WAR than old hand-tuned constants assumed.
+
+### Veteran Decline Ratings Blend
+- Victor Robles (Ovr 44, age 36, COF) showed $25.9M surplus despite being a clearly declining player. Root cause: his `stat_peak_war` of 3.31 was propped up by a 5.3 WAR season from 2030, and his worst recent season (2032: -0.1 WAR, 125 AB) was excluded for falling below the 130 AB qualifying threshold. The model had no downward blend for veterans — it only blended ratings upward for young players.
+- **Fix**: Added declining veteran ratings blend in `contract_value.py`. For players past age 31 (30 for pitchers) where stat WAR exceeds ratings WAR, blends toward ratings. Weight scales with both age past peak and gap size (`age_w × gap_ratio`, capped at 0.75). Small gaps at age 32 get minimal correction; large gaps at age 36+ get aggressive correction.
+- Robles: $25.9M → $16.4M (projected WAR: 3.31 → 2.25). Other affected players: Acuna ($2.0M), Julio Rodriguez ($11.2M), Adames ($7.2M) — all now more reasonable.
+
+### Top 100 Prospect Audit (findings only — no code changes)
+- **COF flood**: 34 of top 100 are COF (42 total OF). Model doesn't penalize positional replaceability — a Pot 53 COF ranks alongside scarcer positions.
+- **AAA concentration**: 81 of 100 in AAA, only 4 in A-ball, 0 in Rookie/Intl. Development discount may be too steep for lower levels, or model over-rewards MLB proximity.
+- **Surplus values feel high**: #100 at $75.8M, #50 at $94.7M. Driven by calibrated FV→WAR tables — FV 45 hitters now map to 2.6 WAR peak. Needs validation: do FV 45 prospects actually reach 2.6 WAR?
+- **FV 50 clustering**: 48 of 100 are FV 50 with huge surplus spread ($121M to $76M). FV system may not differentiate enough in the middle tier.
+- **No RPs**: RP FV discount working as intended — 0 RPs in top 100.
+- Added findings to task list for next session.
+
+---
+
+## Session 31 (2026-03-23)
+
+### Surplus Model Validation — Scarcity Recalibration
+- Systematic validation revealed the original scarcity curve (from Session 30) was too gradual — didn't reach 1.0 until Pot 65, while FA availability data shows 0% availability at Pot 49+.
+- **Fix (iteration 1)**: Steeper ramp: `{40: 0.0, 43: 0.10, 45: 0.30, 47: 0.60, 49: 0.85, 50: 1.0}`. Fixed the bottom end but created a cliff at Pot 48-50 (28% penalty for 2-point Pot difference).
+- **Fix (iteration 2)**: Smoothed S-curve: `{40: 0.0, 42: 0.05, 44: 0.20, 45: 0.35, 46: 0.55, 47: 0.75, 48: 0.92, 49: 1.0}`. Reaches 1.0 at Pot 49 to reflect scouting fog of war — 1-2 point Pot differences are within noise. No single-point cliffs anywhere.
+- Validated with fog-of-war test: Pot 48 vs 49 is only 8% swing (was 15%+ before). Pot 48 vs 50 is 8% (was 28%).
+- Key prospect impact: Jobe (Pot 49) +18%, Donovan (Pot 48) +27%, Neely (Pot 47) +25%. High-ceiling unchanged.
+
+### Surplus Model Validation — Realization Blend
+- Crossover analysis showed maxed-out prospects (Ovr ≈ Pot) had a discontinuity: prospect surplus was 0.36x of MLB contract value for hitters and 1.31x for RPs at the same grade.
+- Root cause: `FV_TO_PEAK_WAR` assumes further development, but maxed players have already reached their ceiling. Their peak WAR should equal their current production (from `OVR_TO_WAR`).
+- **Fix**: When `ovr/pot` realization exceeds 0.7, blend `peak_war(fv)` with `peak_war_from_ovr(ovr)` using a squared weight curve. At realization 1.0 (fully maxed), uses 100% OVR→WAR. At 0.7 (still developing), uses 100% FV→WAR. Only applies when OVR→WAR < FV→WAR (downward adjustment only).
+- Crossover ratios now 0.79-0.86x across all positions at Pot 50+ (was 0.36-1.31x). Developing players (realization < 0.7) completely unaffected.
+
+### Trade Scenario Analysis — 3B Upgrade
+- Evaluated 3B trade targets for the Rays (team 57, 40-33) from seller/fringe teams.
+- Identified key targets: Eric Elwood (CLE, Ovr 64, 3B:65, $130M+ with extension), Andy Tatum (STL fire sale, Ovr 53, 3B:65, $65.5M), Kris Williamson (BAL fringe, Ovr 56, 3B:55, $80.3M), Bobby Butler (LAA, Ovr 58, 3B:45, $47.6M), Pat Clark (MIN rental, Ovr 70, $31.5M).
+- Elwood has a 10yr/$136M extension not captured by the API — manually modeled at $261.5M surplus (vs $130.4M without extension). Effectively untradeable.
+- Tatum best package: Teschler straight up ($67.5M, 1-for-1 avoids consolidation tax) or Woods + Showalter + filler (~$65-66M, needs ~10-15% overpay for 3-for-1).
+
+### Data Gap — Pending Contract Extensions
+- Discovered that the StatsPlus API returns only the current active contract, not pending extensions signed during the season. Elwood showed as 1yr/$610K pre-arb when he actually has a 10yr/$136M extension. Added to task list.
+
+### RP FV Positional Discount
+- FV grades were too generous to RPs — 102 RPs earned FV 45+ (23.8% of all ranked prospects), vs ~3-5% in real baseball prospect lists. A Pot 55 RP got the same FV as a Pot 55 COF despite producing far less WAR.
+- **Fix**: Before FV calculation, RP Pot is scaled to 80% of raw value. A Pot 55 RP now has effective Pot 44, dropping from FV 45+ to FV 40. Only elite RPs (Pot 70+) reach FV 50.
+- League-wide RPs at FV 45+: 102 → 26 (7.4%). Top 100 by FV: 4 RPs → 3 RPs.
+- Surplus uses the raw (undiscounted) FV to avoid double-counting with the RP-specific WAR table. `fv_calc.py` computes raw FV separately for RPs and passes it to `prospect_surplus_with_option`.
+
+### Valuation Model Documentation
+- Created `docs/valuation_model.md` — plain-language explanation of how FV grades, prospect surplus, and MLB contract surplus work. Covers the full pipeline from ratings to trade value without requiring code reading.
+
+### Positional WAR Regression (investigation only — no code changes)
+- Ran Ovr→WAR regression by position bucket using 2031-2033 data (61-491 seasons per bucket).
+- Generic hitter table is a poor fit: at Ovr 65, SS produces 5.47 WAR vs COF 3.51 vs C 2.97 — model says 4.5 for all. SS slope (0.217) is 2x COF slope (0.119).
+- SP table overestimates at high OVR: actual 3.0 at Ovr 65 (model 4.0), actual 3.5 at Ovr 70 (model 5.5). Likely calibrated against a different league.
+- RP table is close (0.86-0.95x across Ovr 50-70).
+- Conclusion: constants were likely tuned for a different league. Added league-calibrated valuation model to task list as the proper fix rather than hand-tuning for VMLB.
+
+### RP Service Time Fix
+- `_estimate_control()` in `contract_value.py` used IP >= 40 for all pitchers to count qualifying seasons. RPs were being undercounted by 1-4 service years because they rarely reach 40 IP in a season.
+- **Fix**: RPs (detected by bucket) now use IP >= 20 threshold. Passed `bucket` parameter to `_estimate_control()`.
+
+### Pitcher Percentile Qualification Thresholds
+- Percentile pool used a single IP threshold (0.5 × team_games) for all pitchers. RPs with a full workload (e.g. 34 IP mid-season) were flagged as "small sample."
+- **Fix**: Split thresholds — SP uses 0.7 × team_games (55 IP), RP uses 0.35 × team_games (27 IP). RP detected by GS/G ratio < 0.25. SPs below the higher threshold correctly show as small sample even if they're in the broader pool.
+
+### Pitcher BABIP Expected — Regression Model
+- Pitcher BABIP expected percentile was using rating percentiles from the MLB pool. The pbabip rating distribution is extremely compressed (stdev 3.3, range 45-70) — a 50 rating showed as 4th percentile because 96% of MLB pitchers have pbabip ≥ 50 (survivorship bias).
+- **Fix**: Replaced rating percentile with a regression model: `expected_BABIP = 0.439 - 0.0028 × pbabip` (r=-0.18, from 362 qualifying seasons). Maps the rating to an expected BABIP value, then percentile-ranks that against the stat pool. pbabip 50 → .299 expected (≈44th percentile). McKeever (.333 actual) now correctly tagged "unlucky."
+
+---
+
+## Session 30 (2026-03-23)
+
+### Ratings Scale Support (20-80 / 1-100)
+- Leagues using OOTP's 20-80 scouting scale (tools in 5-point increments, OVR/POT in single increments) were being double-normalized by `norm()`, which assumed 1-100 raw input. This compressed tool grades toward the center (80→70, 70→60, 35→40) and caused incorrect defensive bonuses, critical tool floor penalties, and OPS+/BABIP projections.
+- **Fix**: `norm()` in `player_utils.py` is now scale-aware via lazy config detection. On 20-80 leagues, it passes values through unchanged (clamp + round to 5). On 1-100 leagues, behavior is unchanged.
+- **Fix**: `projections.py` `project_ops_plus()` converts 20-80 inputs to 1-100 equivalent before applying regression coefficients calibrated on 1-100 data.
+- **Fix**: `percentiles.py` BABIP expected model handles both scales for direct rating conversion and regression fallback.
+- **Fix**: Platoon split thresholds in `calc_fv` now use `norm()` for scale-independent comparison.
+- Added `ratings_scale` setting to `league_settings.json`, `league_config.py`, settings page, and onboarding wizard. Defaults to `"1-100"` for backward compatibility.
+- FV grades themselves are minimally affected (driven by Ovr/Pot which were already correct) but display grades, OPS+ projections, and BABIP models are now accurate.
+
+### Prospect Scarcity Multiplier
+- FV 40-45 prospects (replacement-level depth) were valued at $16-29M surplus despite being freely available on waivers. A FV 45 RP prospect (Fisher, Ovr 43) was valued at $28.9M — on par with Chris Brown (Ovr 75 MLB RP, $28.1M). No GM would make that swap.
+- **Fix**: New `SCARCITY_MULT` table in `constants.py` applies a non-linear multiplier to prospect surplus based on Pot (ceiling). Derived from MLB talent distribution data: Ovr 45-49 players comprise 35% of MLB rosters (abundant), while Ovr 65+ are <3% (scarce).
+- Table: `{40: 0.0, 45: 0.15, 50: 0.45, 55: 0.70, 60: 0.90, 65: 1.0}` — interpolated for intermediate values.
+- Uses Pot rather than FV so developing players (e.g. 40 Ovr / 65 Pot) are valued for their ceiling, not current ability. A maxed-out 43/43 gets 0.09x; a raw 40/65 gets 1.0x.
+- Applied in `prospect_value.prospect_surplus()` alongside dev_discount and certainty_mult.
+- Prospect surplus breakdown now applies combined multiplier to per-year surplus so rows sum to the total. Market value and salary stay raw. Discount math shown below the table on player pages.
+- Fisher: $28.9M → $2.6M. Mead (40/65): $42.5M → $68.2M (Pot-based scarcity + option value).
+
+### Extended Ratings Bug Fix
+- Player pages crashed with `no such column: babip` on leagues without extended rating columns (BABIP, HRA, PBABIP, Prone). Root cause: `player_queries.py` hardcoded extended column names in SELECT; `percentiles.py` did the same for BABIP expected model and pitcher percentile ratings.
+- **Fix**: `player_queries.py` switched from explicit column list + tuple unpack to `SELECT *` + dict access. Missing columns return `None` via `.get()`. All downstream code already guarded with `if X is not None`.
+- **Fix**: `percentiles.py` conditionally includes extended columns using `has_extended_ratings()` helper, falls back to `NULL` when absent.
+- **Fix**: `web_league_context.py` added `has_extended_ratings()` — checks `PRAGMA table_info(ratings)` for `babip` column, cached per request.
+- **Fix**: `refresh.py` added backfill step in `_upsert_ratings()` — updates extended columns on existing rows when incoming API data has them but DB values are NULL. Fixes leagues where rows were inserted before 126-col format support was added.
+
+### RP Surplus Model Calibration
+- Regression analysis on 1,582 qualifying RP seasons (IP≥20, GS≤3) revealed three model problems:
+  1. `RP_WAR_CAP=2.0` flattened FV 50–80 RPs to identical surplus ($63.3M each)
+  2. `REPLACEMENT_WAR=1.0` threshold created an $8.4M cliff, zeroing out sub-1.0 WAR control years
+  3. FV 45 peak WAR (1.2) was too high vs actual data (median 0.5 WAR for Ovr 48 RPs)
+- **Data findings**: 80 Ovr RPs average 1.9 WAR vs 0.6 for 50 Ovr (3x ratio). Only 10 RPs league-wide are 70+ Ovr (0.2%). Linear fit: WAR = -1.37 + 0.040 × Ovr (R²=0.15).
+- **Fix 1**: New `FV_TO_PEAK_WAR_RP` table in `constants.py` — scales from 0.5 (FV 40) to 3.2 (FV 80). Replaces flat `RP_WAR_CAP`. `prospect_value.peak_war()` selects RP table when `bucket=="RP"`.
+- **Fix 2**: Smooth market value ramp in `prospect_value._market_value()` — linear interpolation from league minimum at 0 WAR to full `war × $/WAR` at 1.0 WAR. Replaces binary cliff at `REPLACEMENT_WAR=1.0`.
+- **Fix 3**: Removed `RP_WAR_CAP` from `contract_value.py`, `projections.py`, `fv_calc.py`, `player_utils.py`. RP WAR for MLB players was already handled by `OVR_TO_WAR` table's RP column.
+- **Result**: FV 50 RP $37M, FV 60 $63M, FV 70 $83M (was all $63M). FV 40 now $16M (was $0). FV 45 stable at $25M.
+- Removed `RP_WAR_CAP` and `REPLACEMENT_WAR` constants.
+
+### Young Player Ratings Blend
+- `contract_value.py` previously used `stat_peak_war` as the sole WAR projection when stats were available, ignoring ratings entirely. For young players whose Ovr-based WAR significantly exceeds their stat WAR (e.g. Chris Brown: Ovr 75 → 2.0 WAR ratings, 1.28 WAR stats), this undervalued them and triggered premature non-tender via the arb salary gate.
+- **Fix**: When `ratings_war > stat_war` and the player is below peak age (27 pitchers, 28 hitters), blend the two projections. Ratings weight fades linearly from 50% at age 21 to 0% at peak age. Only applies upward (ratings > stats) — stat underperformance relative to ratings is treated as unrealized potential, not the other way around.
+- Chris Brown: $9.3M → $16.8M (2yr → 3yr control, WAR 1.28 → 1.64).
+
+### RP Arb Salary Model
+- The generic arb salary model (exponential in Ovr with 0.80x RP discount) dramatically overprojected RP arb salaries — e.g. Ovr 61 RP 3rd arb: model $12M vs game $3.8M. This triggered premature non-tender, cutting control years short.
+- **Fix**: RP-specific arb model calibrated from 35 actual RP arb contracts. Uses separate exponential (`566K × e^(0.0294 × Ovr)`) with 25% annual raises instead of the generic additive raise model. Non-RP arb model unchanged.
+- Gaytan (Ovr 61): $22.3M → $35.2M (4yr → 5yr control, 3rd arb $4.3M vs game $3.8M).
+
+---
+
+## Session 29 (2026-03-23)
+
+### Task List Cleanup
+- Pruned `task_list.md` to open items only. Removed all completed multi-league tasks (Layers 1–5, hardening 5.1–5.6), all resolved bugs (B.1–B.7), and all shipped web UI features (roster rework, depth chart, league overview, prospects tab, stat leaders, player popup, prospect side panel, two-way player support, ETA gap fix). Removed stale "remaining: 5.5, 5.6" note from long-term multi-league entry. All completed items were already recorded in the changelog from their respective sessions.
+- Confirmed depth chart SVG alignment is resolved — card positions and SVG coordinates are well-tuned. Removed from task list.
+
+### Organization Tab
+- New **Organization** tab on team page — cross-level org summary in one view.
+- **Position Depth table** — rows for C/1B/2B/3B/SS/LF/CF/RF plus SP 1-5 and RP top 3. Each row shows: league rank (color-coded pill on first row per position group), MLB player (name, age, color-coded Ovr, WAR, surplus), and top prospect (pos, name, age, FV badge, level badge, surplus). One prospect per position; SP shows 5, RP shows 3. OF prospects labeled with specific field position (LF/CF/RF) instead of generic OF. Prospects deduplicated across positions (each player appears once). SP/RP sorted by Ovr; prospects sorted by FV then surplus. SP/RP section separated by top border. Level badges reuse league prospects tab styling (AAA blue, AA green, A yellow, lower gray). Reuses `_league_pos_rankings()` from depth chart for rank data.
+- **Surplus Leaders** — top 20 combined MLB + Farm players sorted by surplus. Level badges (MLB/AAA/AA/A/etc.) using existing `lvl-badge` styles plus new `lvl-mlb` class.
+- **Retention Priorities** — players with ≤2 years of team control and positive surplus. Multi-year contracts use contract years remaining; 1-year contracts use `_estimate_control()` for arb/pre-arb estimation. Shows control years remaining. Positioned alongside position depth in a two-column grid layout.
+- **Committed Payroll** — 4-year horizon bar chart showing total committed dollars per year. Reuses `get_payroll_summary()`.
+- **Layout**: top row is position depth (wide) + retention priorities (narrow) side by side. Bottom row is surplus leaders + payroll bars in two columns.
+- New `get_org_overview(team_id)` query function in `team_queries.py`. Re-exported via `queries.py`.
+- **Ovr tier coloring consolidated** — moved duplicated Ovr/Pot tier coloring JS from `player.html` and `team.html` into `base.html`. Now runs globally on all pages. Single source of truth for the color palette.
+- CSS: `.org-top` grid, `.org-depth-panel`/`.org-retention-panel`, `.org-depth-table`, `.org-group-top` separator, `.lvl-mlb` badge, `.payroll-bars`/`.payroll-bar-*` bar chart styles. Removed unused `.src-badge` styles.
+
+---
+
 ## Session 28 (2026-03-22)
 
 ### Multi-League — Layer 5 Hardening + Onboarding Polish
