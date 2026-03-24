@@ -394,6 +394,17 @@ def get_player(pid):
                 fv, age, level_val, bucket_val,
                 ovr=valuation.get("ovr"), pot=valuation.get("pot"),
                 def_rating=_dr)
+        # MLB player who is also rookie-eligible (in prospect_fv)
+        if valuation.get("type") == "MLB" and prospect_row and outcome_probs is None:
+            import prospect_value as _pv
+            _fv = prospect_row[1]
+            _bucket = _display_pos(prospect_row[0])
+            _level = prospect_row[4]
+            outcome_probs = _pv.career_outcome_probs(
+                _fv, age, _level, _bucket,
+                ovr=ratings["ovr"] if ratings else None,
+                pot=ratings["pot"] if ratings else None,
+                def_rating=valuation.get("def_rating"))
     except Exception:
         pass
 
