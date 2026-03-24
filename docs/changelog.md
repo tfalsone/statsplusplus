@@ -16,6 +16,9 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 - Shows on prospect pages (below surplus panel) and in the Contract tab for rookie-eligible MLB players.
 - **Files**: `scripts/prospect_value.py` (`career_outcome_probs()`), `web/player_queries.py`, `web/templates/player.html` (`outcome_panel` macro), `web/static/style.css`.
 
+### Bug Fixes
+- **Ratings scale cache not cleared on settings change** — `player_utils._ratings_scale` was cached at module level and never reset. Changing the ratings scale in settings (e.g., from unset to "1-100") had no effect until server restart. Fix: `app.py` `before_request` now resets `_ratings_scale = None` each request so `norm()` always reads the current league config.
+
 ### Session 34 Documentation
 - Added Session 34 changelog entry covering all prior session changes (scarcity fix, position-adjusted scarcity, rookie-eligible prospects, ratings_history, visual polish, bug fixes).
 - Updated `task_list.md` — marked scarcity curve refinement and rookie-eligible as done.
