@@ -86,8 +86,28 @@ def _market_value(war, dpw, lg_min):
     return lg_min + war * (dpw - lg_min)
 
 
-def _scarcity_mult(fv):
-    """Interpolate scarcity multiplier from SCARCITY_MULT table."""
+def _scarcity_mult(fv, bucket=None, def_rating=None):
+    """Interpolate scarcity multiplier from SCARCITY_MULT table.
+    
+    Position-adjusted: premium positions get a Pot shift (higher effective Pot
+    = scarcer). For defense-dependent positions (CF/SS/C/2B/3B), the shift
+    scales with defensive ability — elite defenders get the full bump, poor
+    defenders get none.
+    """
+    _BASE_SHIFT = {
+        'SS': 4, 'CF': 2, 'SP': 2, 'C': 1, '2B': 1, '3B': 1,
+        'COF': -2, 'RP': -2, '1B': -3,
+    }
+    _DEF_SCALED = {'CF', 'SS', 'C', '2B', '3B'}
+
+    shift = _BASE_SHIFT.get(bucket, 0)
+    if bucket in _DEF_SCALED:
+        # Scale by defensive ability: full at 70+, linear 50-70, zero below 50
+        dr = def_rating or 0
+        scale = max(0.0, min(1.0, (dr - 50) / 20.0)) if dr >= 50 else 0.0
+        shift = shift * scale
+    fv = fv + shift
+
     pts = sorted(SCARCITY_MULT.keys())
     if fv <= pts[0]:  return SCARCITY_MULT[pts[0]]
     if fv >= pts[-1]: return SCARCITY_MULT[pts[-1]]
@@ -99,7 +119,7 @@ def _scarcity_mult(fv):
 
 
 def prospect_surplus(fv, age, level, bucket, positional_adjust=False, fv_plus=False,
-                     ovr=None, pot=None):
+                     ovr=None, pot=None, def_rating=None):
     """
     Compute surplus value for a prospect over their 6-year control period.
     fv: integer FV grade (strip '+' before passing; use fv_plus=True for half-grades).
@@ -163,7 +183,7 @@ def prospect_surplus(fv, age, level, bucket, positional_adjust=False, fv_plus=Fa
         })
 
     cert_mult = _certainty_mult(ovr, pot)
-    scar_mult = _scarcity_mult(pot if pot else fv_eff)
+    scar_mult = _scarcity_mult(pot if pot else fv_eff, bucket=bucket, def_rating=def_rating)
     combined = dev_discount * cert_mult * scar_mult
     base_surplus = max(0, round(total_surplus * combined))
 
@@ -180,6 +200,105 @@ def prospect_surplus(fv, age, level, bucket, positional_adjust=False, fv_plus=Fa
             "total_surplus": base_surplus, "breakdown": rows}
 
 
+def career_outcome_probs(fv, age, level, bucket, ovr=None, pot=None, def_rating=None):
+    """Compute cumulative probability of reaching each WAR/season tier.
+
+    Returns dict with:
+      tiers: list of {war, prob, label} — cumulative P(prime WAR >= threshold)
+      confidence: 0.0-1.0 meter value
+    """
+    from math import exp
+
+    cfv = _ceiling_fv(pot) if pot else fv
+    mid_fv = 5 * round(((fv + cfv) / 2) / 5) if cfv > fv else fv
+
+    # Scenario probabilities (same logic as option value)
+    youth_bonus = max(0, (20 - age)) * 0.05
+    gap_factor = min(1.0, ((pot or fv) - fv) / 25) if pot and pot > fv else 0
+    p_mid = min(0.45, 0.30 + youth_bonus + gap_factor * 0.15) if cfv > fv else 0
+    p_ceil = min(0.25, 0.10 + youth_bonus * 0.5 + gap_factor * 0.10) if cfv > fv else 0
+    p_base = 1.0 - p_mid - p_ceil
+
+    # Bust probability = 1 - dev_discount
+    dev = _age_adjusted_discount(level, age)
+
+    # WAR for each scenario
+    war_base = peak_war(fv, bucket)
+    war_mid = peak_war(mid_fv, bucket) if cfv > fv else war_base
+    war_ceil = peak_war(cfv, bucket) if cfv > fv else war_base
+
+    # Within each scenario, WAR has variance (not a point estimate).
+    # Logistic CDF with wide spread + elite compression: sustaining
+    # high WAR is much harder than just reaching the majors.
+    def _p_above(mu, threshold):
+        s = max(0.5, mu * 0.40)
+        base = 1.0 / (1.0 + exp((threshold - mu) / s))
+        # Smooth compression: sustaining elite production is harder than
+        # just reaching the majors. Sigmoid centered at 3 WAR.
+        compress = 0.35 + 0.65 / (1.0 + exp((threshold - 3.0) / 1.2))
+        return base * compress
+
+    _TIERS = []
+    war = 0.125
+    while war <= 5.0:
+        if war <= 1.0:
+            label = "Contributor"
+        elif war <= 2.0:
+            label = "Regular"
+        elif war <= 3.0:
+            label = "All-Star"
+        else:
+            label = ""
+        _TIERS.append((round(war, 3), label))
+        war += 0.125
+    # Mark threshold WAR values for display
+    _THRESHOLD_WARS = {1.0: "Contributor", 2.0: "Regular", 3.0: "All-Star"}
+    tiers = []
+    thresholds = {}
+    for threshold, label in _TIERS:
+        p = (p_base * _p_above(war_base, threshold)
+             + p_mid * _p_above(war_mid, threshold)
+             + p_ceil * _p_above(war_ceil, threshold))
+        p *= dev  # scale by development probability
+        prob = round(min(1.0, p), 2)
+        tiers.append({"war": threshold, "prob": prob, "label": label})
+        if threshold in _THRESHOLD_WARS:
+            thresholds[_THRESHOLD_WARS[threshold]] = prob
+
+    # Confidence: higher when closer to MLB, higher realization
+    level_conf = {"MLB": 0.95, "AAA": 0.85, "AA": 0.70, "A": 0.55,
+                  "A-Short": 0.40, "USL": 0.30, "DSL": 0.25, "Intl": 0.20}
+    conf = level_conf.get(level, 0.40)
+    if ovr and pot and pot > 0:
+        conf = min(1.0, conf + 0.15 * (ovr / pot))
+
+    # Find middle 50% by area (bars between p75 and p25 of the distribution)
+    # Total area = sum of all probs; find WAR thresholds enclosing middle 50%
+    total_area = sum(t["prob"] for t in tiers)
+    cum = 0
+    p25_idx, p75_idx = 0, len(tiers) - 1
+    for i, t in enumerate(tiers):
+        cum += t["prob"]
+        if cum >= total_area * 0.25 and p25_idx == 0:
+            p25_idx = i
+        if cum >= total_area * 0.75:
+            p75_idx = i
+            break
+    for i, t in enumerate(tiers):
+        t["zone"] = "mid" if p25_idx <= i <= p75_idx else "tail"
+
+    likely_lo = tiers[p25_idx]["war"]
+    likely_hi = tiers[p75_idx]["war"]
+
+    # Position average starter WAR (Ovr ~52)
+    from player_utils import peak_war_from_ovr
+    pos_avg_war = round(peak_war_from_ovr(52, bucket), 1)
+
+    return {"tiers": tiers, "thresholds": thresholds, "confidence": round(conf, 2),
+            "likely_range": (likely_lo, likely_hi), "pos_avg_war": pos_avg_war,
+            "bucket": bucket}
+
+
 def _ceiling_fv(pot):
     """Map Pot to a ceiling FV grade (discounted slightly — not everyone maxes out)."""
     raw = pot - 5
@@ -187,7 +306,7 @@ def _ceiling_fv(pot):
 
 
 def prospect_surplus_with_option(fv, age, level, bucket, ovr=None, pot=None,
-                                  fv_plus=False, positional_adjust=False):
+                                  fv_plus=False, positional_adjust=False, def_rating=None):
     """Compute surplus including option value from upside scenarios.
     Returns the higher of base surplus and probability-weighted blended surplus.
     
@@ -197,7 +316,7 @@ def prospect_surplus_with_option(fv, age, level, bucket, ovr=None, pot=None,
       (a Pot 80 / FV 50 player has much more upside than Pot 52 / FV 50)
     """
     base = prospect_surplus(fv, age, level, bucket, positional_adjust=positional_adjust,
-                            fv_plus=fv_plus, ovr=ovr, pot=pot)
+                            fv_plus=fv_plus, ovr=ovr, pot=pot, def_rating=def_rating)
     base_val = base["total_surplus"]
 
     cfv = _ceiling_fv(pot) if pot else fv
@@ -205,8 +324,8 @@ def prospect_surplus_with_option(fv, age, level, bucket, ovr=None, pot=None,
         return base_val
 
     mid_fv = 5 * round(((fv + cfv) / 2) / 5)
-    s_mid = prospect_surplus(mid_fv, age, level, bucket, ovr=ovr, pot=pot)["total_surplus"]
-    s_ceil = prospect_surplus(cfv, age, level, bucket, ovr=ovr, pot=pot)["total_surplus"]
+    s_mid = prospect_surplus(mid_fv, age, level, bucket, ovr=ovr, pot=pot, def_rating=def_rating)["total_surplus"]
+    s_ceil = prospect_surplus(cfv, age, level, bucket, ovr=ovr, pot=pot, def_rating=def_rating)["total_surplus"]
 
     youth_bonus = max(0, (20 - age)) * 0.05
     gap_factor = min(1.0, ((pot or fv) - fv) / 25)

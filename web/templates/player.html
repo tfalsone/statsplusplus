@@ -6,7 +6,7 @@
 {% set pot = fut if fut and fut > cur else cur %}
 {% set cur_pct = ((cur - 20) / 60 * 100)|int if cur > 20 else 2 %}
 {% set pot_pct = ((pot - 20) / 60 * 100)|int if pot > 20 else 2 %}
-<span class="grade" data-g="{{ cur }}"><span class="grade-label-chip" data-g="{{ cur }}">{% if pot > cur %}{{ cur }}/{{ pot }}{% else %}{{ cur }}{% endif %}</span><span class="grade-track"><span class="grade-pot" data-g="{{ pot }}" style="width:{{ pot_pct }}%"></span><span class="grade-cur" data-g="{{ cur }}" style="width:{{ cur_pct }}%"></span></span></span>
+<span class="grade" data-g="{{ cur }}"><span class="grade-label-chip" data-g="{{ cur }}">{% if pot > cur %}<strong>{{ cur }}</strong><span style="opacity:0.6">/{{ pot }}</span>{% else %}<strong>{{ cur }}</strong>{% endif %}</span><span class="grade-track"><span class="grade-pot" data-g="{{ pot }}" style="width:{{ pot_pct }}%"></span><span class="grade-cur" data-g="{{ cur }}" style="width:{{ cur_pct }}%"></span></span></span>
 {% else %}-{% endif %}
 {% endmacro %}
 
@@ -63,7 +63,7 @@
   </table>
   {% endif %}
   {% if r.pitches %}
-  <h2 style="margin-top:12px">Pitches</h2>
+  <h2 style="margin-top:16px">Pitches</h2>
   <table class="grade-table">
     <thead><tr><th>Pitch</th><th>Grade</th></tr></thead>
     <tbody>
@@ -108,7 +108,7 @@
   </table>
   {% endif %}
   {% if r.speed is defined %}
-  <h2 style="margin-top:12px">Running</h2>
+  <h2 style="margin-top:16px">Running</h2>
   <table class="grade-table">
     <thead><tr><th>Tool</th><th>Grade</th></tr></thead>
     <tbody>
@@ -118,7 +118,7 @@
   </table>
   {% endif %}
   {% if r.defense %}
-  <h2 style="margin-top:12px">Positions</h2>
+  <h2 style="margin-top:16px">Positions</h2>
   <table class="grade-table">
     <thead><tr><th>Pos</th><th>Grade</th></tr></thead>
     <tbody>
@@ -169,14 +169,14 @@
     {% for label, key in [("Intelligence", "int"), ("Work Ethic", "ethic"), ("Greed", "greed"), ("Loyalty", "loy"), ("Leadership", "lead")] %}
     {% if pers[key] %}
     {% set v = pers[key] %}
-    {% set cls = "char-vh" if v == "Very High" else "char-h" if v == "High" else "char-l" if v == "Low" else "char-vl" if v == "Very Low" else "" %}
-    <tr><td class="grade-label">{{ label }}</td><td class="grade-val {{ cls }}">{{ v }}</td></tr>
+    {% set pcls = "char-pill-vh" if v == "Very High" else "char-pill-h" if v == "High" else "char-pill-l" if v == "Low" else "char-pill-vl" if v == "Very Low" else "char-pill-n" %}
+    <tr><td class="grade-label">{{ label }}</td><td><span class="char-pill {{ pcls }}">{{ v }}</span></td></tr>
     {% endif %}
     {% endfor %}
     {% if p.ratings.prone %}
     {% set pv = p.ratings.prone %}
-    {% set pcls = "char-vh" if pv in ("Iron Man", "Durable") else "char-vl" if pv in ("Fragile", "Wrecked") else "" %}
-    <tr><td class="grade-label">Durability</td><td class="grade-val {{ pcls }}">{{ pv }}</td></tr>
+    {% set pcls = "char-pill-vh" if pv in ("Iron Man", "Durable") else "char-pill-vl" if pv in ("Fragile", "Wrecked") else "char-pill-n" %}
+    <tr><td class="grade-label">Durability</td><td><span class="char-pill {{ pcls }}">{{ pv }}</span></td></tr>
     {% endif %}
   </tbody></table>
 </div>
@@ -357,28 +357,83 @@
 {% endif %}
 {% endmacro %}
 
+{# Career outcome probability chart #}
+{% macro outcome_panel() %}
+{% if p.outcome_probs %}
+{% set oc = p.outcome_probs %}
+<div class="panel">
+  <h2>Career Outcome Probs.</h2>
+  <div class="outcome-thresholds">
+    {% for name, prob in oc.thresholds.items() %}
+    <span class="outcome-thresh">{{ name }} <strong>{{ (prob * 100)|round|int }}%</strong></span>
+    {% endfor %}
+  </div>
+  <div class="outcome-likely">Most likely: <strong>{{ oc.likely_range[0] }}–{{ oc.likely_range[1] }} WAR</strong></div>
+  <div class="outcome-chart">
+    {% set ns = namespace(last_label='') %}
+    {% for t in oc.tiers %}
+    <div class="outcome-row{% if t.war == t.war|int and t.war > 0 %} outcome-major{% endif %}">
+      <span class="outcome-war">{% if loop.first %}&gt;0{% elif t.war == t.war|int %}{{ t.war|int }}{% else %}&nbsp;{% endif %}</span>
+      <div class="outcome-track">
+        <div class="outcome-bar{% if t.zone == 'mid' %} bar-mid{% endif %}{% if oc.pos_avg_war and (t.war - oc.pos_avg_war)|abs < 0.07 %} bar-pos-avg{% endif %}" style="width:{{ (t.prob * 100)|round|int }}%"></div>
+      </div>
+      <span class="outcome-pct">{% if loop.first or t.war == t.war|int %}{{ (t.prob * 100)|round|int }}%{% else %}&nbsp;{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="outcome-axis">
+    <span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span>
+  </div>
+  <div class="outcome-meta">
+    <span class="outcome-ylabel">Prime WAR / Season</span>
+    <span class="outcome-xlabel">Probability of Achieving</span>
+  </div>
+  <div class="confidence-meter" title="Projection confidence: {{ (oc.confidence * 100)|round|int }}%">
+    <span style="font-size:11px; color:var(--text-dim)">Confidence</span>
+    <div class="confidence-track">
+      <div class="confidence-fill" style="width:{{ (oc.confidence * 100)|round|int }}%"></div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endmacro %}
+
 {# Surplus projection panel #}
 {% macro surplus_panel() %}
 {% if p.surplus_detail %}
 <div class="panel">
-  <h2>Surplus Projection</h2>
+  <h2>Surplus Projection {% if p.surplus_detail.discount_note %}<span class="info-tip" title="{{ p.surplus_detail.discount_note }}">ⓘ</span>{% endif %}</h2>
   <table>
-    <thead><tr><th>Year</th><th>Age</th><th>WAR</th><th>Value</th><th>Salary</th><th>Surplus</th></tr></thead>
+    <thead><tr><th>{% if p.surplus_detail.discount_note %}Year (est.){% else %}Year{% endif %}</th><th>Age</th><th>WAR</th><th>Value</th><th>Salary</th><th>Surplus</th></tr></thead>
     <tbody>
       {% for r in p.surplus_detail.rows %}
       <tr>
-        <td>{{ r.year }}</td><td>{{ r.age }}</td><td>{{ r.war }}</td>
+        <td>{{ r.year }}</td><td>{{ r.age }}</td>
+        <td class="{% if r.war >= 4.0 %}war-hot{% elif r.war >= 2.0 %}war-warm{% else %}war-cool{% endif %}">{{ r.war }}</td>
         <td>${{ r.value }}M</td><td>${{ r.salary }}M</td>
         <td class="{% if r.surplus > 0 %}pos{% elif r.surplus < 0 %}neg{% endif %}">${{ r.surplus }}M</td>
       </tr>
       {% endfor %}
     </tbody>
     <tfoot>
+      {% if p.surplus_detail.discount_note %}
+      <tr style="font-size:11px; color:var(--text-dim)">
+        <td></td><td></td><td></td><td></td>
+        <td style="text-align:right">Raw Total</td>
+        <td>${{ p.surplus_detail.raw_total }}M</td>
+      </tr>
+      <tr>
+        <td></td><td></td><td></td><td></td>
+        <td style="text-align:right; color:var(--text-dim)">Adjusted</td>
+        <td class="{% if p.surplus_detail.total.base > 0 %}pos{% elif p.surplus_detail.total.base < 0 %}neg{% endif %}" style="font-weight:600">${{ p.surplus_detail.total.base }}M</td>
+      </tr>
+      {% else %}
       <tr>
         <td></td><td></td><td></td><td></td>
         <td style="text-align:right; color:var(--text-dim)">Total</td>
-        <td class="{% if p.surplus_detail.total.base > 0 %}pos{% elif p.surplus_detail.total.base < 0 %}neg{% endif %}">${{ p.surplus_detail.total.base }}M</td>
+        <td class="{% if p.surplus_detail.total.base > 0 %}pos{% elif p.surplus_detail.total.base < 0 %}neg{% endif %}" style="font-weight:600">${{ p.surplus_detail.total.base }}M</td>
       </tr>
+      {% endif %}
       {% if p.surplus_detail.total.pessimistic is defined %}
       <tr style="font-size:11px; color:var(--text-dim)">
         <td></td><td></td><td></td><td></td>
@@ -391,11 +446,6 @@
   {% if p.surplus_detail.flags %}
   <div style="margin-top:8px; font-size:11px; color:var(--text-dim)">
     {{ p.surplus_detail.flags|join(" · ") }}
-  </div>
-  {% endif %}
-  {% if p.surplus_detail.discount_note %}
-  <div style="margin-top:4px; font-size:11px; color:var(--text-dim)">
-    ${{ p.surplus_detail.raw_total }}M {{ p.surplus_detail.discount_note }}
   </div>
   {% endif %}
 </div>
@@ -636,6 +686,7 @@
     </div>
     <div class="panel-stack">
       {{ surplus_panel() }}
+      {{ outcome_panel() }}
     </div>
   </div>
 </div>
@@ -653,6 +704,7 @@
   <div class="panel-stack">
     {{ scouting_panel() }}
     {{ surplus_panel() }}
+    {{ outcome_panel() }}
   </div>
 </div>
 

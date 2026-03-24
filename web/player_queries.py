@@ -152,7 +152,7 @@ def get_player(pid):
                 ratings["arm"] = _norm(ifa)
                 if ifr: ratings["range"] = _norm(ifr)
                 if ife: ratings["error"] = _norm(ife)
-                if tdp and pos in (4, 6):
+                if tdp and pos in (3, 4, 5, 6):
                     ratings["tdp"] = _norm(tdp)
             if c_def and c_def >= 20:
                 ratings["blocking"] = _norm(c_blk)
@@ -239,6 +239,8 @@ def get_player(pid):
         valuation["level"] = prospect_row[4]
         valuation["ovr"] = ratings["ovr"] if ratings else None
         valuation["pot"] = ratings["pot"] if ratings else None
+        _def_keys = {'CF':'pot_cf','SS':'pot_ss','C':'pot_c','2B':'pot_second_b','3B':'pot_third_b'}
+        valuation["def_rating"] = rd.get(_def_keys.get(prospect_row[0], "")) or 0 if rd else 0
 
     # Contract
     contract = None
@@ -338,6 +340,7 @@ def get_player(pid):
 
     # Surplus breakdown
     surplus_detail = None
+    outcome_probs = None
     try:
         if valuation.get("type") == "MLB":
             import contract_value as _cv
@@ -355,28 +358,42 @@ def get_player(pid):
         elif valuation.get("type") == "prospect":
             import prospect_value as _pv
             fv = valuation.get("fv", 0)
-            pv = _pv.prospect_surplus(fv, age, valuation.get("level", level_str), valuation.get("bucket", ""),
-                                      ovr=valuation.get("ovr"), pot=valuation.get("pot"))
+            bucket_val = valuation.get("bucket", "")
+            level_val = valuation.get("level", level_str)
+            _dr = valuation.get("def_rating")
+            pv = _pv.prospect_surplus(fv, age, level_val, bucket_val,
+                                      ovr=valuation.get("ovr"), pot=valuation.get("pot"),
+                                      def_rating=_dr)
+            opt_total = _pv.prospect_surplus_with_option(
+                fv, age, level_val, bucket_val,
+                ovr=valuation.get("ovr"), pot=valuation.get("pot"),
+                def_rating=_dr)
             if pv and pv.get("breakdown"):
                 cert = pv.get("certainty_mult", 1.0)
                 scar = pv.get("scarcity_mult", 1.0)
                 combined = pv["dev_discount"] * cert * scar
                 raw_total = sum(b["market_value"] - b["salary"] for b in pv["breakdown"])
+                eta_yr = int(get_cfg().year + pv["years_to_mlb"])
                 surplus_detail = {
-                    "rows": [{"year": f"Ctrl {b['control_year']}", "age": b["player_age"],
+                    "rows": [{"year": eta_yr + b['control_year'] - 1, "age": b["player_age"],
                               "war": round(b["war"], 1),
                               "value": round(b["market_value"] / 1e6, 1),
                               "salary": round(b["salary"] / 1e6, 1),
                               "surplus": round((b["market_value"] - b["salary"]) / 1e6, 1)}
                              for b in pv["breakdown"]],
-                    "total": {"base": round(pv["total_surplus"] / 1e6, 1)},
+                    "total": {"base": round(opt_total / 1e6, 1)},
                     "flags": [f"ETA: {pv['years_to_mlb']:.1f} yrs"],
                     "discount_note": f"× {pv['dev_discount']:.0%} dev"
                                      + (f" × {scar:.2f} scarcity" if scar < 1.0 else "")
                                      + (f" × {cert:.2f} certainty" if cert != 1.0 else "")
-                                     + f" = ${pv['total_surplus']/1e6:.1f}M",
+                                     + f" = ${opt_total/1e6:.1f}M",
                     "raw_total": round(raw_total / 1e6, 1),
                 }
+            # Career outcome probabilities
+            outcome_probs = _pv.career_outcome_probs(
+                fv, age, level_val, bucket_val,
+                ovr=valuation.get("ovr"), pot=valuation.get("pot"),
+                def_rating=_dr)
     except Exception:
         pass
 
@@ -434,7 +451,7 @@ def get_player(pid):
         "ratings": ratings, "hit_ratings": hit_ratings, "valuation": valuation, "contract": contract,
         "bat_stats": bat_stats, "pit_stats": pit_stats, "summary": summary,
         "bat_splits": bat_splits, "pit_splits": pit_splits,
-        "surplus_detail": surplus_detail, "percentiles": percentiles,
+        "surplus_detail": surplus_detail, "outcome_probs": outcome_probs, "percentiles": percentiles,
         "pctile_splits": pctile_splits, "fielding_stats": fielding_stats,
         "fielding_pctiles": fielding_pctiles,
         "bat_percentiles": bat_percentiles, "bat_pctile_splits": bat_pctile_splits,

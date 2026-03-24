@@ -55,7 +55,7 @@ All other analysis scripts are read-only against the DB.
 | `roster_analysis.py` | 515 | Angels MLB roster scaffold — player cards, stat lines, contract info, surplus. |
 | `prospect_query.py` | 220 | League-wide prospect rankings and farm system comparisons. |
 | `contract_value.py` | 344 | MLB contract surplus/deficit with year-by-year projection. CLI + library. |
-| `prospect_value.py` | 240 | Prospect trade surplus with option value model. CLI + library. |
+| `prospect_value.py` | 290 | Prospect trade surplus with option value model + career outcome probabilities. CLI + library. |
 | `trade_calculator.py` | 200 | Trade package evaluation — surplus balance with sensitivity ranges. |
 | `standings.py` | 115 | League-wide standings — W/L, run differential, pythagorean expected record. |
 | `free_agents.py` | 105 | Upcoming free agent class — expiring contracts with surplus data. |
@@ -73,7 +73,8 @@ All other analysis scripts are read-only against the DB.
 |---|---|---|
 | `players` | `refresh.py` | All players across all orgs and levels |
 | `teams` | `refresh.py` | Team ID → name mapping (34 MLB orgs) |
-| `ratings` | `refresh.py` | Scouting ratings — my-team history preserved (`INSERT OR IGNORE`), others overwritten. Includes L/R splits, defensive tools (IFR/OFR/IFE/OFE/TDP), GB%, personality (Int/WrkEthic/Greed/Loy/Lead) |
+| `ratings` | `refresh.py` | Scouting ratings (latest snapshot only). Full 121 columns. Old snapshots pruned on refresh. |
+| `ratings_history` | `refresh.py` | Monthly in-game rating snapshots (53 cols). Ovr/pot, hitter/pitcher tools (cur+pot), all pitch types (cur+pot), extended ratings. ~1.3MB/snapshot. |
 | `contracts` | `refresh.py` | Active contracts league-wide |
 | `batting_stats` | `refresh.py` | MLB batting stats by player/year/split (32 cols, 2020-2033) |
 | `pitching_stats` | `refresh.py` | MLB pitching stats by player/year/split (52 cols, 2020-2033) |
@@ -81,16 +82,16 @@ All other analysis scripts are read-only against the DB.
 | `team_pitching_stats` | `refresh.py` | Team-level pitching aggregates (34 teams × 3 splits) |
 | `games` | `refresh.py` | Game results (23K+ games, 2024-2033). runs0=away, runs1=home |
 | `fielding_stats` | `refresh.py` | Player fielding stats by position (G, IP, TC, E, ZR, framing, arm) |
-| `prospect_fv` | `fv_calc.py` | FV grades for all non-MLB prospects, keyed by player+eval_date |
-| `player_surplus` | `fv_calc.py` | Surplus value for all MLB players, keyed by player+eval_date |
+| `prospect_fv` | `fv_calc.py` | FV grades for prospects and rookie-eligible MLB players (<130 AB, <50 IP, age ≤ 24). Cleared and rewritten each run. |
+| `player_surplus` | `fv_calc.py` | Surplus value for all MLB players. Cleared and rewritten each run. |
 
 ---
 
 ## Key Design Decisions
 
-**Two-tier ratings storage** — my-team org ratings use `INSERT OR IGNORE` (history preserved
-across snapshots). All other teams use `INSERT OR REPLACE` (current snapshot only). Demographics
-(height/bats/throws) are backfilled on existing rows via UPDATE.
+**Two-tier ratings storage** — `ratings` table keeps only the latest snapshot (all teams overwritten
+via `INSERT OR REPLACE`). `ratings_history` stores monthly in-game snapshots with slim columns
+for development tracking. Demographics (height/bats/throws) are backfilled on existing rows via UPDATE.
 
 **FV calculation** — `calc_fv()` in `player_utils.py`. Inputs: Ovr, Pot, age vs. level norm,
 bucket, work ethic, scouting accuracy. Key rules:

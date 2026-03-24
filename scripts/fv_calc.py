@@ -82,6 +82,14 @@ def run():
     bat_hist, pit_hist, two_way = load_stat_history(conn, game_date)
     _cv_hist = (bat_hist, pit_hist, two_way)
 
+    # Career service for rookie eligibility (130 AB / 50 IP)
+    _career_ab = dict(conn.execute(
+        "SELECT player_id, SUM(ab) FROM batting_stats WHERE split_id=1 GROUP BY player_id"
+    ).fetchall())
+    _career_ip = dict(conn.execute(
+        "SELECT player_id, SUM(ip) FROM pitching_stats WHERE split_id=1 GROUP BY player_id"
+    ).fetchall())
+
     rows = conn.execute(RATINGS_SQL).fetchall()
 
     prospect_rows = []
@@ -100,6 +108,10 @@ def run():
         bucket = assign_bucket(p)
         p["_bucket"] = bucket
 
+        # Defensive potential for position-adjusted scarcity
+        _DEF_KEY = {'CF':'PotCF','SS':'PotSS','C':'PotC','2B':'Pot2B','3B':'Pot3B'}
+        def_rating = p.get(_DEF_KEY.get(bucket)) or 0
+
         # Skip foreign/independent league players (not in MLB pipeline)
         if int(level) == 7:
             continue
@@ -115,6 +127,27 @@ def run():
                 ovr, ovr, str(ovr), surplus,
                 "MLB", p["team_id"], p["parent_team_id"]
             ))
+            # Rookie-eligible: <130 career AB AND <50 career IP, age ≤ 24
+            if age <= 24 and _career_ab.get(pid, 0) < 130 and _career_ip.get(pid, 0) < 50:
+                p["_norm_age"] = LEVEL_NORM_AGE["aaa"]
+                p["_level"] = "aaa"
+                fv_base, fv_plus = calc_fv(p)
+                fv_str = f"{fv_base}+" if fv_plus else str(fv_base)
+                if bucket == "RP":
+                    raw_pot = p["Pot"]
+                    p["_bucket"] = "SP"
+                    raw_fv, raw_plus = calc_fv(p)
+                    p["_bucket"] = bucket
+                else:
+                    raw_fv, raw_plus = fv_base, fv_plus
+                p_surplus = _prospect_surplus_opt(
+                    raw_fv, age, "MLB", bucket, fv_plus=raw_plus,
+                    ovr=p.get("Ovr"), pot=p.get("Pot"), def_rating=def_rating
+                )
+                prospect_rows.append((
+                    pid, game_date, fv_base, fv_str,
+                    "MLB", bucket, p_surplus
+                ))
         elif age <= 24:
             level_key = LEVEL_INT_KEY.get(int(level))
             if not level_key:
@@ -137,16 +170,17 @@ def run():
 
             surplus = _prospect_surplus_opt(
                 raw_fv, age, level_label, bucket, fv_plus=raw_plus,
-                ovr=p.get("Ovr"), pot=p.get("Pot")
+                ovr=p.get("Ovr"), pot=p.get("Pot"), def_rating=def_rating
             )
             prospect_rows.append((
                 pid, game_date, fv_base, fv_str,
                 level_label, bucket, surplus
             ))
 
-    conn.execute("DELETE FROM prospect_fv WHERE eval_date = ?", (game_date,))
-    conn.executemany("INSERT OR REPLACE INTO prospect_fv VALUES (?,?,?,?,?,?,?)", prospect_rows)
-    conn.executemany("INSERT OR REPLACE INTO player_surplus VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", surplus_rows)
+    conn.execute("DELETE FROM prospect_fv")
+    conn.execute("DELETE FROM player_surplus")
+    conn.executemany("INSERT INTO prospect_fv VALUES (?,?,?,?,?,?,?)", prospect_rows)
+    conn.executemany("INSERT INTO player_surplus VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", surplus_rows)
     conn.commit()
     conn.close()
 

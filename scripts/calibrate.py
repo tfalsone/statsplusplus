@@ -320,12 +320,15 @@ def _calibrate_arb_pct(conn, game_year, dpw):
 # ---------------------------------------------------------------------------
 
 def _calibrate_scarcity(conn, game_date):
-    """Compute FA availability rate by Pot band. Mid-season only.
+    """Compute scarcity multiplier by Pot band. Mid-season only.
     
-    Groups Pot into 2-point bands to smooth noise, then builds a monotonic
-    scarcity curve. Uses a threshold approach: players with FA rates above
-    ~5% are considered "available" (low scarcity), those below ~1% are
-    "scarce" (high scarcity). The curve transitions between these zones.
+    Measures how concentrated talent is at each Pot level among rostered
+    players (team_id > 0). Uses the fraction of rostered players at each
+    Pot who are NOT on MLB rosters as a proxy for availability — low-Pot
+    talent is abundant in the minors, high-Pot talent gets absorbed into MLB.
+    
+    Compares each band's non-MLB rate to the baseline (Pot 38-42) and maps
+    through a sigmoid. Adapts to leagues with different roster structures.
     Returns None during offseason.
     """
     game_month = int(game_date[5:7])
@@ -335,11 +338,11 @@ def _calibrate_scarcity(conn, game_date):
 
     rows = conn.execute("""
         SELECT r.pot,
-               SUM(CASE WHEN p.level = 0 AND p.age BETWEEN 18 AND 32 THEN 1 ELSE 0 END) as fa,
+               SUM(CASE WHEN p.level != 1 THEN 1 ELSE 0 END) as non_mlb,
                COUNT(*) as total
         FROM latest_ratings r
         JOIN players p ON r.player_id = p.player_id
-        WHERE r.pot >= 38 AND p.age BETWEEN 18 AND 32
+        WHERE r.pot >= 38 AND p.team_id > 0 AND p.age BETWEEN 18 AND 32
         GROUP BY r.pot ORDER BY r.pot
     """).fetchall()
 
@@ -350,37 +353,36 @@ def _calibrate_scarcity(conn, game_date):
     bands = defaultdict(lambda: [0, 0])
     for r in rows:
         center = (r["pot"] // 2) * 2
-        bands[center][0] += r["fa"]
+        bands[center][0] += r["non_mlb"]
         bands[center][1] += r["total"]
 
-    fa_rates = {}
+    avail_rates = {}
     for center in sorted(bands.keys()):
-        fa, total = bands[center]
+        non_mlb, total = bands[center]
         if total >= 15:
-            fa_rates[center] = fa / total
+            avail_rates[center] = non_mlb / total
 
-    if not fa_rates:
+    if not avail_rates:
         return None
 
-    # Map FA rate to scarcity using a sigmoid-like curve:
-    # FA rate >= 10% → scarcity 0.0 (freely available)
-    # FA rate ~5% → scarcity ~0.3
-    # FA rate ~2% → scarcity ~0.7
-    # FA rate ~0.5% → scarcity ~0.9
-    # FA rate 0% → scarcity 1.0
+    # Baseline: average non-MLB rate at Pot 38-42 (abundant talent)
+    baseline_pts = [v for k, v in avail_rates.items() if k <= 42]
+    baseline = sum(baseline_pts) / len(baseline_pts) if baseline_pts else 0.95
+
+    # Map ratio-to-baseline through a sigmoid:
+    # ratio ~1.0 (as available as low-Pot talent) → scarcity 0.0
+    # ratio ~0.65 → scarcity ~0.5
+    # ratio ~0.3 → scarcity ~0.95
     import math
-    def _rate_to_scarcity(rate):
-        if rate <= 0:
+    def _ratio_to_scarcity(ratio):
+        if ratio <= 0:
             return 1.0
-        if rate >= 0.12:
-            return 0.0
-        # Sigmoid: scarcity = 1 / (1 + exp(k * (rate - midpoint)))
-        # Tuned so 5% → ~0.35, 2% → ~0.75, 0.5% → ~0.95
-        return max(0.0, min(1.0, 1.0 / (1.0 + math.exp(120 * (rate - 0.035)))))
+        return max(0.0, min(1.0, 1.0 / (1.0 + math.exp(10 * (ratio - 0.65)))))
 
     raw = {}
-    for pot in sorted(fa_rates.keys()):
-        raw[pot] = round(_rate_to_scarcity(fa_rates[pot]), 2)
+    for pot in sorted(avail_rates.keys()):
+        ratio = avail_rates[pot] / baseline if baseline > 0 else 0
+        raw[pot] = round(_ratio_to_scarcity(ratio), 2)
 
     # Enforce monotonic non-decreasing
     pts = sorted(raw.keys())

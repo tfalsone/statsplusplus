@@ -5,7 +5,7 @@ Used by scripts (CLI) and web (Flask) to find the right data/<league>/ path.
 Web layer overrides via Flask `g`; scripts use the default resolution.
 """
 
-import json
+import json, os
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -23,8 +23,7 @@ def _read_app_config() -> dict:
 
 
 def get_active_league_slug() -> str:
-    cfg = _read_app_config()
-    return cfg.get("active_league", "emlb")
+    return os.environ.get("STATSPP_LEAGUE") or _read_app_config().get("active_league", "emlb")
 
 
 def get_league_dir(slug: str | None = None) -> Path:

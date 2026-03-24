@@ -31,11 +31,11 @@ def get_summary(team_id=None):
         "SELECT COALESCE(SUM(surplus),0) FROM player_surplus WHERE eval_date=? AND team_id=?",
         (ed, tid)).fetchone()[0]
     farm_surplus = conn.execute(
-        "SELECT COALESCE(SUM(prospect_surplus),0) FROM prospect_fv pf JOIN players p ON pf.player_id=p.player_id WHERE pf.eval_date=? AND p.parent_team_id=? AND p.level!='1'",
-        (ed, tid)).fetchone()[0]
+        "SELECT COALESCE(SUM(prospect_surplus),0) FROM prospect_fv pf JOIN players p ON pf.player_id=p.player_id WHERE pf.eval_date=? AND (p.parent_team_id=? OR (p.team_id=? AND p.level='1'))",
+        (ed, tid, tid)).fetchone()[0]
     fv50 = conn.execute(
-        "SELECT COUNT(*) FROM prospect_fv pf JOIN players p ON pf.player_id=p.player_id WHERE pf.eval_date=? AND p.parent_team_id=? AND p.level!='1' AND pf.fv>=50",
-        (ed, tid)).fetchone()[0]
+        "SELECT COUNT(*) FROM prospect_fv pf JOIN players p ON pf.player_id=p.player_id WHERE pf.eval_date=? AND (p.parent_team_id=? OR (p.team_id=? AND p.level='1')) AND pf.fv>=50",
+        (ed, tid, tid)).fetchone()[0]
     return {
         "game_date": state["game_date"], "year": year,
         "mlb_surplus": round(mlb_surplus / 1e6, 1),
@@ -68,10 +68,10 @@ def get_power_rankings():
         "SELECT team_id, SUM(surplus) FROM player_surplus WHERE eval_date=? GROUP BY team_id",
         (ed,)).fetchall())
     farm_map = dict(conn.execute("""
-        SELECT p.parent_team_id, SUM(pf.prospect_surplus)
+        SELECT COALESCE(NULLIF(p.parent_team_id,0), p.team_id), SUM(pf.prospect_surplus)
         FROM prospect_fv pf JOIN players p ON pf.player_id=p.player_id
-        WHERE pf.eval_date=? AND pf.level != 'MLB'
-        GROUP BY p.parent_team_id
+        WHERE pf.eval_date=?
+        GROUP BY COALESCE(NULLIF(p.parent_team_id,0), p.team_id)
     """, (ed,)).fetchall())
 
     # Last-10 record and streak
@@ -470,9 +470,9 @@ def get_farm(team_id=None):
         SELECT p.name, p.age, p.level, pf.fv, pf.fv_str, pf.bucket, pf.prospect_surplus, p.player_id, p.pos
         FROM prospect_fv pf
         JOIN players p ON pf.player_id=p.player_id
-        WHERE pf.eval_date=? AND p.parent_team_id=? AND p.level!='1'
+        WHERE pf.eval_date=? AND (p.parent_team_id=? OR (p.team_id=? AND p.level='1'))
         ORDER BY pf.fv DESC, p.age ASC
-    """, (ed, tid)).fetchall()
+    """, (ed, tid, tid)).fetchall()
 
     def sort_key(r):
         fv_val = r[3] + (0.1 if r[4].endswith("+") else 0)
@@ -799,9 +799,9 @@ def get_age_distribution(team_id):
     """, (year, year)).fetchall()
 
     all_farm = conn.execute("""
-        SELECT p.parent_team_id, p.age FROM prospect_fv pf
+        SELECT COALESCE(NULLIF(p.parent_team_id,0), p.team_id), p.age FROM prospect_fv pf
         JOIN players p ON pf.player_id = p.player_id
-        WHERE pf.eval_date=? AND p.level!='1' AND pf.fv >= 40
+        WHERE pf.eval_date=? AND pf.fv >= 40
     """, (ed,)).fetchall()
 
     def league_avg_pcts(rows, breaks, tid_idx):
@@ -1038,23 +1038,23 @@ def get_farm_depth(team_id):
     by_bucket = conn.execute("""
         SELECT pf.bucket, COUNT(*), COALESCE(SUM(pf.prospect_surplus), 0)
         FROM prospect_fv pf JOIN players p ON pf.player_id = p.player_id
-        WHERE pf.eval_date=? AND p.parent_team_id=? AND p.level!='1' AND pf.fv >= 40
+        WHERE pf.eval_date=? AND (p.parent_team_id=? OR (p.team_id=? AND p.level='1')) AND pf.fv >= 40
         GROUP BY pf.bucket
-    """, (ed, team_id)).fetchall()
+    """, (ed, team_id, team_id)).fetchall()
 
     by_level = conn.execute("""
         SELECT pf.level, COUNT(*)
         FROM prospect_fv pf JOIN players p ON pf.player_id = p.player_id
-        WHERE pf.eval_date=? AND p.parent_team_id=? AND p.level!='1' AND pf.fv >= 40
+        WHERE pf.eval_date=? AND (p.parent_team_id=? OR (p.team_id=? AND p.level='1')) AND pf.fv >= 40
         GROUP BY pf.level
-    """, (ed, team_id)).fetchall()
+    """, (ed, team_id, team_id)).fetchall()
 
     mlb_tids = mlb_team_ids()
     lg = conn.execute("""
-        SELECT p.parent_team_id, SUM(pf.prospect_surplus)
+        SELECT COALESCE(NULLIF(p.parent_team_id,0), p.team_id), SUM(pf.prospect_surplus)
         FROM prospect_fv pf JOIN players p ON pf.player_id = p.player_id
-        WHERE pf.eval_date=? AND p.level!='1'
-        GROUP BY p.parent_team_id
+        WHERE pf.eval_date=?
+        GROUP BY COALESCE(NULLIF(p.parent_team_id,0), p.team_id)
     """, (ed,)).fetchall()
 
     lg_vals = sorted([s for tid, s in lg if s and tid in mlb_tids], reverse=True)

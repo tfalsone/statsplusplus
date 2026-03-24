@@ -441,7 +441,7 @@ def get_fielding_percentiles(pid):
     # Player's positions and ratings this year
     player_rows = conn.execute(
         "SELECT f.position, f.g, f.ip, f.tc, f.a, f.po, f.e, f.zr, f.framing, f.arm, "
-        "       r.ifr, r.ofr, r.ife, r.ofe, r.c_arm, r.c_blk, r.c_frm "
+        "       r.ifr, r.ofr, r.ife, r.ofe, r.c_arm, r.c_blk, r.c_frm, r.ifa "
         "FROM fielding_stats f "
         "JOIN latest_ratings r ON f.player_id = r.player_id "
         "WHERE f.player_id=? AND f.year=? AND f.position > 1",
@@ -452,7 +452,7 @@ def get_fielding_percentiles(pid):
 
     results = []
     for prow in player_rows:
-        pos, g, ip, tc, a, po, e, zr, framing, arm, ifr, ofr, ife, ofe, c_arm, c_blk, c_frm = prow
+        pos, g, ip, tc, a, po, e, zr, framing, arm, ifr, ofr, ife, ofe, c_arm, c_blk, c_frm, ifa = prow
         if g == 0:
             continue
         fpct = (po + a) / tc if tc else 0
@@ -462,7 +462,7 @@ def get_fielding_percentiles(pid):
         # Build pool with ratings for expected percentiles
         pool_rows = conn.execute(
             "SELECT f.player_id, f.ip, f.tc, f.a, f.po, f.e, f.zr, f.framing, f.arm, "
-            "       r.ifr, r.ofr, r.ife, r.ofe, r.c_arm, r.c_blk, r.c_frm "
+            "       r.ifr, r.ofr, r.ife, r.ofe, r.c_arm, r.c_blk, r.c_frm, r.ifa "
             "FROM fielding_stats f "
             "JOIN latest_ratings r ON f.player_id = r.player_id "
             "WHERE f.year=? AND f.position=? AND f.ip>=? "
@@ -473,9 +473,9 @@ def get_fielding_percentiles(pid):
             continue
 
         # Rating composites by position for ZR expected
-        def _zr_composite(r_ifr, r_ofr, r_ife, r_ofe, r_c_arm, r_c_blk):
-            if pos in (3, 4, 5, 6):  # infielders: range 70%, error 30%
-                return (r_ifr or 0) * 0.7 + (r_ife or 0) * 0.3
+        def _zr_composite(r_ifr, r_ofr, r_ife, r_ofe, r_c_arm, r_c_blk, r_ifa=0):
+            if pos in (3, 4, 5, 6):  # infielders: range, error, arm
+                return (r_ifr or 0) * 0.5 + (r_ife or 0) * 0.25 + (r_ifa or 0) * 0.25
             elif pos in (7, 8, 9):   # outfielders: range dominant
                 return (r_ofr or 0)
             elif pos == 2:           # catchers: range + arm + blocking
@@ -487,12 +487,12 @@ def get_fielding_percentiles(pid):
 
         pool_fpct = [(r[3] + r[4]) / r[2] if r[2] else 0 for r in pool_rows]
         pool_zr = [r[6] for r in pool_rows if r[6] is not None]
-        pool_zr_comp = [_zr_composite(r[9], r[10], r[11], r[12], r[13], r[14]) for r in pool_rows if r[6] is not None]
+        pool_zr_comp = [_zr_composite(r[9], r[10], r[11], r[12], r[13], r[14], r[16]) for r in pool_rows if r[6] is not None]
         pool_arm = [r[8] for r in pool_rows if r[8] is not None]
         pool_framing = [r[7] for r in pool_rows if r[7] is not None]
         pool_frm_comp = [_framing_composite(r[15], r[14]) for r in pool_rows if r[7] is not None]
 
-        player_zr_comp = _zr_composite(ifr, ofr, ife, ofe, c_arm, c_blk)
+        player_zr_comp = _zr_composite(ifr, ofr, ife, ofe, c_arm, c_blk, ifa)
         player_frm_comp = _framing_composite(c_frm, c_blk)
 
         def _stat_entry(label, value, pool_vals, fmt, rating_comp=None, pool_comps=None):

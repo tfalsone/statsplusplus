@@ -67,14 +67,17 @@ def value_player(spec):
     conn = _db.get_conn()
     row = conn.execute("SELECT name, age FROM players WHERE player_id=?", (pid,)).fetchone()
     name = row["name"] if row else str(pid)
-    rr = conn.execute("SELECT ovr, pot FROM ratings WHERE player_id=? ORDER BY snapshot_date DESC LIMIT 1", (pid,)).fetchone()
+    rr = conn.execute("SELECT ovr, pot, pot_cf, pot_ss, pot_c, pot_second_b, pot_third_b FROM ratings WHERE player_id=? ORDER BY snapshot_date DESC LIMIT 1", (pid,)).fetchone()
     conn.close()
     ovr = rr["ovr"] if rr else None
     pot = rr["pot"] if rr else None
+    _def_keys = {'CF':'pot_cf','SS':'pot_ss','C':'pot_c','2B':'pot_second_b','3B':'pot_third_b'}
+    def_rating = rr[_def_keys[bucket]] if rr and bucket in _def_keys else None
 
     SENSITIVITY = {"pessimistic": 0.85, "base": 1.00, "optimistic": 1.15}
     base_surplus = prospect_surplus_with_option(fv_int, age, level, bucket,
-                                                 ovr=ovr, pot=pot, fv_plus=fv_plus)
+                                                 ovr=ovr, pot=pot, fv_plus=fv_plus,
+                                                 def_rating=def_rating)
     total_surplus = {s: max(0, round(base_surplus * mult)) for s, mult in SENSITIVITY.items()}
 
     fv_display = f"{fv_int}+" if fv_plus else str(fv_int)

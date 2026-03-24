@@ -156,6 +156,60 @@ def _upsert_ratings(conn, ratings, snapshot_date, keep_history=True):
             [tuple(r.get(api) for _, api in _EXT_COLS) + (r["ID"],) for r in ratings]
         )
 
+def _snapshot_ratings_history(conn, ratings, snapshot_date):
+    """Append a monthly snapshot to ratings_history (one per in-game month)."""
+    if not ratings:
+        return
+    # Check if this month already has a snapshot
+    month = snapshot_date[:7]  # "YYYY-MM"
+    existing = conn.execute(
+        "SELECT 1 FROM ratings_history WHERE snapshot_date LIKE ? LIMIT 1",
+        (month + "%",)
+    ).fetchone()
+    if existing:
+        return
+
+    _HIST_COLS = (
+        "player_id", "snapshot_date", "ovr", "pot",
+        "cntct", "gap", "pow", "eye", "ks", "speed", "stm",
+        "stf", "mov", "ctrl",
+        "fst", "snk", "crv", "sld", "chg", "splt", "cutt", "cir_chg", "scr", "frk", "kncrv", "knbl",
+        "pot_cntct", "pot_gap", "pot_pow", "pot_eye", "pot_ks",
+        "pot_stf", "pot_mov", "pot_ctrl",
+        "pot_fst", "pot_snk", "pot_crv", "pot_sld", "pot_chg", "pot_splt", "pot_cutt",
+        "pot_cir_chg", "pot_scr", "pot_frk", "pot_kncrv", "pot_knbl",
+        "babip", "hra", "pbabip", "pot_babip", "pot_hra", "pot_pbabip", "prone",
+    )
+    _API_KEYS = (
+        "ID", None, "Ovr", "Pot",
+        "Cntct", "Gap", "Pow", "Eye", "Ks", "Speed", "Stm",
+        "Stf", "Mov", "Ctrl",
+        "Fst", "Snk", "Crv", "Sld", "Chg", "Splt", "Cutt", "CirChg", "Scr", "Frk", "Kncrv", "Knbl",
+        "PotCntct", "PotGap", "PotPow", "PotEye", "PotKs",
+        "PotStf", "PotMov", "PotCtrl",
+        "PotFst", "PotSnk", "PotCrv", "PotSld", "PotChg", "PotSplt", "PotCutt",
+        "PotCirChg", "PotScr", "PotFrk", "PotKncrv", "PotKnbl",
+        "BABIP", "HRA", "PBABIP", "PotBABIP", "PotHRA", "PotPBABIP", "Prone",
+    )
+
+    def row(r):
+        vals = []
+        for key in _API_KEYS:
+            if key is None:
+                vals.append(snapshot_date)
+            else:
+                vals.append(r.get(key))
+        return tuple(vals)
+
+    col_list = ",".join(_HIST_COLS)
+    placeholders = ",".join(["?"] * len(_HIST_COLS))
+    conn.executemany(
+        f"INSERT OR IGNORE INTO ratings_history ({col_list}) VALUES ({placeholders})",
+        [row(r) for r in ratings]
+    )
+    log.info(f"  ratings_history: saved {len(ratings)} rows for {snapshot_date}")
+
+
 def _upsert_contracts(conn, contracts):
     def row(c):
         return (
@@ -607,8 +661,11 @@ def refresh_league(year):
     my_ids = {p["ID"] for p in players if p.get("Team ID") == org_id or p.get("Parent Team ID") == org_id}
     my_ratings    = [r for r in all_ratings if r["ID"] in my_ids]
     other_ratings = [r for r in all_ratings if r["ID"] not in my_ids]
-    _upsert_ratings(conn, my_ratings,    snapshot_date, keep_history=True)
+    _upsert_ratings(conn, my_ratings,    snapshot_date, keep_history=False)
     _upsert_ratings(conn, other_ratings, snapshot_date, keep_history=False)
+    _snapshot_ratings_history(conn, all_ratings, snapshot_date)
+    # Prune old ratings snapshots — history table handles archival
+    conn.execute("DELETE FROM ratings WHERE snapshot_date != ?", (snapshot_date,))
 
     # Fix intl complex players: API reports level=1 but league_id is negative
     intl_ids = [r["ID"] for r in all_ratings if (r.get("League") or 0) < 0]

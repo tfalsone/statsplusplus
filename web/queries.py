@@ -81,13 +81,14 @@ def get_top_prospects(n=100):
     _po = pos_order()
     mlb_tids = mlb_team_ids()
     rows = conn.execute("""
-        SELECT p.name, p.age, p.parent_team_id, pf.fv, pf.fv_str, pf.bucket,
+        SELECT p.name, p.age, COALESCE(NULLIF(p.parent_team_id,0), p.team_id) as org_id,
+               pf.fv, pf.fv_str, pf.bucket,
                pf.level, pf.prospect_surplus, p.pos, p.player_id,
                r.height, r.bats, r.throws, r.ovr, r.pot
         FROM prospect_fv pf
         JOIN players p ON pf.player_id=p.player_id
         LEFT JOIN latest_ratings r ON pf.player_id=r.player_id
-        WHERE pf.eval_date=? AND pf.level != 'MLB'
+        WHERE pf.eval_date=?
     """, (ed,)).fetchall()
 
     rows = [r for r in rows if r[2] in mlb_tids]
@@ -226,13 +227,14 @@ def get_all_prospects():
     _po = pos_order()
     mlb_tids = mlb_team_ids()
     rows = conn.execute("""
-        SELECT p.name, p.age, p.parent_team_id, pf.fv, pf.fv_str, pf.bucket,
+        SELECT p.name, p.age, COALESCE(NULLIF(p.parent_team_id,0), p.team_id) as org_id,
+               pf.fv, pf.fv_str, pf.bucket,
                pf.level, pf.prospect_surplus, p.pos, p.player_id,
                r.height, r.bats, r.throws, r.ovr, r.pot
         FROM prospect_fv pf
         JOIN players p ON pf.player_id=p.player_id
         LEFT JOIN latest_ratings r ON pf.player_id=r.player_id
-        WHERE pf.eval_date=? AND pf.level != 'MLB' AND pf.fv >= 40
+        WHERE pf.eval_date=? AND pf.fv >= 40
     """, (ed,)).fetchall()
 
     rows = [r for r in rows if r[2] in mlb_tids]

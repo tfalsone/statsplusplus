@@ -4,6 +4,72 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 35 (2026-03-23)
+
+### Career Outcome Probability Chart
+- New panel on prospect pages showing cumulative probability of reaching each WAR/season tier.
+- **Model**: Reuses FV option value scenarios (base/mid/ceiling) with logistic CDF for within-scenario variance. Smooth elite compression via sigmoid centered at 3 WAR — no hard cutoff. Development discount scales all probabilities by bust risk.
+- **Chart**: 0.125 WAR increments (40 bars) as a smooth waterfall. Mid-50% zone highlighted in brighter blue, tails in darker blue. Position average WAR bar highlighted in gold. WAR labels at whole numbers only.
+- **Threshold summary**: Contributor (1 WAR), Regular (2 WAR), All-Star (3 WAR) probabilities shown above chart.
+- **Most likely outcome**: Text callout showing the WAR range of the middle 50% by area.
+- **Confidence meter**: Green fill bar based on level proximity and Ovr/Pot realization.
+- Shows on prospect pages (below surplus panel) and in the Contract tab for rookie-eligible MLB players.
+- **Files**: `scripts/prospect_value.py` (`career_outcome_probs()`), `web/player_queries.py`, `web/templates/player.html` (`outcome_panel` macro), `web/static/style.css`.
+
+### Session 34 Documentation
+- Added Session 34 changelog entry covering all prior session changes (scarcity fix, position-adjusted scarcity, rookie-eligible prospects, ratings_history, visual polish, bug fixes).
+- Updated `task_list.md` — marked scarcity curve refinement and rookie-eligible as done.
+- Updated `docs/system_overview.md` — ratings_history table, updated ratings/prospect_fv/player_surplus descriptions, ratings storage design decision.
+- Updated `docs/valuation_model.md` — position-adjusted scarcity documentation.
+- Updated `STRUCTURE.md` — added ratings_history table.
+
+---
+
+## Session 34 (2026-03-23)
+
+### Scarcity Calibration Fix
+- **Cross-league scarcity fix** — Sigmoid midpoint changed from 0.35 to 0.65 in `calibrate.py` `_ratio_to_scarcity()`. Both leagues now produce reasonable curves (Pot 46: 0.22-0.29, Pot 50: 0.60-0.72, Pot 70: 0.94). VMLB scarcity also corrected — Pot 46 went from 0.98 to 0.22.
+
+### Position-Adjusted Scarcity
+- **Positional Pot shift** — `prospect_value.py` `_scarcity_mult()` now applies a position-based shift to the effective Pot before scarcity lookup. SS: +4, CF: +2, SP: +2, C: +1, 2B: +1, 3B: +1, COF: -2, RP: -2, 1B: -3.
+- **Defense-scaled shifts** — For CF/SS/C/2B/3B, the shift scales with defensive potential rating. Full shift at PotDef ≥ 70, linear 50-70, zero below 50. An elite defensive CF (PotCF 87) gets the full +2 bump; a bat-first CF (PotCF 40) gets none.
+- `fv_calc.py`, `trade_calculator.py`, and `player_queries.py` all pass `def_rating` through to the surplus calculation.
+- Pot 45 positional ordering: SS ($12.2M) > CF ($8.4M) > SP ($8.2M) > 3B ($5.7M) > 2B ($3.2M) > C ($2.5M) > 1B ($1.2M) > COF ($1.1M) > RP ($0.8M).
+
+### Rookie-Eligible MLB Players in Prospect Rankings
+- MLB players with <130 career AB AND <50 career IP AND age ≤ 24 now appear in `prospect_fv` with level "MLB". Uses MLB rookie eligibility thresholds.
+- Players appear in both `prospect_fv` (for rankings) and `player_surplus` (for trade calc).
+- FV computed using AAA norm age, dev discount 1.0, years_to_MLB 0.
+- Web queries updated: `queries.py` and `team_queries.py` use `COALESCE(NULLIF(parent_team_id,0), team_id)` to resolve org for MLB-level prospects.
+- eMLB: 89 rookie-eligible added (e.g., Loki Swayman FV 75 #1 overall, Yamamoto FV 70 #11). VMLB: 86 added.
+
+### Ratings History Table
+- New `ratings_history` table (53 columns vs 121 in `ratings`) for monthly in-game snapshots. Stores ovr/pot, hitter tools (current+potential), pitcher tools (current+potential), all 12 pitch types (current+potential), extended ratings (babip/hra/pbabip) when available.
+- ~1.3MB per snapshot vs ~3.5MB for full ratings (~38% the size).
+- `refresh.py` appends snapshot on first refresh of each in-game month. `ratings` table now keeps only the latest snapshot (old snapshots pruned on refresh).
+- Seeded both leagues from current data. VMLB reclaimed 4.2MB after vacuum.
+
+### Data Integrity Fixes
+- **Duplicate prospect_fv/player_surplus rows** — `fv_calc.py` now does `DELETE FROM prospect_fv` and `DELETE FROM player_surplus` (was date-scoped, leaving stale rows from prior eval dates).
+- **STATSPP_LEAGUE env var** — `league_context.py` now checks `os.environ["STATSPP_LEAGUE"]` before `app_config.json`. Enables `STATSPP_LEAGUE=vmlb python3 scripts/calibrate.py` without editing config.
+
+### Player Page Visual Refresh
+- **Segmented rating bars** — `::after` overlay on grade tracks with dividers aligned to 20-80 scouting scale (every 16.667%). Bold current rating, faded potential in label chips.
+- **Character pill badges** — colored pills instead of plain text (green=Very High, blue=High, orange=Low, red=Very Low).
+- **WAR heat-map** in surplus projection table — 4.0+ bright blue, 2.0-3.0 white, below dim.
+- **Panel headers** — accent-colored (gold) bottom border.
+- **Surplus projection improvements** — Raw Total + Adjusted breakdown for prospects, plain Total for MLB. Discount formula moved to ⓘ tooltip. Projected calendar years instead of "Ctrl 1/2/3". Option value included in total (matches card value).
+- **Section spacing** — 16px gaps between Running, Positions, Pitches sections.
+
+### Bug Fixes
+- **Prospect highlight on even rows** — `tr.highlight` was overridden by `tr:nth-child(even)` background. Fixed with `tr.highlight:nth-child(even)` selector.
+- **Highlight suppressed for single-team views** — no highlighting when filtered to one team in top 100 or by-team view.
+- **1B/3B missing TDP rating** — turn double play fielding rating now shown for all infield positions (was only 2B/SS).
+- **Infielder ZR composite** — added arm rating (25% weight) alongside range (50%) and error (25%). Fixes low expected ZR for strong-armed infielders like Tom Shuey (IFA 97).
+- **MLB level pill/dots** — added gold/amber `lvl-mlb` CSS class and 5 filled dots for MLB-level prospects on league page.
+
+---
+
 ## Session 33 (2026-03-23)
 
 ### Top 100 Prospect Model Tuning
@@ -31,6 +97,7 @@ Key prospect movement: Ricky Sanchez (A 1B, 18, Pot 80) #29→#4, Honor Lara (A 
 ### Bug Fixes
 - **Refresh button race condition** — Navigating during a refresh showed the green ✓ badge instead of the spinner. Root cause: `/api/game-date` and `/refresh/status` fired in parallel on page load; the game-date response overwrote the spinner because `state.json` updates early in the pipeline. Fix: added `refreshRunning` flag, sequenced the checks so sync badge only renders when no refresh is active.
 - **Cross-league stale date indicator** — After switching leagues, the refresh button showed stale (!) because `/api/game-date` was still querying the previous league's StatsPlus API. The client retained the old league's slug. Fix: `api_game_date` now configures the client with the current league's `statsplus_slug` before each call.
+- **Scarcity calibration broken for eMLB** — Old scarcity model counted unsigned amateur pool (team_id=0, level=0) as "free agents." VMLB worked by accident (few high-Pot unsigned players); eMLB had 30K+ unsigned players inflating FA rates at every Pot level, zeroing out scarcity for everything below Pot 62. Fix: switched to measuring non-MLB rate among rostered players (team_id > 0) relative to baseline (Pot 38-42). Sigmoid midpoint at 0.65 ratio. Both leagues now produce similar, reasonable curves (Pot 46: 0.22-0.29, Pot 50: 0.60-0.72, Pot 70: 0.94). VMLB scarcity also changed — Pot 46 went from 0.98 to 0.22, which is more realistic.
 
 ---
 

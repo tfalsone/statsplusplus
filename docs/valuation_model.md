@@ -111,6 +111,10 @@ get called up to MLB.
   players (Pot 40-44) are freely available on waivers and minor league free agency,
   so their theoretical surplus has no real trade value. Calibrated from actual
   free agent availability data in the league (sigmoid mapping, monotonic).
+  Position-adjusted: premium positions get a Pot shift before scarcity lookup
+  (SS: +4, CF: +2, SP: +2, C/2B/3B: +1, COF/RP: -2, 1B: -3). For defense-dependent
+  positions (CF/SS/C/2B/3B), the shift scales with defensive potential rating
+  (full at 70+, linear 50-70, zero below 50).
 
 **Step 5 — Option value.** The model computes upside scenarios: what if the player
 develops beyond their current FV? It blends base, mid-ceiling, and full-ceiling

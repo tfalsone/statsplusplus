@@ -263,13 +263,13 @@ function renderHead() {
     COLS[currentMode].map(c => LEFT_COLS.has(c) ? `<th class="left">${c}</th>` : `<th>${c}</th>`).join('') + '</tr>';
 }
 
-function renderProspects(list, maxRows) {
+function renderProspects(list, maxRows, singleTeam) {
   const rows = maxRows ? list.slice(0, maxRows) : list;
   const mode = currentMode;
   const useOrigRank = mode === 'top100';
   const maxSurplus = Math.max(...rows.map(p => p.surplus || 0), 1);
   document.getElementById('prospect-tbody').innerHTML = rows.map((p, i) => {
-    const hl = (mode === 'top100' && p.team === MY_ABBR) ? ' class="highlight"' : '';
+    const hl = (!singleTeam && p.team === MY_ABBR) ? ' class="highlight"' : '';
     const rank = useOrigRank && p.rank ? p.rank : i + 1;
     const dots = levelDots(p.level);
     const etaCls = (p.eta == CURRENT_YEAR) ? 'eta-now' : (p.eta >= CURRENT_YEAR + 2) ? 'eta-far' : '';
@@ -287,7 +287,7 @@ function renderProspects(list, maxRows) {
   }).join('');
 }
 
-const LEVEL_DOTS = {AAA:4, AA:3, A:2, 'A-Short':2, Rookie:1, USL:1, DSL:1, Intl:1};
+const LEVEL_DOTS = {MLB:5, AAA:4, AA:3, A:2, 'A-Short':2, Rookie:1, USL:1, DSL:1, Intl:1};
 function levelDots(level) {
   const filled = LEVEL_DOTS[level] || 1;
   let s = '';
@@ -308,7 +308,7 @@ function fvBadge(fv, fvStr) {
 }
 
 function lvlBadge(level) {
-  const cls = level === 'AAA' ? 'lvl-aaa' : level === 'AA' ? 'lvl-aa' : (level === 'A' || level === 'A-Short') ? 'lvl-a' : 'lvl-low';
+  const cls = level === 'MLB' ? 'lvl-mlb' : level === 'AAA' ? 'lvl-aaa' : level === 'AA' ? 'lvl-aa' : (level === 'A' || level === 'A-Short') ? 'lvl-a' : 'lvl-low';
   return `<span class="lvl-badge ${cls}">${level}</span>`;
 }
 
@@ -342,7 +342,7 @@ selTeam.addEventListener('change', () => {
   selPos.selectedIndex = 0;
   top100FilterWrap.style.display = 'none';
   renderHead();
-  renderProspects(ALL_PROSPECTS.filter(p => p.team === selTeam.value), 30);
+  renderProspects(ALL_PROSPECTS.filter(p => p.team === selTeam.value), 30, true);
 });
 
 // Position select
@@ -368,7 +368,7 @@ function applyTop100Filters() {
   let list = TOP100;
   if (team) list = list.filter(p => p.team === team);
   if (query) list = list.filter(p => p.name.toLowerCase().includes(query));
-  renderProspects(list, 100);
+  renderProspects(list, 100, !!team);
 }
 
 // Init

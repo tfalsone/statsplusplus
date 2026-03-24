@@ -80,7 +80,8 @@ statsplusplus/
 |---|---|---|
 | `players` | `refresh.py` | All players across all orgs and levels |
 | `teams` | `refresh.py` | Team ID → name, level, parent org, league |
-| `ratings` | `refresh.py` | Scouting ratings (121 cols). Overall + L/R splits for batting and pitching tools, defensive grades, character traits, demographics. Extended ratings (BABIP, HRA, PBABIP, Prone) populated when the league's OOTP version provides them. PK: `(player_id, snapshot_date)` for history tracking. |
+| `ratings` | `refresh.py` | Scouting ratings (121 cols, latest snapshot only). Overall + L/R splits for batting and pitching tools, defensive grades, character traits, demographics. Extended ratings (BABIP, HRA, PBABIP, Prone) populated when the league's OOTP version provides them. PK: `(player_id, snapshot_date)`. |
+| `ratings_history` | `refresh.py` | Monthly in-game rating snapshots (53 cols). Ovr/pot, hitter/pitcher tools (cur+pot), all 12 pitch types (cur+pot), extended ratings when available. PK: `(player_id, snapshot_date)`. |
 | `contracts` | `refresh.py` | Active contracts league-wide (up to 15 salary years) |
 | `batting_stats` | `refresh.py` | MLB batting stats by player/year/split/team |
 | `pitching_stats` | `refresh.py` | MLB pitching stats by player/year/split/team |
