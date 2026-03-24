@@ -126,7 +126,9 @@ def _calibrate_ovr_to_war(conn, game_year, role_map):
         JOIN players p ON r.player_id = p.player_id
         JOIN pitching_stats ps ON ps.player_id = p.player_id
         WHERE p.level = 1 AND ps.split_id = 1
-          AND ps.year > ? AND ps.year <= ? AND ps.ip >= 40
+          AND ps.year > ? AND ps.year <= ?
+          AND ((p.role IN (12,13) AND ps.ip >= 20 AND ps.gs <= 3)
+               OR (COALESCE(p.role,0) NOT IN (12,13) AND ps.ip >= 40))
     """, (year_lo, year_hi)).fetchall()
 
     bucket_data = defaultdict(list)
@@ -148,6 +150,14 @@ def _calibrate_ovr_to_war(conn, game_year, role_map):
         if len(data) >= MIN_REGRESSION_N:
             result = _linreg([d[0] for d in data], [d[1] for d in data])
             if result:
+                # RP regression targets P75 instead of mean: a team's primary
+                # RP at a given OVR is a closer/setup, not a mop-up arm.
+                # Shift intercept up by the mean residual of the top quartile.
+                if bucket == "RP":
+                    slope, intercept = result[0], result[1]
+                    residuals = sorted(y - (slope * x + intercept) for x, y in data)
+                    p75_shift = residuals[int(len(residuals) * 0.75)]
+                    result = (slope, intercept + p75_shift, result[2], result[3])
                 regressions[bucket] = result
                 continue
         # Fall back to grouped hitter regression
