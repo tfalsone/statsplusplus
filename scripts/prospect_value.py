@@ -230,29 +230,30 @@ def career_outcome_probs(fv, age, level, bucket, ovr=None, pot=None, def_rating=
     # Within each scenario, WAR has variance (not a point estimate).
     # Logistic CDF with wide spread + elite compression: sustaining
     # high WAR is much harder than just reaching the majors.
+    is_rp = (bucket == "RP")
+    compress_center = 1.8 if is_rp else 3.0
+
     def _p_above(mu, threshold):
         s = max(0.5, mu * 0.40)
         base = 1.0 / (1.0 + exp((threshold - mu) / s))
-        # Smooth compression: sustaining elite production is harder than
-        # just reaching the majors. Sigmoid centered at 3 WAR.
-        compress = 0.35 + 0.65 / (1.0 + exp((threshold - 3.0) / 1.2))
+        compress = 0.35 + 0.65 / (1.0 + exp((threshold - compress_center) / 1.2))
         return base * compress
 
+    max_war = 3.0 if is_rp else 5.0
     _TIERS = []
     war = 0.125
-    while war <= 5.0:
-        if war <= 1.0:
-            label = "Contributor"
-        elif war <= 2.0:
-            label = "Regular"
-        elif war <= 3.0:
-            label = "All-Star"
+    while war <= max_war:
+        if is_rp:
+            label = "Contributor" if war <= 0.5 else ("Quality" if war <= 1.0 else ("Elite" if war <= 1.5 else ""))
         else:
-            label = ""
+            label = "Contributor" if war <= 1.0 else ("Regular" if war <= 2.0 else ("All-Star" if war <= 3.0 else ""))
         _TIERS.append((round(war, 3), label))
         war += 0.125
     # Mark threshold WAR values for display
-    _THRESHOLD_WARS = {1.0: "Contributor", 2.0: "Regular", 3.0: "All-Star"}
+    if is_rp:
+        _THRESHOLD_WARS = {0.5: "Contributor", 1.0: "Quality", 1.5: "Elite"}
+    else:
+        _THRESHOLD_WARS = {1.0: "Contributor", 2.0: "Regular", 3.0: "All-Star"}
     tiers = []
     thresholds = {}
     for threshold, label in _TIERS:
