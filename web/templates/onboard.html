@@ -41,7 +41,7 @@
     {# ── Pull Data (auto-start) ── #}
     <div id="refresh-running">
       <div style="display:flex; align-items:center; gap:10px; margin:16px 0">
-        <div class="spinner"></div>
+        <div class="spinner">⚾</div>
         <span>Pulling data for <strong>{{ slug }}</strong>... <span id="elapsed-timer" class="dim" style="font-size:0.85em"></span></span>
       </div>
       <div id="refresh-stage" class="dim" style="font-size:0.9em">Starting...</div>
@@ -146,8 +146,8 @@
         </select>
         <label>Ratings Scale</label>
         <select name="ratings_scale" style="width:200px">
-          <option value="1-100">1-100 (raw)</option>
-          <option value="20-80">20-80 (scouting)</option>
+          <option value="20-80"{% if detected_scale|default('20-80') == '20-80' %} selected{% endif %}>20-80</option>
+          <option value="1-100"{% if detected_scale|default('20-80') == '1-100' %} selected{% endif %}>1-100</option>
         </select>
         <label>Minimum Salary</label>
         <input type="number" name="minimum_salary" value="{{ min_salary or 500000 }}" style="width:120px">

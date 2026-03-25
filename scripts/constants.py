@@ -150,19 +150,30 @@ OVR_TO_WAR_CALIBRATED = _load_calibrated_ovr()
 # Aging curves
 # ---------------------------------------------------------------------------
 
-# Multiplier on peak WAR by age. Interpolated for intermediate ages.
-# Calibrated 2033-04-25 from Marcel/BP/FanGraphs consensus aging research.
-# Decline rates: ~3%/yr 29-31, ~6%/yr 32-34, ~9%/yr 35-37, ~12%/yr 38+.
-
-AGING_HITTER = {
-    27: 1.00, 28: 1.00, 29: 0.97, 30: 0.94, 31: 0.91,
-    32: 0.85, 33: 0.79, 34: 0.76, 35: 0.67, 36: 0.58,
-    37: 0.49, 38: 0.37, 39: 0.26, 40: 0.16, 42: 0.08
+# MLB contract scarcity premium: multiplier on market value (WAR * $/WAR).
+# Premium positions are harder to replace on the open market, so their WAR
+# is worth more. Centered near 1.0; SS/CF/SP get a premium, 1B/COF a discount.
+# Calibrated Session 37 from positional supply analysis.
+MLB_SCARCITY = {
+    'SS': 1.10, 'CF': 1.06, 'SP': 1.06, 'C': 1.03, '2B': 1.03, '3B': 1.03,
+    'COF': 0.94, 'RP': 0.94, '1B': 0.91,
 }
 
-# Pitchers slightly steeper from 32+ (injury/velocity risk).
+# Multiplier on peak WAR by age. Interpolated for intermediate ages.
+# Calibrated 2033-04-25 from Marcel/BP/FanGraphs consensus aging research.
+# Decline rates calibrated from league data (Session 37):
+# ~3%/yr at 29-30, ~9%/yr 31-32, ~11%/yr 33-35, ~16%/yr 36+.
+# Steeper than MLB IRL — OOTP aging mechanics are more aggressive.
+
+AGING_HITTER = {
+    27: 1.00, 28: 1.00, 29: 0.97, 30: 0.92, 31: 0.84,
+    32: 0.76, 33: 0.68, 34: 0.60, 35: 0.51, 36: 0.42,
+    37: 0.34, 38: 0.25, 39: 0.17, 40: 0.10, 42: 0.04
+}
+
+# Pitchers steeper from 31+ (injury/velocity risk).
 AGING_PITCHER = {
-    27: 1.00, 28: 1.00, 29: 0.97, 30: 0.94, 31: 0.91,
-    32: 0.84, 33: 0.77, 34: 0.65, 35: 0.55, 36: 0.45,
-    37: 0.35, 38: 0.25, 39: 0.16, 40: 0.09
+    27: 1.00, 28: 1.00, 29: 0.97, 30: 0.93, 31: 0.85,
+    32: 0.76, 33: 0.66, 34: 0.54, 35: 0.43, 36: 0.33,
+    37: 0.24, 38: 0.16, 39: 0.10, 40: 0.05
 }

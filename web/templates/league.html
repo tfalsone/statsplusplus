@@ -36,6 +36,7 @@
 <div class="tab-bar">
   <button class="tab active" data-tab="overview">Overview</button>
   <button class="tab" data-tab="prospects">Prospects</button>
+  <button class="tab" data-tab="trade">Trade</button>
 </div>
 
 {# ══════ Overview Tab ══════ #}
@@ -176,6 +177,42 @@
     </div>
   </div>
 
+</div>
+
+{# ══════ Trade Tab ══════ #}
+<div class="tab-content" id="tab-trade">
+  <div class="trade-page">
+    {% for side in ['a', 'b'] %}
+    <div class="trade-side" id="trade-side-{{ side }}">
+      <select class="trade-org-select" id="org-{{ side }}" onchange="selectOrg('{{ side }}', this.value)">
+        <option value="">Select Organization</option>
+      </select>
+
+      <div class="trade-package">
+        <div class="trade-cards" id="cards-{{ side }}"></div>
+        <div class="trade-side-total" id="total-{{ side }}"></div>
+        <div class="trade-cash">
+          <label>Cash $</label>
+          <input type="number" min="0" step="100000" value="0"
+                 id="cash-{{ side }}" onchange="updateCash('{{ side }}')">
+        </div>
+      </div>
+
+      <div class="trade-roster-controls" id="controls-{{ side }}" style="display:none">
+        <div class="trade-level-tabs" id="levels-{{ side }}"></div>
+        <input type="text" class="trade-name-filter" placeholder="Filter by name..."
+               id="filter-{{ side }}" oninput="filterRoster('{{ side }}')">
+      </div>
+      <div class="trade-roster" id="roster-{{ side }}"></div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="trade-balance" id="trade-balance" style="display:none">
+    <h3>Trade Balance</h3>
+    <div class="trade-balance-grid" id="balance-grid"></div>
+    <div class="trade-verdict" id="trade-verdict"></div>
+  </div>
 </div>
 
 <script>
@@ -440,7 +477,7 @@ function renderPanel(d) {
     html += '<div class="panel-tools"><div class="panel-section-title">Tools</div>';
     html += '<table class="grade-table panel-grade-table"><tbody>';
     d.tools.forEach(t => {
-      html += `<tr><td>${t.name}</td><td>${gradeBar(t.cur, t.fut)}</td></tr>`;
+      html += `<tr${t.sub ? ' class="grade-sub"' : ''}><td>${t.name}</td><td>${gradeBar(t.cur, t.fut)}</td></tr>`;
     });
     html += '</tbody></table></div>';
   }
@@ -473,6 +510,322 @@ function renderPanel(d) {
 
   panelContent.innerHTML = html;
 }
+
+/* ── Trade Tab ── */
+const TRADE_ORGS = {{ trade_orgs|tojson }};
+const MY_TEAM_ID = {{ my_team_id|tojson }};
+const SEASON_REMAINING = {{ season_remaining }};
+const sides = {
+  a: { teamId: null, players: [], roster: [], cash: 0 },
+  b: { teamId: null, players: [], roster: [], cash: 0 }
+};
+
+function rebuildOrgDropdowns() {
+  ['a', 'b'].forEach(side => {
+    const other = side === 'a' ? 'b' : 'a';
+    const exclude = sides[other].teamId;
+    const sel = document.getElementById('org-' + side);
+    const cur = sides[side].teamId;
+    sel.innerHTML = '<option value="">Select Organization</option>' +
+      TRADE_ORGS.filter(t => t.tid !== exclude)
+        .map(t => `<option value="${t.tid}"${t.tid === cur ? ' selected' : ''}>${t.name}</option>`)
+        .join('');
+  });
+}
+
+function fmtM(n) { return (n >= 0 ? '+$' : '-$') + (Math.abs(n)/1e6).toFixed(1) + 'M'; }
+function surplusClass(n) { return n >= 0 ? 'surplus-pos' : 'surplus-neg'; }
+
+function fvBadgeClass(fv) {
+  if (fv >= 60) return 'fv-badge-gold';
+  if (fv >= 55) return 'fv-badge-blue';
+  if (fv >= 50) return 'fv-badge-green';
+  return 'fv-badge-gray';
+}
+
+async function selectOrg(side, tid) {
+  tid = parseInt(tid);
+  const s = sides[side];
+  if (s.players.length && s.teamId && s.teamId !== tid) {
+    if (!confirm('Changing team will clear selected players. Continue?')) {
+      document.getElementById('org-' + side).value = s.teamId;
+      return;
+    }
+    s.players = [];
+    document.getElementById('cards-' + side).innerHTML = '';
+    document.getElementById('total-' + side).innerHTML = '';
+  }
+  s.teamId = tid;
+  rebuildOrgDropdowns();
+  const resp = await fetch('/api/org-players/' + tid);
+  s.roster = await resp.json();
+  document.getElementById('controls-' + side).style.display = '';
+  buildLevelTabs(side);
+  filterRoster(side);
+  renderBalance();
+}
+
+const LEVEL_ORDER = ['MLB', 'AAA', 'AA', 'A', 'A-Short', 'Rookie', 'International'];
+
+function buildLevelTabs(side) {
+  const seen = new Set(sides[side].roster.map(p => p.level));
+  const levels = ['All', ...LEVEL_ORDER.filter(l => seen.has(l))];
+  const wrap = document.getElementById('levels-' + side);
+  wrap.innerHTML = levels.map(l =>
+    `<button class="trade-lvl-btn${l === 'All' ? ' active' : ''}" onclick="setLevel('${side}','${l}',this)">${l}</button>`
+  ).join('');
+}
+
+function setLevel(side, level, btn) {
+  btn.parentElement.querySelectorAll('.trade-lvl-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  filterRoster(side);
+}
+
+function filterRoster(side) {
+  const s = sides[side];
+  const activeBtn = document.querySelector('#levels-' + side + ' .trade-lvl-btn.active');
+  const level = activeBtn ? activeBtn.textContent : 'All';
+  const showLevel = (level === 'All');
+  const q = document.getElementById('filter-' + side).value.toLowerCase();
+  const selectedPids = new Set(s.players.map(p => p.player_id));
+
+  let rows = s.roster;
+  if (level !== 'All') rows = rows.filter(p => p.level === level);
+  if (q) rows = rows.filter(p => p.name.toLowerCase().includes(q));
+
+  // Split MLB / prospects
+  const mlb = rows.filter(r => r.level === 'MLB');
+  const pros = rows.filter(r => r.level !== 'MLB');
+
+  let html = '';
+  if (mlb.length) {
+    html += '<table class="trade-table"><thead><tr>' +
+      '<th class="ta-l">Pos</th><th class="ta-l">Name</th><th class="ta-r">Age</th><th class="ta-r">Ovr</th><th class="ta-r">Pot</th><th class="ta-r">WAR</th><th class="ta-r">Surplus</th>' +
+      '</tr></thead><tbody>';
+    mlb.forEach(p => {
+      const sel = selectedPids.has(p.pid) ? ' trade-row-selected' : '';
+      html += `<tr class="trade-row${sel}" data-pid="${p.pid}" onclick="addPlayer('${side}',${p.pid})">` +
+        `<td class="ta-l">${p.pos}</td><td class="ta-l">${p.name}</td><td class="ta-r">${p.age}</td>` +
+        `<td class="ta-r">${p.ovr || '—'}</td><td class="ta-r">${p.pot || '—'}</td>` +
+        `<td class="ta-r">${p.war != null ? p.war.toFixed(1) : '—'}</td>` +
+        `<td class="ta-r ${surplusClass(p.surplus)}">${fmtM(p.surplus)}</td></tr>`;
+    });
+    html += '</tbody></table>';
+  }
+  if (pros.length) {
+    html += '<h4 class="trade-section-label">Prospects</h4>';
+    const lvlHdr = showLevel ? '<th class="ta-l">Level</th>' : '';
+    html += '<table class="trade-table"><thead><tr>' +
+      '<th class="ta-l">Pos</th><th class="ta-l">Name</th><th class="ta-r">Age</th><th class="ta-r">Pot</th><th class="ta-l">FV</th>' + lvlHdr + '<th class="ta-r">Surplus</th>' +
+      '</tr></thead><tbody>';
+    pros.forEach(p => {
+      const sel = selectedPids.has(p.pid) ? ' trade-row-selected' : '';
+      const fvCls = p.fv ? fvBadgeClass(p.fv) : '';
+      const lvlTd = showLevel ? `<td class="ta-l">${lvlBadge(p.level)}</td>` : '';
+      html += `<tr class="trade-row${sel}" data-pid="${p.pid}" onclick="addPlayer('${side}',${p.pid})">` +
+        `<td class="ta-l">${p.pos}</td><td class="ta-l">${p.name}</td><td class="ta-r">${p.age}</td>` +
+        `<td class="ta-r">${p.pot || '—'}</td>` +
+        `<td class="ta-l">${p.fv_str ? '<span class="fv-badge ' + fvCls + '">' + p.fv_str + '</span>' : '—'}</td>` +
+        lvlTd +
+        `<td class="ta-r ${surplusClass(p.surplus)}">${fmtM(p.surplus)}</td></tr>`;
+    });
+    html += '</tbody></table>';
+  }
+  if (!mlb.length && !pros.length) html = '<div class="trade-empty">No players match filters</div>';
+  document.getElementById('roster-' + side).innerHTML = html;
+}
+
+async function addPlayer(side, pid) {
+  const s = sides[side];
+  if (s.players.find(p => p.player_id === pid)) return; // already added
+  const resp = await fetch('/api/trade-value', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ player_id: pid, retention_pct: 0 })
+  });
+  if (!resp.ok) return;
+  const val = await resp.json();
+  s.players.push(val);
+  renderCards(side);
+  filterRoster(side); // update selected state
+  renderBalance();
+}
+
+function removePlayer(side, pid) {
+  const s = sides[side];
+  s.players = s.players.filter(p => p.player_id !== pid);
+  renderCards(side);
+  filterRoster(side);
+  renderBalance();
+}
+
+async function updateRetention(side, pid, pct) {
+  const s = sides[side];
+  const resp = await fetch('/api/trade-value', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ player_id: pid, retention_pct: pct / 100 })
+  });
+  if (!resp.ok) return;
+  const val = await resp.json();
+  const idx = s.players.findIndex(p => p.player_id === pid);
+  if (idx >= 0) s.players[idx] = val;
+  renderCards(side);
+  renderBalance();
+}
+
+function renderCards(side) {
+  const s = sides[side];
+  const wrap = document.getElementById('cards-' + side);
+  if (!s.players.length) { wrap.innerHTML = ''; document.getElementById('total-' + side).innerHTML = ''; return; }
+
+  wrap.innerHTML = s.players.map(p => {
+    if (p.type === 'contract') return renderContractCard(side, p);
+    return renderProspectCard(side, p);
+  }).join('');
+
+  const total = s.players.reduce((sum, p) => sum + (p.surplus.base || 0), 0);
+  document.getElementById('total-' + side).innerHTML =
+    `<span class="${surplusClass(total)}">Total: ${fmtM(total)}</span>`;
+}
+
+function renderContractCard(side, p) {
+  const ret = Math.round((p.retention_pct || 0) * 100);
+  const flags = p.flags && p.flags.length ? `<div class="trade-card-flags">${p.flags.join(', ')}</div>` : '';
+  let breakdown = '';
+  if (p.breakdown && p.breakdown.length) {
+    breakdown = `<details class="trade-card-details"><summary>Year-by-year</summary><table class="trade-breakdown">` +
+      '<thead><tr><th>Year</th><th>Age</th><th>WAR</th><th>Market</th><th>Salary</th><th>Surplus</th></tr></thead><tbody>' +
+      p.breakdown.map(r =>
+        `<tr><td>${r.year}</td><td>${r.age}</td><td>${r.war_base.toFixed(1)}</td>` +
+        `<td>${fmtM(r.market_value)}</td><td>${fmtM(r.salary_full)}</td>` +
+        `<td class="${surplusClass(r.surplus)}">${fmtM(r.surplus)}</td></tr>`
+      ).join('') + '</tbody></table></details>';
+  }
+  return `<div class="trade-card">
+    <div class="trade-card-header">
+      <a href="/player/${p.player_id}" class="player-link">${p.name}</a>
+      <button class="trade-card-remove" onclick="removePlayer('${side}',${p.player_id})">✕</button>
+    </div>
+    <div class="trade-card-meta">${p.pos} · ${p.team} · Age ${p.age} · Ovr ${p.ovr}</div>
+    <div class="trade-card-meta">${p.years_left}yr control</div>
+    ${flags}
+    <div class="trade-card-surplus ${surplusClass(p.surplus.base)}">Surplus: ${fmtM(p.surplus.base)}</div>
+    <div class="trade-card-retention">
+      <label>Retention: ${ret}%</label>
+      <input type="range" min="0" max="100" step="5" value="${ret}"
+             onchange="updateRetention('${side}',${p.player_id},this.value)">
+    </div>
+    ${breakdown}
+  </div>`;
+}
+
+function renderProspectCard(side, p) {
+  const fvCls = p.fv ? fvBadgeClass(p.fv) : '';
+  let outcome = '';
+  if (p.outcome && p.outcome.thresholds) {
+    const t = p.outcome.thresholds;
+    const lr = p.outcome.likely_range;
+    outcome = `<details class="trade-card-details"><summary>Career outlook</summary>
+      <div class="trade-outcome">` +
+      Object.entries(t).map(([k, v]) => `<div>${k}: ${Math.round(v * 100)}%</div>`).join('') +
+      `<div>Likely range: ${lr[0]}–${lr[1]} WAR/yr</div>
+      <div>Confidence: ${Math.round(p.outcome.confidence * 100)}%</div>
+      </div></details>`;
+  }
+  return `<div class="trade-card">
+    <div class="trade-card-header">
+      <a href="/player/${p.player_id}" class="player-link">${p.name}</a>
+      <button class="trade-card-remove" onclick="removePlayer('${side}',${p.player_id})">✕</button>
+    </div>
+    <div class="trade-card-meta">${p.pos} · ${p.team} · Age ${p.age} · ${p.level}</div>
+    <div class="trade-card-meta"><span class="fv-badge ${fvCls}">FV ${p.fv_str || p.fv}</span> Pot ${p.pot || '—'}</div>
+    <div class="trade-card-surplus ${surplusClass(p.surplus.base)}">Surplus: ${fmtM(p.surplus.base)}</div>
+    ${outcome}
+  </div>`;
+}
+
+function updateCash(side) {
+  sides[side].cash = parseInt(document.getElementById('cash-' + side).value) || 0;
+  renderBalance();
+}
+
+function renderBalance() {
+  const a = sides.a, b = sides.b;
+  if (!a.players.length && !b.players.length) {
+    document.getElementById('trade-balance').style.display = 'none';
+    return;
+  }
+  document.getElementById('trade-balance').style.display = '';
+
+  const scenarios = ['pessimistic', 'base', 'optimistic'];
+  const sumSide = (s) => scenarios.reduce((obj, sc) => {
+    obj[sc] = s.players.reduce((sum, p) => {
+      const sv = p.surplus[sc] || p.surplus.base || 0;
+      if (p.type === 'contract' && p.breakdown && p.breakdown.length > 1) {
+        // Pro-rate: first year's share of total, discounted by season remaining
+        const yr1Frac = p.breakdown[0].surplus / (p.surplus.base || 1);
+        const yr1Val = sv * yr1Frac;
+        return sum + (sv - yr1Val) + yr1Val * SEASON_REMAINING;
+      }
+      return sum + sv;
+    }, 0) + s.cash;
+    return obj;
+  }, {});
+
+  const aSum = sumSide(a), bSum = sumSide(b);
+  // Each side's players are what that side SENDS.
+  // Pessimistic for A = players A sent hit optimistic (gave up more) while players A received hit pessimistic (got less).
+  const netA = {
+    pessimistic: bSum.pessimistic - aSum.optimistic,
+    base:        bSum.base - aSum.base,
+    optimistic:  bSum.optimistic - aSum.pessimistic,
+  };
+  const netB = {
+    pessimistic: aSum.pessimistic - bSum.optimistic,
+    base:        aSum.base - bSum.base,
+    optimistic:  aSum.optimistic - bSum.pessimistic,
+  };
+
+  const nameA = TRADE_ORGS.find(t => t.tid === a.teamId)?.name || '—';
+  const nameB = TRADE_ORGS.find(t => t.tid === b.teamId)?.name || '—';
+
+  const labels = { pessimistic: 'Pessimistic', base: 'Base', optimistic: 'Optimistic' };
+  let grid = '<div class="trade-balance-row trade-balance-header">' +
+    '<div></div>' + scenarios.map(s => `<div>${labels[s]}</div>`).join('') + '</div>';
+  grid += `<div class="trade-balance-row"><div>${nameA}</div>` +
+    scenarios.map(s => `<div class="${surplusClass(netA[s])}">${fmtM(netA[s])}</div>`).join('') + '</div>';
+  grid += `<div class="trade-balance-row"><div>${nameB}</div>` +
+    scenarios.map(s => `<div class="${surplusClass(netB[s])}">${fmtM(netB[s])}</div>`).join('') + '</div>';
+
+  document.getElementById('balance-grid').innerHTML = grid;
+
+  // Verdict — from Side A's perspective
+  const abbrA = TRADE_ORGS.find(t => t.tid === a.teamId)?.abbr || '—';
+  const abbrB = TRADE_ORGS.find(t => t.tid === b.teamId)?.abbr || '—';
+  const nb = netA.base, np = netA.pessimistic, no_ = netA.optimistic;
+  let verdict;
+  if (Math.abs(nb) < 1e6) verdict = 'Even trade in base scenario';
+  else if (nb > 0 && np > 0) verdict = `${abbrA} wins in all scenarios`;
+  else if (nb > 0) verdict = `${abbrA} wins in base/optimistic`;
+  else if (nb < 0 && no_ < 0) verdict = `${abbrB} wins in all scenarios`;
+  else if (nb < 0) verdict = `${abbrB} wins in base/pessimistic`;
+  else verdict = 'Too close to call';
+
+  document.getElementById('trade-verdict').innerHTML = verdict;
+  document.getElementById('trade-verdict').className = 'trade-verdict ' +
+    (nb > 1e6 ? 'surplus-pos' : nb < -1e6 ? 'surplus-neg' : '');
+}
+
+// Auto-select user's team on Side A when trade tab is first opened
+let tradeInitialized = false;
+document.querySelector('[data-tab="trade"]').addEventListener('click', () => {
+  if (tradeInitialized) return;
+  tradeInitialized = true;
+  rebuildOrgDropdowns();
+  if (MY_TEAM_ID) {
+    selectOrg('a', MY_TEAM_ID);
+  }
+});
 
 /* ── Tabs ── */
 document.querySelectorAll('.tab-bar .tab').forEach(btn => {

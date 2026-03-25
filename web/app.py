@@ -36,9 +36,9 @@ def _set_league_context():
     g.league_slug = slug
     g.league_dir = league_dir
     g.league_config = cfg
-    # Reset cached ratings scale so norm() picks up current settings
+    # Set ratings scale from this league's config (not the module-level singleton)
     import player_utils
-    player_utils._ratings_scale = None
+    player_utils._ratings_scale = cfg.ratings_scale
     # Check if league has enough data to render data pages
     g.league_ready = (league_dir / "league.db").exists() and (
         league_dir / "config" / "league_averages.json").exists()
@@ -314,11 +314,23 @@ def league():
             for r in d["rows"]:
                 r["is_wc"] = r["div_rank"] != 1 and r["tid"] in wc_tids
 
+    # Trade tab data: org list + user's team
+    from web_league_context import mlb_team_ids, my_team_id
+    _tam = cfg.team_abbr_map
+    _tnm = cfg.team_names_map
+    trade_orgs = sorted([{"tid": t, "abbr": _tam.get(t, "?"), "name": _tnm.get(t, _tam.get(t, "?"))}
+                         for t in mlb_team_ids()], key=lambda x: x["name"])
+    # Season fraction remaining for pro-rating current year in trades
+    avg_gp = sum(r["w"] + r["l"] for r in standings) / max(len(standings), 1)
+    season_remaining = max(0, (162 - avg_gp) / 162)
+
     return render_template("league.html", league_groups=league_groups,
                            prospects=prospects, all_prospects=all_prospects,
                            bat_leaders=bat_leaders,
                            pit_leaders=pit_leaders, power=power,
-                           summary=summary, my_abbr=my_abbr, lg_avg=lg_avg)
+                           summary=summary, my_abbr=my_abbr, lg_avg=lg_avg,
+                           trade_orgs=trade_orgs, my_team_id=my_team_id(),
+                           season_remaining=round(season_remaining, 3))
 
 
 @app.route("/player/<int:pid>")
@@ -352,6 +364,41 @@ def api_player_popup(pid):
     if not data:
         return jsonify({"error": "not found"}), 404
     return jsonify(data)
+
+
+@app.route("/api/player-search")
+def api_player_search():
+    q = request.args.get("q", "").strip()
+    if len(q) < 2:
+        return jsonify([])
+    return jsonify(queries.search_players(q))
+
+
+@app.route("/api/player-card/<int:pid>")
+def api_player_card(pid):
+    data = queries.get_player_card(pid)
+    if not data:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(data)
+
+
+@app.route("/api/org-players/<int:team_id>")
+def api_org_players(team_id):
+    import trade_queries
+    return jsonify(trade_queries.get_org_players(team_id))
+
+
+@app.route("/api/trade-value", methods=["POST"])
+def api_trade_value():
+    import trade_queries
+    data = request.get_json(silent=True) or {}
+    pid = data.get("player_id")
+    if not pid:
+        return jsonify({"error": "player_id required"}), 400
+    result = trade_queries.get_trade_value(pid, data.get("retention_pct", 0.0))
+    if not result:
+        return jsonify({"error": "player not found"}), 404
+    return jsonify(result)
 
 
 @app.route("/api/save-structure", methods=["POST"])
@@ -762,11 +809,17 @@ def onboard_step3():
         leagues = s.get("leagues", [])
         all_mlb_teams = {int(k): v for k, v in s.get("team_abbr", {}).items()}
         team_names_map = {int(k): v for k, v in s.get("team_names", {}).items()}
+        # Auto-detect ratings scale: if any rating exceeds 80, it's 1-100
+        has_100 = conn.execute(
+            "SELECT 1 FROM latest_ratings WHERE ovr > 80 OR pot > 80 LIMIT 1"
+        ).fetchone()
+        detected_scale = "1-100" if has_100 else "20-80"
         return render_template("onboard.html", step=3, slug=slug, teams=teams,
                                league_name=slug.upper(), leagues=leagues,
                                all_mlb_teams=all_mlb_teams,
                                team_names_map=team_names_map,
-                               min_salary=s.get("minimum_salary"))
+                               min_salary=s.get("minimum_salary"),
+                               detected_scale=detected_scale)
 
     # POST — save configuration
     league_name = request.form.get("league_name", slug.upper())

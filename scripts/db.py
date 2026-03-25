@@ -90,6 +90,20 @@ CREATE TABLE IF NOT EXISTS ratings (
     PRIMARY KEY (player_id, snapshot_date)
 );
 
+CREATE TABLE IF NOT EXISTS contract_extensions (
+    player_id               INTEGER PRIMARY KEY,
+    team_id                 INTEGER,
+    years                   INTEGER,
+    current_year            INTEGER,
+    salary_0  INTEGER, salary_1  INTEGER, salary_2  INTEGER, salary_3  INTEGER,
+    salary_4  INTEGER, salary_5  INTEGER, salary_6  INTEGER, salary_7  INTEGER,
+    salary_8  INTEGER, salary_9  INTEGER, salary_10 INTEGER, salary_11 INTEGER,
+    salary_12 INTEGER, salary_13 INTEGER, salary_14 INTEGER,
+    no_trade                INTEGER,
+    last_year_team_option   INTEGER,
+    last_year_player_option INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS contracts (
     player_id               INTEGER PRIMARY KEY,
     team_id                 INTEGER,

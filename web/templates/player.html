@@ -35,7 +35,6 @@
     {% if r.splits %}<span class="split-toggle" onclick="toggleSplits(this)">vs L / R</span>{% endif %}
   </h2>
   <table class="grade-table split-overall">
-    <thead><tr><th>Attribute</th><th>Grade</th></tr></thead>
     <tbody>
       <tr><td>Stuff</td><td>{{ grade(r.stuff[0], r.stuff[1]) }}</td></tr>
       <tr><td>Movement</td><td>{{ grade(r.movement[0], r.movement[1]) }}</td></tr>
@@ -44,12 +43,11 @@
       <tr><td>Control</td><td>{{ grade(r.control[0], r.control[1]) }}</td></tr>
       <tr><td>Stamina</td><td>{{ grade(r.stamina) }}</td></tr>
       {% if r.gb is defined %}<tr><td>GB%</td><td>{{ r.gb }}%</td></tr>{% endif %}
-      {% if r.velocity %}<tr><td>Velocity</td><td>{{ r.velocity }}</td></tr>{% endif %}
     </tbody>
   </table>
   {% if r.splits %}
   <table class="grade-table split-lr" style="display:none">
-    <thead><tr><th>Attribute</th><th>vs L</th><th>vs R</th></tr></thead>
+    <thead><tr><th></th><th>vs L</th><th>vs R</th></tr></thead>
     <tbody>
       <tr><td>Stuff</td><td>{{ grade(r.splits.stuff[0]) }}</td><td>{{ grade(r.splits.stuff[1]) }}</td></tr>
       <tr><td>Movement</td><td>{{ grade(r.splits.movement[0]) }}</td><td>{{ grade(r.splits.movement[1]) }}</td></tr>
@@ -58,20 +56,20 @@
       <tr><td>Control</td><td>{{ grade(r.splits.control[0]) }}</td><td>{{ grade(r.splits.control[1]) }}</td></tr>
       <tr><td>Stamina</td><td colspan="2">{{ grade(r.stamina) }}</td></tr>
       {% if r.gb is defined %}<tr><td>GB%</td><td colspan="2">{{ r.gb }}%</td></tr>{% endif %}
-      {% if r.velocity %}<tr><td>Velocity</td><td colspan="2">{{ r.velocity }}</td></tr>{% endif %}
     </tbody>
   </table>
   {% endif %}
   {% if r.pitches %}
-  <h2 style="margin-top:16px">Pitches</h2>
+  <div class="panel-tools" style="margin-top:12px">
+  <div class="panel-section-title">Pitches{% if r.velocity %} <span class="panel-vel">{{ r.velocity }}</span>{% endif %}</div>
   <table class="grade-table">
-    <thead><tr><th>Pitch</th><th>Grade</th></tr></thead>
     <tbody>
       {% for pitch in r.pitches %}
       <tr><td>{{ pitch.name }}</td><td>{{ grade(pitch.cur, pitch.fut) }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% endif %}
 </div>
 {% endif %}
@@ -84,11 +82,10 @@
     {% if r.splits %}<span class="split-toggle" onclick="toggleSplits(this)">vs L / R</span>{% endif %}
   </h2>
   <table class="grade-table split-overall">
-    <thead><tr><th>Tool</th><th>Grade</th></tr></thead>
     <tbody>
       <tr><td>Hit</td><td>{{ grade(r.hit[0], r.hit[1]) }}</td></tr>
       {% if r.babip is defined and r.babip %}<tr class="grade-sub"><td>BABIP</td><td>{{ grade(r.babip[0], r.babip[1]) }}</td></tr>{% endif %}
-      <tr{% if r.babip is defined and r.babip %} class="grade-sub"{% endif %}><td>Avoid K's</td><td>{{ grade(r.krate[0], r.krate[1]) }}</td></tr>
+      <tr class="grade-sub"><td>Avoid K's</td><td>{{ grade(r.krate[0], r.krate[1]) }}</td></tr>
       <tr><td>Gap</td><td>{{ grade(r.gap[0], r.gap[1]) }}</td></tr>
       <tr><td>Power</td><td>{{ grade(r.power[0], r.power[1]) }}</td></tr>
       <tr><td>Eye</td><td>{{ grade(r.eye[0], r.eye[1]) }}</td></tr>
@@ -96,11 +93,11 @@
   </table>
   {% if r.splits %}
   <table class="grade-table split-lr" style="display:none">
-    <thead><tr><th>Tool</th><th>vs L</th><th>vs R</th></tr></thead>
+    <thead><tr><th></th><th>vs L</th><th>vs R</th></tr></thead>
     <tbody>
       <tr><td>Hit</td><td>{{ grade(r.splits.hit[0]) }}</td><td>{{ grade(r.splits.hit[1]) }}</td></tr>
       {% if r.splits.babip is defined %}<tr class="grade-sub"><td>BABIP</td><td>{{ grade(r.splits.babip[0]) }}</td><td>{{ grade(r.splits.babip[1]) }}</td></tr>{% endif %}
-      <tr{% if r.babip is defined and r.babip %} class="grade-sub"{% endif %}><td>Avoid K's</td><td>{{ grade(r.splits.krate[0]) }}</td><td>{{ grade(r.splits.krate[1]) }}</td></tr>
+      <tr class="grade-sub"><td>Avoid K's</td><td>{{ grade(r.splits.krate[0]) }}</td><td>{{ grade(r.splits.krate[1]) }}</td></tr>
       <tr><td>Gap</td><td>{{ grade(r.splits.gap[0]) }}</td><td>{{ grade(r.splits.gap[1]) }}</td></tr>
       <tr><td>Power</td><td>{{ grade(r.splits.power[0]) }}</td><td>{{ grade(r.splits.power[1]) }}</td></tr>
       <tr><td>Eye</td><td>{{ grade(r.splits.eye[0]) }}</td><td>{{ grade(r.splits.eye[1]) }}</td></tr>
@@ -108,28 +105,30 @@
   </table>
   {% endif %}
   {% if r.speed is defined %}
-  <h2 style="margin-top:16px">Running</h2>
+  <div class="panel-tools" style="margin-top:12px">
+  <div class="panel-section-title">Running</div>
   <table class="grade-table">
-    <thead><tr><th>Tool</th><th>Grade</th></tr></thead>
     <tbody>
       <tr><td>Speed</td><td>{{ grade(r.speed) }}</td></tr>
       {% if r.steal is defined %}<tr><td>Steal</td><td>{{ grade(r.steal) }}</td></tr>{% endif %}
     </tbody>
   </table>
+  </div>
   {% endif %}
   {% if r.defense %}
-  <h2 style="margin-top:16px">Positions</h2>
+  <div class="panel-tools" style="margin-top:12px">
+  <div class="panel-section-title">Positions</div>
   <table class="grade-table">
-    <thead><tr><th>Pos</th><th>Grade</th></tr></thead>
     <tbody>
       {% for d in r.defense %}
       <tr><td>{{ d.pos }}</td><td>{{ grade(d.cur, d.fut) }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
-  <h2 style="margin-top:12px">Defense</h2>
+  </div>
+  <div class="panel-tools" style="margin-top:8px">
+  <div class="panel-section-title">Defense</div>
   <table class="grade-table">
-    <thead><tr><th>Attribute</th><th>Grade</th></tr></thead>
     <tbody>
       {% if r.blocking is defined %}
       <tr><td>Blocking</td><td>{{ grade(r.blocking) }}</td></tr>
@@ -143,6 +142,7 @@
       {% endif %}
     </tbody>
   </table>
+  </div>
   {% endif %}
 </div>
 {% endif %}
@@ -351,6 +351,15 @@
         <td>{% if loop.last %}{% if p.contract.team_option %}<span class="opt-badge opt-to">TO</span>{% endif %}{% if p.contract.player_option %}<span class="opt-badge opt-po">PO</span>{% endif %}{% endif %}</td>
       </tr>
       {% endfor %}
+      {% if p.contract.extension %}
+      <tr class="ext-divider"><td colspan="3" style="font-size:11px; color:var(--text-dim); padding:6px 0 2px">Pending Extension ({{ p.contract.extension.years }}yr){% if p.contract.extension.no_trade %} <span class="opt-badge opt-ntc">NTC</span>{% endif %}</td></tr>
+      {% for yr, sal in p.contract.extension.salaries %}
+      <tr class="text-dim">
+        <td>{{ yr }}</td><td>{{ sal }}</td>
+        <td>{% if loop.last %}{% if p.contract.extension.team_option %}<span class="opt-badge opt-to">TO</span>{% endif %}{% if p.contract.extension.player_option %}<span class="opt-badge opt-po">PO</span>{% endif %}{% endif %}</td>
+      </tr>
+      {% endfor %}
+      {% endif %}
     </tbody>
   </table>
 </div>
@@ -393,6 +402,26 @@
     <div class="confidence-track">
       <div class="confidence-fill" style="width:{{ (oc.confidence * 100)|round|int }}%"></div>
     </div>
+  </div>
+</div>
+{% endif %}
+{% endmacro %}
+
+{# Prospect MLB comps panel #}
+{% macro comps_panel() %}
+{% if p.prospect_comps %}
+<div class="panel">
+  <h2>MLB Comps</h2>
+  <div class="comps-grid">
+    {% for c in p.prospect_comps %}
+    <div class="comp-card comp-{{ c.tier|lower }}" data-pid="{{ c.pid }}">
+      <div class="comp-tier">{{ c.tier }} <span class="comp-pct">{{ c.pct }}%</span></div>
+      <div class="comp-name"><a class="player-link" href="/player/{{ c.pid }}">{{ c.name }}</a></div>
+      <div class="comp-meta">{{ c.team }} · Age {{ c.age }} · <span class="ovr-color" data-g="{{ c.ovr }}">{{ c.ovr }} Ovr</span></div>
+      {% if c.line %}<div class="comp-stats">{{ c.line }}</div>{% endif %}
+      <div class="comp-detail" style="display:none"></div>
+    </div>
+    {% endfor %}
   </div>
 </div>
 {% endif %}
@@ -491,6 +520,12 @@
     <span class="label">Surplus</span>
     <span class="value {% if p.valuation.surplus > 0 %}pos{% elif p.valuation.surplus < 0 %}neg{% endif %}">${{ p.valuation.surplus }}M</span>
   </div>
+  {% if p.pap is not none %}
+  <div class="summary-item" title="Payroll Adjusted Performance — measures current-season production efficiency on a 1–10 scale (5 = market neutral). Based on actual WAR pace vs. salary. May be volatile early in the season due to small sample size.">
+    <span class="label">PAP</span>
+    <span class="value {% if p.pap >= 7 %}pos{% elif p.pap < 4 %}neg{% endif %}">{{ "%.1f"|format(p.pap) }}</span>
+  </div>
+  {% endif %}
   {% endif %}
   {% if p.percentiles %}
   {% set ns = namespace(gap_sum=0, gap_n=0) %}
@@ -515,6 +550,7 @@
 <div class="tab-bar">
   <button class="tab active" data-tab="overview">Overview</button>
   <button class="tab" data-tab="stats">Stats</button>
+  {% if p.prospect_comps %}<button class="tab" data-tab="outlook">Outlook</button>{% endif %}
   <button class="tab" data-tab="contract">Contract</button>
 </div>
 
@@ -530,10 +566,23 @@
       {{ stats_snapshot() }}
       {{ percentile_panel() }}
       {{ fielding_pctile_panel() }}
-      {{ outcome_panel() }}
     </div>
   </div>
 </div>
+
+{% if p.prospect_comps %}
+{# ══ Outlook tab ══ #}
+<div class="tab-content" id="tab-outlook">
+  <div class="columns">
+    <div class="panel-stack">
+      {{ outcome_panel() }}
+    </div>
+    <div class="panel-stack">
+      {{ comps_panel() }}
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {# ══ Stats tab ══ #}
 <div class="tab-content" id="tab-stats">
@@ -693,18 +742,35 @@
 
 {% else %}
 {# ═══════════════════════════════════════════════════════════════════════ #}
-{# PROSPECTS — single page, no tabs                                      #}
+{# PROSPECTS — tabbed layout                                             #}
 {# ═══════════════════════════════════════════════════════════════════════ #}
 
-<div class="columns">
-  <div class="panel-stack">
-    {{ ratings_panel() }}
-    {{ character_panel() }}
+<div class="tab-bar">
+  <button class="tab active" data-tab="overview">Overview</button>
+  <button class="tab" data-tab="valuation">Valuation</button>
+</div>
+
+<div class="tab-content active" id="tab-overview">
+  <div class="columns">
+    <div class="panel-stack">
+      {{ ratings_panel() }}
+      {{ character_panel() }}
+    </div>
+    <div class="panel-stack">
+      {{ scouting_panel() }}
+      {{ comps_panel() }}
+    </div>
   </div>
-  <div class="panel-stack">
-    {{ scouting_panel() }}
-    {{ surplus_panel() }}
-    {{ outcome_panel() }}
+</div>
+
+<div class="tab-content" id="tab-valuation">
+  <div class="columns">
+    <div class="panel-stack">
+      {{ surplus_panel() }}
+    </div>
+    <div class="panel-stack">
+      {{ outcome_panel() }}
+    </div>
   </div>
 </div>
 
@@ -748,5 +814,66 @@ document.querySelectorAll('.tab-bar .tab').forEach(function(btn) {
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
   });
 });
+
+// Comp card inline expand (side-panel style with grade bars)
+(function() {
+  var cache = {};
+
+  function gradeBar(cur, fut) {
+    if (!cur) return '\u2014';
+    var pot = (fut && fut > cur) ? fut : cur;
+    var curPct = cur > 20 ? Math.round((cur - 20) / 60 * 100) : 5;
+    var potPct = pot > 20 ? Math.round((pot - 20) / 60 * 100) : 5;
+    var label = pot > cur ? cur + '/' + pot : '' + cur;
+    return '<span class="grade" data-g="' + cur + '"><span class="grade-label-chip" data-g="' + cur + '">' + label + '</span><span class="grade-track"><span class="grade-pot" data-g="' + pot + '" style="width:' + potPct + '%"></span><span class="grade-cur" data-g="' + cur + '" style="width:' + curPct + '%"></span></span></span>';
+  }
+
+  function toolTable(items, sub) {
+    var h = '<table class="grade-table panel-grade-table"><tbody>';
+    items.forEach(function(t) {
+      h += '<tr' + (t.sub ? ' class="grade-sub"' : '') + '><td>' + (t.name || t.pos) + '</td><td>' + gradeBar(t.cur, t.fut) + '</td></tr>';
+    });
+    return h + '</tbody></table>';
+  }
+
+  function render(d) {
+    var h = '';
+    if (d.tools && d.tools.length) {
+      var tools = d.tools.filter(function(t) { return t.name !== 'Speed'; });
+      h += '<div class="panel-tools"><div class="panel-section-title">Tools</div>' + toolTable(tools) + '</div>';
+    }
+    if (d.pitches && d.pitches.length) {
+      h += '<div class="panel-tools"><div class="panel-section-title">Pitches' +
+        (d.velocity ? ' <span class="panel-vel">' + d.velocity + '</span>' : '') + '</div>' + toolTable(d.pitches) + '</div>';
+    }
+    if (d.defense && d.defense.length) {
+      h += '<div class="panel-tools"><div class="panel-section-title">Defense</div>' + toolTable(d.defense) + '</div>';
+    }
+    return h;
+  }
+
+  document.querySelectorAll('.comp-card').forEach(function(card) {
+    card.style.cursor = 'pointer';
+    card.addEventListener('click', function(e) {
+      if (e.target.closest('a')) return;
+      var detail = card.querySelector('.comp-detail');
+      var wasOpen = detail.style.display !== 'none';
+      document.querySelectorAll('.comp-detail').forEach(function(d) { d.style.display = 'none'; });
+      if (wasOpen) return;
+      var pid = card.dataset.pid;
+      if (cache[pid]) {
+        detail.innerHTML = render(cache[pid]);
+        detail.style.display = '';
+        return;
+      }
+      detail.innerHTML = '<span style="color:var(--text-dim);font-size:12px">Loading\u2026</span>';
+      detail.style.display = '';
+      fetch('/api/player-card/' + pid).then(function(r) { return r.json(); }).then(function(d) {
+        cache[pid] = d;
+        detail.innerHTML = render(d);
+      });
+    });
+  });
+})();
 </script>
 {% endblock %}

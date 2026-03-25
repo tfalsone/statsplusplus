@@ -5,12 +5,25 @@ from collections import defaultdict
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(BASE, "scripts"))
-from player_utils import display_pos as _display_pos
+from player_utils import display_pos as _display_pos, calc_pap
 from web_league_context import (get_db, get_cfg, team_abbr_map, team_names_map,
                                  level_map, pos_map, pos_order, pyth_exp, my_team_id,
-                                 mlb_team_ids)
+                                 mlb_team_ids, league_averages as _load_la)
 
 ROLE_MAP = {11: "SP", 12: "RP", 13: "CL"}
+
+
+def _pap_context(conn, tid, year):
+    """Get shared context for PAP calculation: team games, $/WAR, salary map."""
+    team_g = conn.execute(
+        "SELECT COUNT(*) FROM games WHERE (home_team=? OR away_team=?) AND date>=? AND played=1",
+        (tid, tid, f"{year}-01-01")).fetchone()[0]
+    dpw = _load_la().get("dollar_per_war", 8_976_775)
+    sal_rows = conn.execute(
+        "SELECT player_id, salary_0 FROM contracts WHERE player_id IN "
+        "(SELECT player_id FROM players WHERE team_id=? AND level='1')", (tid,)).fetchall()
+    salaries = {r["player_id"]: r["salary_0"] or 0 for r in sal_rows}
+    return team_g, dpw, salaries
 
 
 def _get_state():
@@ -349,22 +362,25 @@ def get_roster_hitters(team_id=None):
         }
 
     result = []
+    team_g, dpw, salaries = _pap_context(conn, tid, year)
     for p in players:
         splits = bat.get(p["player_id"])
         if not splits or 1 not in splits:
             continue
         pid = p["player_id"]
         if pid in twp_pids:
-            # Two-way: show fielding position, not P
             fld = conn_fld.get(pid)
             pos = pos_map().get(fld, "DH") if fld else "DH"
         else:
             pos = pos_map().get(p["pos"], "?")
+        s1 = splits.get(1)
+        war = s1["war"] if s1 and s1["war"] is not None else None
         result.append({
             "pid": pid, "name": p["name"], "age": p["age"],
             "ovr": p["ovr"] or 0, "pos": pos,
             "pos_order": pos_order().get(pos, 99),
             "surplus": round(p["surplus_yr1"] / 1e6, 1) if p["surplus_yr1"] else 0,
+            "pap": calc_pap(war, salaries.get(pid, 0), team_g, dpw),
             "is_two_way": pid in twp_pids,
             "splits": {
                 "1": _fmt_split(splits.get(1)),
@@ -435,17 +451,22 @@ def get_roster_pitchers(team_id=None):
         }
 
     result = []
+    team_g, dpw, salaries = _pap_context(conn, tid, year)
     for p in players:
         splits = pit.get(p["player_id"])
         if not splits or 1 not in splits:
             continue
+        pid = p["player_id"]
         role_str = ROLE_MAP.get(p["role"], "P")
+        s1 = splits.get(1)
+        war = s1["war"] if s1 and s1["war"] is not None else None
         result.append({
-            "pid": p["player_id"], "name": p["name"], "age": p["age"],
+            "pid": pid, "name": p["name"], "age": p["age"],
             "ovr": p["ovr"] or 0, "role": role_str,
             "role_order": pos_order().get(role_str, 99),
             "surplus": round(p["surplus_yr1"] / 1e6, 1) if p["surplus_yr1"] else 0,
-            "is_two_way": p["player_id"] in twp_pids,
+            "pap": calc_pap(war, salaries.get(pid, 0), team_g, dpw),
+            "is_two_way": pid in twp_pids,
             "splits": {
                 "1": _fmt_split(splits.get(1)),
                 "2": _fmt_split(splits.get(2)),
@@ -1151,7 +1172,6 @@ def get_depth_chart(team_id):
     year = state["year"]
     conn = get_db()
 
-    from web_league_context import league_averages as _load_la
     lg = _load_la()
     lg_era = lg["pitching"]["era"]
     lg_fip = lg["pitching"]["fip"]

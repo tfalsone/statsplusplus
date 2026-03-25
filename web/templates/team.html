@@ -679,7 +679,7 @@
           <th data-sort="num" data-sort-best="low" title="Caught stealing">CS</th>
           <th data-sort="num" title="Walk rate (BB/PA)" class="col-sep">BB%</th>
           <th data-sort="num" data-sort-best="low" title="Strikeout rate (K/PA)">K%</th>
-          <th data-sort="num" title="Current-season surplus (market value minus salary)" class="col-sep">Surplus</th>
+          <th data-sort="num" title="Payroll Adjusted Performance — current-season production efficiency (1–10, 5 = market neutral). Based on actual WAR pace vs. salary. May be volatile early in the season." class="col-sep">PAP</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -717,7 +717,7 @@
           <th data-sort="num" title="Quality starts (6+ IP, ≤3 ER)">QS</th>
           <th data-sort="num" title="Saves + holds">SV+H</th>
           <th data-sort="num" data-sort-best="low" title="Inherited runners scored % (lower is better)">IRS%</th>
-          <th data-sort="num" title="Current-season surplus (market value minus salary)" class="col-sep">Surplus</th>
+          <th data-sort="num" title="Payroll Adjusted Performance — current-season production efficiency (1–10, 5 = market neutral). Based on actual WAR pace vs. salary. May be volatile early in the season." class="col-sep">PAP</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -941,6 +941,8 @@
     return full + '.' + thirds;
   }
   function surpCls(v) { return v > 0 ? 'pos' : v < 0 ? 'neg' : ''; }
+  function papCls(v) { return v >= 7 ? 'pos' : v < 4 ? 'neg' : ''; }
+  function fmtPap(v) { return v != null ? v.toFixed(1) : '-'; }
 
   // League averages for conditional formatting
   var lgAvg = {{ league_avg | tojson }};
@@ -978,7 +980,7 @@
           '<td class="left"><a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a>' + twBadge + '</td>' +
           '<td>' + p.age + '</td><td>' + p.ovr + '</td>' +
           '<td class="col-sep">-</td><td class="col-sep">-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td class="col-sep">-</td><td>-</td><td>-</td><td>-</td><td>-</td><td class="col-sep">-</td><td>-</td>' +
-          '<td class="col-sep ' + surpCls(p.surplus) + '">$' + p.surplus + 'M</td>';
+          '<td class="col-sep ' + papCls(p.pap) + '">' + fmtPap(p.pap) + '</td>';
       } else {
         var L = lgAvg;
         tr.innerHTML =
@@ -1000,7 +1002,7 @@
           '<td>' + (isOvr ? s.cs : '-') + '</td>' +
           td(s.bb_pct, fmtPct(s.bb_pct), L.bb_pct, false, true) +
           td(s.k_pct, fmtPct(s.k_pct), L.k_pct, true) +
-          '<td class="col-sep ' + surpCls(p.surplus) + '">$' + p.surplus + 'M</td>';
+          '<td class="col-sep ' + papCls(p.pap) + '">' + fmtPap(p.pap) + '</td>';
       }
       tb.appendChild(tr);
     });
@@ -1022,7 +1024,7 @@
           '<td class="left"><a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a>' + twBadge + '</td>' +
           '<td>' + p.age + '</td><td>' + p.ovr + '</td>' +
           '<td class="col-sep">-</td><td class="col-sep">-</td><td>-</td><td>-</td><td class="col-sep">-</td><td>-</td><td>-</td><td>-</td><td>-</td><td class="col-sep">-</td><td>-</td><td>-</td><td>-</td><td>-</td>' +
-          '<td class="col-sep ' + surpCls(p.surplus) + '">$' + p.surplus + 'M</td>';
+          '<td class="col-sep ' + papCls(p.pap) + '">' + fmtPap(p.pap) + '</td>';
       } else {
         var svh = s.sv + s.hld;
         var L = lgAvg;
@@ -1045,7 +1047,7 @@
           '<td>' + (isOvr ? s.qs : '-') + '</td>' +
           '<td>' + (isOvr ? svh : '-') + '</td>' +
           '<td>' + (isOvr ? fmtPct(s.irs_pct) : '-') + '</td>' +
-          '<td class="col-sep ' + surpCls(p.surplus) + '">$' + p.surplus + 'M</td>';
+          '<td class="col-sep ' + papCls(p.pap) + '">' + fmtPap(p.pap) + '</td>';
       }
       tb.appendChild(tr);
     });

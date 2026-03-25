@@ -76,6 +76,7 @@ All other analysis scripts are read-only against the DB.
 | `ratings` | `refresh.py` | Scouting ratings (latest snapshot only). Full 121 columns. Old snapshots pruned on refresh. |
 | `ratings_history` | `refresh.py` | Monthly in-game rating snapshots (53 cols). Ovr/pot, hitter/pitcher tools (cur+pot), all pitch types (cur+pot), extended ratings. ~1.3MB/snapshot. |
 | `contracts` | `refresh.py` | Active contracts league-wide |
+| `contract_extensions` | `refresh.py` | Pending contract extensions (only rows with years > 0) |
 | `batting_stats` | `refresh.py` | MLB batting stats by player/year/split (32 cols, 2020-2033) |
 | `pitching_stats` | `refresh.py` | MLB pitching stats by player/year/split (52 cols, 2020-2033) |
 | `team_batting_stats` | `refresh.py` | Team-level batting aggregates (34 teams × 3 splits) |
@@ -105,7 +106,11 @@ bucket, work ethic, scouting accuracy. Key rules:
 - Knuckleball pitchers (`PotKnbl ≥ 45`) bucketed as SP regardless of supporting arsenal
 
 **League-calibrated model** — `calibrate.py` derives valuation tables from the league's own data:
-- Position-specific `OVR_TO_WAR` regression (9 buckets: C, SS, 2B, 3B, CF, COF, 1B, SP, RP)
+
+**StatsPlus API Ctrl bug** — The ratings CSV mislabels all three Ctrl columns. Data positions are correct (overall, vs_R, vs_L) but headers read `Ctrl_R`, `Ctrl_L`, `Ctrl_L` (duplicate). `_fix_ratings_header()` in `client.py` remaps: `Ctrl_R` → `Ctrl`, first `Ctrl_L` → `Ctrl_R`, second `Ctrl_L` stays. Applies to both 113-col and 126-col formats.
+
+**League-calibrated model** — `calibrate.py` derives valuation tables from the league's own data:
+- Position-specific `OVR_TO_WAR` regression (9 buckets: C, SS, 2B, 3B, CF, COF, 1B, SP, RP). All positions target mean WAR.
 - `FV_TO_PEAK_WAR_BY_POS` for each hitter bucket (COF, SS, C, CF, 2B, 3B, 1B) — derived from OVR_TO_WAR via FV→peak Ovr mapping. COF produces less WAR per FV grade than SS or CF.
 - `FV_TO_PEAK_WAR` (generic hitter average, fallback), `FV_TO_PEAK_WAR_SP`, `FV_TO_PEAK_WAR_RP`
 - `ARB_PCT` from actual arb salary outcomes
@@ -113,11 +118,17 @@ bucket, work ethic, scouting accuracy. Key rules:
 - Stored in `config/model_weights.json`. `constants.py` loads calibrated values when present, falls back to hardcoded defaults. Runs automatically during refresh (before fv_calc).
 
 **Contract surplus model** — `contract_value()` in `contract_value.py`:
-- Pre-arb control estimation from service time (AB≥300/IP≥100 qualifying seasons for hitters/SP; IP≥20 for RPs)
+- Pending contract extensions: checks `contract_extensions` table. If a pending extension exists, appends extension years and salary schedule after current contract ends instead of estimating arb control.
+- MLB scarcity premium: positional multiplier on market value (`MLB_SCARCITY` in `constants.py`). SS +10%, CF/SP +6%, C/2B/3B +3%, COF/RP −6%, 1B −9%. Makes contract model consistent with prospect scarcity.
+- `stat_peak_war` minimum: 1 qualifying season (was 2). Players with 1 season get stat-based projections instead of pure ratings fallback.
+- Pitcher role-change fallback: when current role (SP/RP) has no qualifying seasons but the opposite role does, falls back to those stats scaled by IP ratio (SP→RP × 0.46, RP→SP × 2.15).
+- Unproven player discount: when `stat_peak_war` is None (0 qualifying seasons), ratings-based WAR is discounted by 0.5×. Data showed low-Ovr players with no track record produce far below ratings projections.
+- Pre-arb control estimation from games-based fractional service time. Uses role-adjusted denominators (hitters: g/162, SP: gs/32, RP: g/65) per year, summed across career. Pre-arb uses floor(svc); arb uses ceil(svc). Age gates: age ≥30 on min salary → veteran minor league deal.
 - Arb salary projection: Ovr-based exponential model (MAE $0.53M/yr); RP-specific model calibrated from 35 arb contracts (566K × e^(0.0294 × Ovr), 25% annual raises)
 - RP arb salary discount (0.80x)
-- Non-tender gate: control truncated when projected arb salary exceeds market value
+- Non-tender gate: control truncated when projected arb salary exceeds 2× scarcity-adjusted market value
 - Young player ratings blend: when ratings WAR > stat WAR and age < peak, blends the two (50% ratings at 21, fading to 0% at peak age). Upside-only — prevents undervaluing young players with limited track records.
+- Development ramp: for young players with Pot > Ovr, projects Ovr growth toward Pot. Blends stat history (positive or negative) with ratings projection using 0.5^year decay. When no stat history, applies 0.5× discount to ratings projection.
 - Veteran decline ratings blend: when stat WAR > ratings WAR and age > 31 (30 for pitchers), blends toward ratings. Weight = `age_w × gap_ratio` (capped 0.75). Prevents stale stat history from inflating projections for declining veterans.
 - WAR floor at 0 (teams can release/DFA)
 - Pre-arb age gate: age ≥28 on league minimum treated as 1yr FA deal
@@ -210,11 +221,15 @@ Local Flask app at `web/`. Dark theme, monospace font, no CSS/JS frameworks.
 | `/` | redirect | Redirects to `/team/<my_team_id>` |
 | `/dashboard` | redirect | Redirects to `/team/<my_team_id>` |
 | `/team/<id>` | `team.html` | Team page — division standings, team stats with league rankings, MLB roster, contracts with surplus, farm top 15, summary bar (payroll, surplus, FV 50+ count) |
-| `/league` | `league.html` | League overview (vitals KPIs, 2×3 division standings grid with WC badges, scrollable power rankings with score heatmap, hero leader cards with MLB/AL/NL toggle), top 100 prospects with side panel |
+| `/league` | `league.html` | League overview (vitals KPIs, 2×3 division standings grid with WC badges, scrollable power rankings with score heatmap, hero leader cards with MLB/AL/NL toggle), top 100 prospects with side panel, trade builder tab |
 | `/player/<id>` | `player.html` | Player detail — ratings, stats, percentiles, contract, surplus projection |
 | `/settings` | `settings.html` | Team selector (`my_team_id` in `config/state.json`) |
 | `/refresh` | JSON | POST — starts background refresh (`refresh.py`). Returns 409 if already running. |
 | `/refresh/status` | JSON | GET — returns `{running, result, message}` for polling. |
+| `/api/player-search` | JSON | GET — autocomplete player search (`?q=`), up to 15 results. Used by nav search bar and trade tab. |
+| `/api/player-card/<pid>` | JSON | GET — side-panel-style player data (tools with grade bars, pitches, defense, stats) for any player. Used by comp inline expand. |
+| `/api/org-players/<tid>` | JSON | GET — full org roster (MLB + farm) for trade tab |
+| `/api/trade-value` | JSON | POST — single-player trade valuation with retention support |
 
 ### Team Page Features
 
@@ -250,9 +265,10 @@ MLB players use a three-tab layout (Overview / Stats / Contract). Prospects disp
 | File | Purpose |
 |---|---|
 | `web/app.py` | Flask routes |
-| `web/queries.py` | State helpers, league queries (prospects, leaders), re-exports from extracted modules (141 lines) |
+| `web/queries.py` | State helpers, league queries (prospects, leaders, player search), re-exports from extracted modules |
 | `web/team_queries.py` | Team-level queries — standings, roster, farm, contracts, surplus, age distribution, farm depth (494 lines) |
 | `web/player_queries.py` | Player detail query — ratings, stats, splits, contract, surplus, personality, scouting summary (329 lines) |
+| `web/trade_queries.py` | Trade tab queries — org roster (MLB + farm), trade valuation adapter |
 | `web/percentiles.py` | Percentile rankings — hitter + pitcher, with expected range markers and performance tags (264 lines) |
 | `web/templates/team.html` | Team page — standings, stats, roster, contracts, farm |
 | `web/templates/player.html` | Player detail template with macros (`grade`, `pctile_grid`) and `toggleSplits()` JS |

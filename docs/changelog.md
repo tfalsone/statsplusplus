@@ -4,6 +4,179 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 40 (2026-03-24)
+
+### Global Player Search
+- Added site-wide search bar in the nav header (between Settings and Refresh).
+- Uses existing `/api/player-search` endpoint (built for trade tab). 200ms debounced fetch, up to 15 results.
+- Dropdown shows name, position, team, level, Ovr/FV. Keyboard navigation (↑/↓/Enter/Escape).
+- Selecting a result navigates to `/player/<pid>`.
+
+### Prospect Side Panel Ratings Alignment
+- Fixed tool ordering in prospect side panel (`get_prospect_summary`) to match player page:
+  - Pitchers: Stuff → Movement → HR Allow → BABIP Allow → Control → Stamina
+  - Hitters: Hit → BABIP → Avoid K's → Gap → Power → Eye → Speed
+- Added `sub` flag to extended ratings (BABIP, Avoid K's, HR Allow, BABIP Allow) so they render with `grade-sub` styling (indented, dimmed) in the side panel.
+- Fixed defensive position sort order: now uses diamond order (C→1B→2B→3B→SS→LF→CF→RF) instead of grade descending.
+
+### Prospect MLB Comps
+- New feature: prospect player pages show 3 MLB player comps at different outcome tiers.
+- **Tiers**: Upside (p75 outcome), Likely (p50), Floor (p25) — derived from the existing career outcome probability model.
+- **Matching**: 70% tool shape similarity (Euclidean distance on normalized tool vector) + 30% WAR proximity. Tool vectors:
+  - Hitters: contact, gap, power, eye, K-avoidance, speed, primary position defense (7 dimensions)
+  - Pitchers: stuff, movement, control (3 dimensions)
+- Prospect's potential ratings are blended toward current at each tier (100%/70%/40% pot) to create different target profiles.
+- **Comp pool filters**: same bucket (OF buckets pooled), mature players only (age ≥26 or Ovr-Pot gap ≤5), no repeat players across tiers.
+- Each comp shows team, age, Ovr, and current-year stat line (slash line or ERA/IP/WAR).
+- Click-to-expand inline detail shows full grade bars (tools, pitches, defense) via new `/api/player-card/<pid>` endpoint.
+- Accordion behavior: only one comp expanded at a time.
+- New `get_player_card()` query function returns side-panel-style data for any player (MLB or prospect). Reuses `_build_tools()` helper extracted from `get_prospect_summary()`.
+
+### Prospect Page Tabs
+- Broke prospect player page into two tabs:
+  - **Overview**: Ratings + Character (left), Scouting Report + MLB Comps (right)
+  - **Valuation**: Surplus Projection (left), Career Outcome Probabilities (right)
+
+### Ratings Display Consistency
+- Avoid K's now always renders as a sub-rating of Hit (grade-sub class) on the player page, regardless of whether BABIP extended rating is present.
+- Replaced `<h2>` section dividers (Pitches, Running, Positions, Defense) with `panel-section-title` divs on the player page, matching the side panel and comp expand style.
+- Removed redundant `<thead>` column headers from tool tables on the player page.
+- Moved Velocity from a tools table row to the Pitches section title (matching side panel).
+- Changed grade bar divider lines from dark (`rgba(0,0,0,0.35)`) to light (`rgba(255,255,255,0.15)`) for consistent visibility across all contexts.
+
+### Prospect Comp Refinements
+- **Upside overshoot**: Upside tier now uses 110% blend toward potential (was 100%), allowing comps slightly beyond scouted ceiling. Proportional to development gap — raw prospects get more overshoot than near-mature ones.
+- **Self-match prevention**: Comp pool now excludes the prospect themselves (`player_id != ?`) and all other players in `prospect_fv`. Prevents MLB-level prospects from matching themselves or other developing players. Fixed 19 self-matches and 23 prospect-as-comp cases across 50 MLB prospects.
+- **MLB prospect comps**: Rookie-eligible MLB players (in both `player_surplus` and `prospect_fv`) now get comps fetched and displayed. Previously only minor league prospects got comps.
+
+### MLB Rookie Outlook Tab
+- MLB-level prospects now get an **Outlook** tab (Overview | Stats | Outlook | Contract) containing career outcome probabilities and MLB comps. Previously these were crammed into the Overview tab.
+- Tab only appears for players who have prospect comps (i.e., rookie-eligible MLB players in `prospect_fv`). Regular MLB players still get Overview | Stats | Contract.
+
+### Career Outcome Confidence Fix
+- Confidence meter now accounts for Ovr/Pot gap. Changed from additive (`conf + 0.15 × ovr/pot`) to multiplicative (`conf × (0.5 + 0.5 × ovr/pot)`). A player with Ovr 60 / Pot 78 at MLB now gets 84% confidence instead of ~100%. Near-mature players (75/78) still get 93%.
+
+### PAP Score (Payroll Adjusted Performance)
+- New metric: maps current-season production efficiency to a 1–10 scale. 5.0 = market neutral, 7+ = above average (green), <4 = below market (red).
+- **Production-based**: uses actual WAR pace (annualized from team games played) vs. salary, not ratings-based expected production. A player outperforming their ratings gets a high PAP regardless of Ovr.
+- **League-calibrated**: scale = 2 × stdev(surplus_yr1), computed by `calibrate.py` and stored in `model_weights.json`. Runs automatically on refresh.
+- **Formula**: `PAP = 5 + 5 × tanh(annualized_surplus / scale)` where `annualized_surplus = (WAR × 162/team_games) × $/WAR − salary`.
+- **Displayed on**: player page summary bar (with tooltip), team page Hitters/Pitchers tabs (replaces surplus_yr1 column), player hover popup.
+
+### Contract Extensions
+- **Discovery**: StatsPlus API exposes pending contract extensions via `/contractextension/` endpoint. 23 active extensions found in eMLB.
+- **Data pipeline**: `refresh.py` now pulls extensions and stores in new `contract_extensions` table. Only rows with `years > 0` are stored.
+- **Surplus model integration**: `contract_value.py` checks for pending extensions before estimating control. If found, appends extension years and salary schedule after current contract ends. No more guessing arb salaries for players with known future deals.
+- **Impact**: Players like Jack Trainor went from 1yr/$31.6M surplus to 6yr/$90.7M — the model now sees the full commitment.
+- **Player page**: Contract tab shows extension salaries below current contract with "Pending Extension (Xyr)" divider. All contract years now show actual game years (2033, 2034...) instead of Y1, Y2.
+
+---
+
+## Session 39 (2026-03-24)
+
+### MLB Service Time Model
+- **Problem**: `_estimate_control()` counted qualifying seasons (AB≥100 or IP≥40/20) as service years. This treated partial seasons as full years — a player with 30 games in a year got 1 full service year. Result: young players with brief callups had inflated service time and fewer estimated control years than they actually have.
+- **Fix**: Replaced qualifying-season counting with games-based fractional service time (`_estimate_service_time()`). Uses role-adjusted denominators per year: hitters g/162, SP gs/32, RP g/65. Takes max of hitter/pitcher fractions per year (two-way), caps at 1.0, sums across career.
+- **Pre-arb players** (salary == min): use `floor(svc)` for service years. Age gates tightened: age ≥30 → veteran minor league deal; age ≥28 with svc ≥3 → same.
+- **Arb players** (salary > min, 1yr deal): use `ceil(svc)` to account for unobservable roster days (bench time, IL stints). Floored at 3 (arb minimum) or 4 (salary > $5.5M).
+- **Validation**: Tested against 10 Angels players with known OOTP control years. Service time estimation: 9/10 correct. One miss (Gentry, off by 1yr) due to bench-player underestimation — 130 games played counted as 0.80 service years when OOTP counted a full year on the roster.
+- **Known limitation**: Games played underestimates roster time for bench players who are on the 26-man but don't appear in games. The StatsPlus API does not expose roster days or service time directly.
+
+### Pitcher Role-Change Stat Fallback
+- **Problem**: Pitchers who converted between SP and RP (e.g., Josh Moran SP→RP, Garrett Crochet RP→SP) had their stat history invisible to `stat_peak_war()` because it filtered to only matching-role seasons. These players were treated as "unproven" (0.5× WAR discount) despite having multiple years of MLB production.
+- **Fix**: When current role yields no qualifying seasons but the opposite role has them, fall back to those stats scaled by IP ratio: SP→RP × 0.46 (~65ip/140ip), RP→SP × 2.15 (inverse). Applied in `stat_peak_war()` in `player_utils.py`.
+- **Impact**: 38 pitchers affected. Moran went from 0.23 WAR (unproven RP) to 0.61 WAR (SP stats scaled to RP). Crochet's RP stats properly scaled up for SP projection.
+
+### Non-Tender Gate Softened
+- **Problem**: The non-tender gate truncated control when projected arb salary exceeded market value. This was too aggressive — 256 players truncated, including Ovr 50-60+ players. The unproven discount (0.5×) and recalibrated RP WAR curve made many borderline players appear non-tenderable years in advance.
+- **Fix**: Raised threshold from 1× to 2× market value. Only truncates when arb salary is double the player's projected value.
+- **Impact**: Truncated players reduced from 256 to 148. Elvis Fautsch: 3yr → 6yr control (matches OOTP). Amari Wanza: 5yr → 6yr (matches OOTP).
+
+---
+
+## Session 38 (2026-03-24)
+
+### Contract Surplus Model — Low-End MLB Player Fix
+- **Problem**: 317 of 916 MLB players had no qualifying stat history (`stat_peak_war` returned None), falling back to pure ratings-based WAR projections. Combined with 4-6 years of cheap estimated control, this massively inflated surplus for replacement-level players (e.g., Elvis Fautsch: 41 Ovr RP with −0.6 career WAR → $24.3M surplus).
+- **Fix 1 — 1-season stat_peak_war**: Lowered minimum qualifying seasons from 2 to 1 in `stat_peak_war()` and `_two_way_peak_war()`. 150 players now get stat-based projections instead of pure ratings fallback.
+- **Fix 2 — Negative stat blend in dev_ramp**: The development ramp in `contract_value()` previously ignored negative stat history (`stat_war > 0` gate). Now blends negative stat_war into future year projections with 0.5^year decay, same as positive outperformance.
+- **Fix 3 — Unproven player discount**: When `stat_war` is None (0 qualifying seasons), ratings-based WAR is discounted by 0.5×. Data showed Ovr 35-44 players with 1 qualifying season produce only 5% of ratings-based projection on average. Applied to both base `pw` and dev_ramp future years.
+- **Impact**: Fautsch $24.3M → −$1.6M. Jeff Roe (38 Ovr, pot 53) $84.7M → $35.4M. Cristopher Sanchez (43 Ovr, pot 66, legit prospect) $132.8M → $57.8M. Top established players unchanged.
+
+### RP OVR_TO_WAR Recalibration
+- **Problem**: RP regression in `calibrate.py` targeted P75 of residuals (rationale: "value the closer/setup role"). This inflated the entire curve by 2-3× at the low end. A 43 Ovr RP projected 0.82 WAR when actual mean production is ~0.30 WAR.
+- **Fix**: Removed P75 shift — RP regression now targets the mean, same as all other positions.
+- **New curve**: Ovr 43 = 0.30 WAR (was 0.82), Ovr 50 = 0.62 (was 1.21), Ovr 55 = 0.85 (was 1.38). A "solid 0.7 WAR middle reliever" now maps to ~Ovr 53.
+- **High-end RPs**: Minimally affected — elite RPs are driven by stat history, not the regression. Kerkering (Ovr 80) projects 1.50 WAR, Bednar (Ovr 75) 1.18 WAR — both reasonable.
+- **RP prospect impact**: FV_TO_PEAK_WAR_RP recalibrated downstream. FV 50 RP prospect: 0.8 peak WAR (was ~1.2).
+- **RP surplus distribution**: Average RP surplus dropped to +$1.4M. Split 151 positive / 138 negative — much more realistic.
+
+### Ctrl Rating API Bug Fix
+- **Bug**: StatsPlus API mislabels all three Ctrl columns. Data order is correct (overall, vs_R, vs_L) but labels are `Ctrl_R`, `Ctrl_L`, `Ctrl_L` (duplicate). Old fix only renamed the duplicate `Ctrl_L` → `Ctrl` but didn't fix the `Ctrl_R` ↔ `Ctrl` swap.
+- **Result**: Every pitcher's `ctrl` (overall) was actually their vs_L value, `ctrl_l` was vs_R, `ctrl_r` was overall. All historical ratings snapshots affected.
+- **Fix**: `_fix_ratings_header()` in `client.py` now remaps all three: `Ctrl_R` → `Ctrl`, first `Ctrl_L` → `Ctrl_R`, second `Ctrl_L` stays `Ctrl_L`. Updated both 113-col and 126-col expected headers.
+- **Validation**: Tested against live API data (Rasmussen: Ctrl=55, Ctrl_R=58, Ctrl_L=52 — matches game). Verified 637/637 pitchers with different splits have overall between L/R after fix.
+- **Impact**: Display-only for valuation (Ovr/Pot come from API directly, not computed from tools). Affects farm_analysis tool grades, projections ctrl component, and player page display. Requires DB wipe + re-import to fix historical snapshots.
+
+### Ratings Scale Bug Fix
+- **Bug**: `player_utils._ratings_scale` was reset to None per request, but re-read went through the module-level `league_config.config` singleton which cached the first league's scale. Switching leagues (e.g., emlb 1-100 → vmlb 20-80) kept the old scale, causing `norm()` to incorrectly convert 20-80 values (e.g., Stf 70 displayed as 60).
+- **Fix**: `before_request` in `app.py` now sets `player_utils._ratings_scale` directly from the per-request `LeagueConfig` instead of relying on the module singleton.
+
+### Onboarding UX
+- **Baseball spinner**: Onboarding data pull spinner changed from generic CSS border spinner to spinning ⚾ emoji (matches refresh button behavior).
+- **Ratings scale labels**: Removed "(raw)" and "(scouting)" parentheticals from ratings scale dropdown options — just "1-100" and "20-80".
+- **Auto-detect ratings scale**: Step 3 (configure) now checks if any Ovr/Pot exceeds 80 in the DB. If so, pre-selects "1-100"; otherwise defaults to "20-80". User can still override.
+
+---
+
+## Session 37 (2026-03-24)
+
+### Trade Review Tab — Complete
+- **Spec**: `.kiro/specs/trade-review-tab.md` — full design for interactive trade builder as a new tab on the league page (Overview | Prospects | Trade).
+- **`search_players()`** in `web/queries.py` — league-wide player search (15 results, MLB first). Reusable for future global search bar.
+- **`get_org_players()`** in `web/trade_queries.py` — full org roster (MLB + farm) with Ovr/Pot/FV/surplus/WAR. Rookie-eligible deduplicated into prospect section.
+- **`get_trade_value()`** in `web/trade_queries.py` — single-player valuation adapter. Prospect path: `prospect_surplus_with_option()` + `career_outcome_probs()` with 0.85/1.00/1.15 sensitivity. Contract path: `contract_value()` with retention support and year-by-year breakdown.
+- **3 API routes** in `web/app.py`: `GET /api/player-search?q=`, `GET /api/org-players/<tid>`, `POST /api/trade-value`.
+- **Trade tab UI** in `league.html`: two-column layout with org pickers (Side A defaults to user's team), level filter tabs, name search, MLB + prospect roster tables with click-to-add, player cards (contract: surplus/flags/retention slider/expandable breakdown; prospect: FV badge/surplus/expandable career outcome summary), cash consideration inputs, live trade balance panel with pessimistic/base/optimistic scenarios and verdict.
+- **CSS** in `style.css`: `.trade-page` grid, `.trade-card`, `.trade-table`, `.trade-balance`, `.trade-verdict`, retention slider, level filter tabs, surplus coloring.
+
+### Trade Balance Logic
+- **Direction fix**: each side's players are what that side *sends*. Net = received surplus − sent surplus.
+- **Scenario crossing**: pessimistic for Side A = sent players hit optimistic (gave up more) + received players hit pessimistic (got less). Optimistic is the reverse.
+- **Mid-season pro-rating**: first year of MLB contract surplus is scaled by `(162 − avg_GP) / 162` in the balance calculation. Prospect surplus unaffected (control period hasn't started).
+
+### UI Polish
+- Full team names in org picker dropdowns (sorted alphabetically) and balance panel rows. Abbreviations in verdict.
+- Selected team hidden from opposite side's dropdown.
+- "Side A/B" labels removed from UI.
+- Level filter tabs sorted in baseball hierarchy (MLB → AAA → AA → A → Rookie).
+- Level column uses colored pills (`lvl-badge`), only shown when "All" filter is active.
+- Table columns properly aligned (Pos/Name left, numeric right).
+- Fixed-height scrollable card area (`.trade-package`) keeps roster tables aligned across sides.
+- Balance panel centered with `max-width: 560px`.
+
+### Task List Cleanup
+- **3.8 Data wipe** marked done — was implemented in Session 28 (`/api/wipe-league` endpoint, settings UI, redirect to `/onboard`).
+- **Transaction log** marked shelved — research done, StatsPlus API does not expose transaction data.
+- **Playing time model edge case #1** (two-way players) updated — detection fixed in Session 23, PT allocation may still be off.
+- **Global player search** added to Navigation backlog — reuses `/api/player-search` endpoint from trade tab.
+
+### Aging Curve Recalibration
+- Both hitter and pitcher aging curves steepened from age 31+, calibrated from league data (same-pitcher panel tracking with 3-year rolling baseline).
+- OOTP aging is more aggressive than IRL — old curves were based on MLB research, new curves fit actual league production decline.
+- SP: age 31 0.91→0.85, age 32 0.84→0.76, age 33 0.77→0.66, age 34 0.65→0.54, age 35 0.55→0.43.
+- Hitter: age 31 0.91→0.84, age 32 0.85→0.76, age 33 0.79→0.68, age 34 0.76→0.60, age 35 0.67→0.51.
+- Impact: long-term contracts for aging players become significantly more negative. Back-loaded deals properly penalized.
+
+### MLB Scarcity Premium
+- New `MLB_SCARCITY` constant in `constants.py`: positional multiplier on market value for MLB contract players.
+- SS: 1.10, CF/SP: 1.06, C/2B/3B: 1.03, COF/RP: 0.94, 1B: 0.91.
+- Applied in `contract_value()` to market value calculation — affects surplus in `player_surplus` table, player page breakdown, trade tab valuations, CLI trade calculator.
+- Makes contract model consistent with prospect model (which already had scarcity via `_scarcity_mult`).
+- Example: Cassie Thurman (SP, 74 Ovr, age 29) went from −$7.5M (old aging, no scarcity) → −$28.6M (new aging) → −$15.4M (new aging + scarcity).
+
+---
+
 ## Session 36 (2026-03-24)
 
 ### RP-Specific Career Outcome Model

@@ -223,6 +223,23 @@ def _upsert_contracts(conn, contracts):
         [row(c) for c in contracts]
     )
 
+def _upsert_extensions(conn, extensions):
+    conn.execute("DELETE FROM contract_extensions")
+    rows = []
+    for e in extensions:
+        if e.get("years", 0) <= 0:
+            continue
+        rows.append((
+            e["player_id"], e.get("team_id"), e.get("years"), e.get("current_year"),
+            *[e.get(f"salary{i}", 0) for i in range(15)],
+            e.get("no_trade", 0), e.get("last_year_team_option", 0), e.get("last_year_player_option", 0),
+        ))
+    if rows:
+        conn.executemany(
+            f"INSERT OR REPLACE INTO contract_extensions VALUES ({','.join(['?']*22)})",
+            rows
+        )
+
 def _upsert_batting(conn, rows):
     def _avg(r): return r.get("h", 0) / r["ab"] if r.get("ab") else None
     def _obp(r):
@@ -607,6 +624,9 @@ def refresh_league(year):
     log.info("── contracts (all orgs)")
     contracts = client.get_contracts()
     _upsert_contracts(conn, contracts)
+
+    log.info("── contract extensions")
+    _upsert_extensions(conn, client.get_contract_extensions())
 
     log.info("── batting (all orgs)")
     _upsert_batting(conn, client.get_player_batting_stats(year=year, split=1))

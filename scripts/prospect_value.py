@@ -271,7 +271,8 @@ def career_outcome_probs(fv, age, level, bucket, ovr=None, pot=None, def_rating=
                   "A-Short": 0.40, "USL": 0.30, "DSL": 0.25, "Intl": 0.20}
     conf = level_conf.get(level, 0.40)
     if ovr and pot and pot > 0:
-        conf = min(1.0, conf + 0.15 * (ovr / pot))
+        realization = ovr / pot  # 0.0-1.0, how much potential is realized
+        conf *= 0.5 + 0.5 * realization  # scales conf by 50%-100% based on gap
 
     # Find middle 50% by area (bars between p75 and p25 of the distribution)
     # Total area = sum of all probs; find WAR thresholds enclosing middle 50%

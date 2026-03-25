@@ -89,7 +89,7 @@ get called up to MLB.
 
 **Step 3 — Year-by-year projection.** For each of the six control years:
 
-- WAR is adjusted for aging (peaks at 27-28, declines ~3%/yr in early 30s, steeper after)
+- WAR is adjusted for aging (peaks at 27-28, declines ~5-10%/yr from 29+, steeper for pitchers)
 - Early years are ramped (60% of peak in year 1, 80% in year 2, 100% after)
 - Market value = WAR × $/WAR, time-discounted at 5% per year
 - Salary = league minimum for pre-arb years, then arb percentages (21%/18%/34% of market value)
@@ -144,20 +144,30 @@ actual contract cost over remaining team control.
   Ovr 60 C produces ~3.7 WAR. These tables are calibrated from the league's own
   data via `calibrate.py`.
 
-For most players, stat WAR drives the projection. For young players (under peak age)
-whose ratings suggest more upside than their stats show, the model blends in ratings
-WAR — up to 50% at age 21, fading to 0% by peak age. This prevents undervaluing
-young players with limited track records.
+For most players, stat WAR drives the projection. Pitchers who convert between
+SP and RP use their prior role's stats scaled by IP ratio (SP→RP × 0.46,
+RP→SP × 2.15) rather than being treated as unproven. For young players (under
+peak age) whose ratings suggest more upside than their stats show, the model
+blends in ratings WAR — up to 50% at age 21, fading to 0% by peak age. This
+prevents undervaluing young players with limited track records.
 
 **Salary** comes from the actual contract if one exists. For pre-arb players, the
-model estimates remaining control years from service time and projects arb salaries
-using an Ovr-based exponential model calibrated to actual league arb outcomes. If
-projected arb salary exceeds market value, the player is assumed to be non-tendered
-(control truncated).
+model estimates remaining control years from games-based fractional service time —
+each year's games played is converted to a service fraction using role-adjusted
+denominators (hitters: g/162, SP: gs/32, RP: g/65), then summed across career.
+Pre-arb players use floor(svc); arb players use ceil(svc) to account for
+unobservable roster days. Arb salaries are projected using an Ovr-based exponential
+model calibrated to actual league arb outcomes. If projected arb salary exceeds
+market value, the player is assumed to be non-tendered (control truncated).
 
-**Aging curve** projects WAR decline year by year. Hitters decline ~3%/yr from 29-31,
-~6%/yr from 32-34, steeper after. Pitchers decline slightly faster from 32+ due to
-injury and velocity risk.
+**Aging curve** projects WAR decline year by year, calibrated from league data (Session 37).
+OOTP aging is more aggressive than IRL. Hitters decline ~5%/yr at 29-30, ~10%/yr 31-32,
+~12%/yr 33-35. Pitchers decline slightly faster from 31+ due to injury and velocity risk.
+
+**Scarcity premium** adjusts market value by position. Premium positions (SS +10%, CF/SP +6%,
+C/2B/3B +3%) are harder to replace on the open market, so their WAR is worth more.
+Abundant positions (COF/RP −6%, 1B −9%) are discounted. This makes the contract model
+consistent with the prospect model's scarcity adjustment.
 
 ---
 

@@ -31,7 +31,7 @@ Only load when the task directly involves that area. Use the gate table below.
 |---|---|
 | Web UI (routes, templates, queries) | `docs/system_overview.md` §Web UI, `.kiro/specs/ui_spec.md` |
 | Valuation models (FV, surplus, WAR) | `docs/assistant_gm_requirements.md`, `docs/valuation_model.md`, `scripts/constants.py`, `scripts/calibrate.py` |
-| Trade/prospect features | `docs/trade_analysis_guide.md`, `docs/trade_target_workflow.md`, `.kiro/specs/phase4-trade-analysis.md` |
+| Trade/prospect features | `docs/trade_analysis_guide.md`, `docs/trade_target_workflow.md`, `.kiro/specs/phase4-trade-analysis.md`, `.kiro/specs/trade-review-tab.md` |
 | Farm system / prospect analysis | `docs/farm_analysis_guide.md`, `docs/prospect_query_guide.md` |
 | Roster analysis | `docs/roster_analysis_guide.md`, `docs/org_overview_guide.md` |
 | Depth chart | `docs/depth_chart_spec.md` |

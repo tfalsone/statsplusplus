@@ -37,6 +37,10 @@
         </div>
         <a href="/league">League</a>
         <a href="/settings">Settings</a>
+        <div class="nav-search">
+          <input id="player-search" type="text" placeholder="Search players…" autocomplete="off" aria-label="Search players">
+          <div id="search-results" class="search-dropdown"></div>
+        </div>
         <button id="refresh-btn" class="nav-btn" title="Pull latest game data">⟳ Refresh</button>
       </nav>
     </div>
@@ -221,7 +225,12 @@
       }
       if (d.surplus != null) {
         var cls = d.surplus > 0 ? 'pos' : d.surplus < 0 ? 'neg' : '';
-        h += '<div class="pp-surplus"><span class="' + cls + '">$' + d.surplus + 'M surplus</span></div>';
+        h += '<div class="pp-surplus"><span class="' + cls + '">$' + d.surplus + 'M surplus</span>';
+        if (d.pap != null) {
+          var pcls = d.pap >= 7 ? 'pos' : d.pap < 4 ? 'neg' : '';
+          h += ' · <span class="' + pcls + '">' + d.pap.toFixed(1) + ' PAP</span>';
+        }
+        h += '</div>';
       }
       return h;
     }
@@ -283,6 +292,62 @@
     document.querySelectorAll('.ovr-color').forEach(function(el) {
       var g = parseInt(el.dataset.g);
       for (var i = 0; i < tiers.length; i++) { if (g >= tiers[i][0]) { el.style.color = tiers[i][1]; break; } }
+    });
+  })();
+  // Global player search
+  (function() {
+    var input = document.getElementById('player-search');
+    var dropdown = document.getElementById('search-results');
+    var timer = null, idx = -1, items = [];
+
+    function render(results) {
+      if (!results.length) { dropdown.style.display = 'none'; return; }
+      items = results;
+      idx = -1;
+      dropdown.innerHTML = results.map(function(r, i) {
+        var meta = r.pos + ' · ' + r.team + ' · ' + r.level;
+        if (r.ovr) meta += ' · Ovr ' + r.ovr;
+        if (r.fv) meta += ' · FV ' + r.fv;
+        return '<a href="/player/' + r.pid + '" class="search-item" data-idx="' + i + '">' +
+          '<span class="si-name">' + r.name + '</span>' +
+          '<span class="si-meta">' + meta + '</span></a>';
+      }).join('');
+      dropdown.style.display = 'block';
+    }
+
+    function highlight(n) {
+      var els = dropdown.querySelectorAll('.search-item');
+      els.forEach(function(el) { el.classList.remove('active'); });
+      idx = n;
+      if (idx >= 0 && idx < els.length) {
+        els[idx].classList.add('active');
+        els[idx].scrollIntoView({block: 'nearest'});
+      }
+    }
+
+    input.addEventListener('input', function() {
+      clearTimeout(timer);
+      var q = input.value.trim();
+      if (q.length < 2) { dropdown.style.display = 'none'; return; }
+      timer = setTimeout(function() {
+        fetch('/api/player-search?q=' + encodeURIComponent(q))
+          .then(function(r) { return r.json(); })
+          .then(render);
+      }, 200);
+    });
+
+    input.addEventListener('keydown', function(e) {
+      if (dropdown.style.display === 'none') return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); highlight(Math.min(idx + 1, items.length - 1)); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); highlight(Math.max(idx - 1, 0)); }
+      else if (e.key === 'Enter' && idx >= 0) {
+        e.preventDefault();
+        window.location.href = '/player/' + items[idx].pid;
+      } else if (e.key === 'Escape') { dropdown.style.display = 'none'; }
+    });
+
+    document.addEventListener('click', function(e) {
+      if (!e.target.closest('.nav-search')) dropdown.style.display = 'none';
     });
   })();
   </script>

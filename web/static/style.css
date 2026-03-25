@@ -72,6 +72,29 @@ nav a:hover { color: var(--text); background: rgba(15, 52, 96, 0.5); }
 .nav-btn .spin { display: inline-block; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* Global player search */
+.nav-search { position: relative; }
+#player-search {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 4px; width: 180px;
+}
+#player-search::placeholder { color: var(--text-dim); }
+#player-search:focus { outline: none; border-color: var(--accent); }
+.search-dropdown {
+  display: none; position: absolute; top: 100%; right: 0; z-index: 950;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  min-width: 300px; max-height: 400px; overflow-y: auto; margin-top: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.search-item {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 6px 12px; text-decoration: none; color: var(--text); font-size: 13px;
+  gap: 12px;
+}
+.search-item:hover, .search-item.active { background: rgba(15, 52, 96, 0.5); }
+.si-name { white-space: nowrap; }
+.si-meta { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+
 /* Refresh modal */
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.6);
@@ -335,7 +358,7 @@ a.ext-link:hover { color: var(--green); }
   left: 0; top: 0; right: 0; bottom: 0;
   background: repeating-linear-gradient(
     90deg,
-    transparent, transparent calc(16.667% - 0.5px), rgba(0,0,0,0.35) calc(16.667% - 0.5px), rgba(0,0,0,0.35) 16.667%
+    transparent, transparent calc(16.667% - 0.5px), rgba(255,255,255,0.15) calc(16.667% - 0.5px), rgba(255,255,255,0.15) 16.667%
   );
   pointer-events: none;
   z-index: 1;
@@ -987,9 +1010,9 @@ td.stat-bad  { color: var(--red); }
 /* Spinner */
 .spinner {
   width: 22px; height: 22px;
-  border: 3px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
+  font-size: 18px;
+  line-height: 22px;
+  text-align: center;
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -1053,3 +1076,77 @@ td.stat-bad  { color: var(--red); }
 .confidence-meter { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .confidence-track { flex: 1; height: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; }
 .confidence-fill { height: 100%; background: linear-gradient(90deg, #4a4, #6c6); border-radius: 4px; }
+
+/* Prospect comps */
+.comps-grid { display: flex; flex-direction: column; gap: 8px; }
+.comp-card { padding: 10px 12px; border-radius: 6px; border-left: 3px solid var(--border); background: rgba(255,255,255,0.03); }
+.comp-upside { border-left-color: #5ba4f5; }
+.comp-likely { border-left-color: #4ecca3; }
+.comp-floor { border-left-color: #f0a050; }
+.comp-tier { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 2px; }
+.comp-pct { font-weight: 700; color: var(--text); }
+.comp-name { font-size: 14px; font-weight: 600; }
+.comp-name a { color: var(--text); text-decoration: none; }
+.comp-name a:hover { color: var(--accent); }
+.comp-meta { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.comp-stats { font-size: 12px; color: var(--text); margin-top: 2px; }
+.comp-detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.comp-ratings { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; }
+.cr-tool { white-space: nowrap; }
+.cr-lbl { color: var(--text-dim); }
+.cr-pitches { display: flex; flex-wrap: wrap; gap: 4px 10px; width: 100%; margin-top: 2px; }
+.cr-pitch { white-space: nowrap; }
+.cr-stats { width: 100%; margin-top: 4px; color: var(--text-dim); font-size: 11px; }
+
+/* ── Trade Tab ── */
+.trade-page { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.trade-side { display: flex; flex-direction: column; gap: 10px; }
+.trade-org-select { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 6px 10px; font-size: 13px; width: 100%; }
+.trade-package { min-height: 180px; max-height: 280px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.trade-cards { display: flex; flex-direction: column; gap: 8px; }
+.trade-card { background: rgba(15,52,96,0.3); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; position: relative; }
+.trade-card-header { display: flex; justify-content: space-between; align-items: center; }
+.trade-card-header .player-link { font-weight: 600; }
+.trade-card-remove { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 14px; padding: 0 4px; }
+.trade-card-remove:hover { color: var(--accent); }
+.trade-card-meta { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.trade-card-flags { font-size: 11px; color: var(--accent); margin-top: 3px; }
+.trade-card-surplus { font-weight: 600; margin-top: 4px; font-size: 13px; }
+.trade-card-retention { margin-top: 6px; font-size: 12px; display: flex; align-items: center; gap: 8px; }
+.trade-card-retention input[type="range"] { flex: 1; accent-color: var(--accent); }
+.trade-card-details { margin-top: 6px; font-size: 12px; }
+.trade-card-details summary { cursor: pointer; color: var(--text-dim); }
+.trade-breakdown { width: 100%; margin-top: 4px; font-size: 11px; border-collapse: collapse; }
+.trade-breakdown th, .trade-breakdown td { padding: 2px 6px; text-align: right; }
+.trade-breakdown th:first-child, .trade-breakdown td:first-child { text-align: left; }
+.trade-outcome { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; font-size: 12px; color: var(--text-dim); }
+.trade-side-total { font-weight: 600; font-size: 13px; }
+.trade-cash { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.trade-cash input { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 4px 8px; width: 120px; font-size: 13px; }
+.trade-roster-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.trade-level-tabs { display: flex; gap: 2px; }
+.trade-lvl-btn { background: none; border: 1px solid var(--border); color: var(--text-dim); border-radius: 3px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
+.trade-lvl-btn.active { background: var(--border); color: var(--text); }
+.trade-name-filter { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 4px 8px; font-size: 12px; flex: 1; min-width: 120px; }
+.trade-roster { max-height: 400px; overflow-y: auto; }
+.trade-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.trade-table th { padding: 4px 6px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-weight: 500; font-size: 11px; position: sticky; top: 0; background: var(--bg); }
+.trade-table td { padding: 4px 6px; border-bottom: 1px solid rgba(15,52,96,0.3); }
+.trade-table .ta-l { text-align: left; }
+.trade-table .ta-r { text-align: right; }
+.trade-row { cursor: pointer; }
+.trade-row:hover { background: rgba(15,52,96,0.4); }
+.trade-row-selected { opacity: 0.4; pointer-events: none; }
+.trade-section-label { font-size: 12px; color: var(--text-dim); margin: 10px 0 4px; font-weight: 600; }
+.trade-empty { color: var(--text-dim); font-size: 13px; padding: 16px 0; text-align: center; }
+.surplus-pos { color: #2ecc71; }
+.surplus-neg { color: #e74c3c; }
+.trade-balance { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px auto 0; max-width: 560px; }
+.trade-balance h3 { margin: 0 0 10px; font-size: 14px; text-align: center; }
+.trade-balance-grid { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.trade-balance-row { display: grid; grid-template-columns: 1fr repeat(3, 90px); gap: 8px; padding: 4px 0; }
+.trade-balance-row div { text-align: right; }
+.trade-balance-row div:first-child { text-align: left; font-weight: 500; }
+.trade-balance-header { color: var(--text-dim); font-size: 11px; border-bottom: 1px solid var(--border); }
+.trade-balance-net { border-top: 1px solid var(--border); font-weight: 600; }
+.trade-verdict { margin-top: 10px; font-weight: 600; font-size: 14px; text-align: center; }

@@ -4,7 +4,7 @@ import os, sys, json
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(BASE, "scripts"))
-from player_utils import norm as _norm, height_str as _height_str, display_pos as _display_pos
+from player_utils import norm as _norm, height_str as _height_str, display_pos as _display_pos, calc_pap
 from percentiles import get_hitter_percentiles, get_pitcher_percentiles, get_fielding_percentiles
 from web_league_context import get_db, get_cfg, team_abbr_map, team_names_map, level_map, pos_map
 
@@ -217,7 +217,7 @@ def get_player(pid):
     # Surplus / FV
     ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
     surplus_row = conn.execute(
-        "SELECT bucket, ovr, surplus, fv_str FROM player_surplus WHERE player_id=? AND eval_date=?",
+        "SELECT bucket, ovr, surplus, fv_str, surplus_yr1 FROM player_surplus WHERE player_id=? AND eval_date=?",
         (pid, ed)).fetchone()
     prospect_row = conn.execute(
         "SELECT bucket, fv, fv_str, prospect_surplus, level FROM prospect_fv WHERE player_id=? AND eval_date=?",
@@ -247,13 +247,29 @@ def get_player(pid):
     c = conn.execute("SELECT years, current_year, salary_0, salary_1, salary_2, salary_3, salary_4, salary_5, salary_6, salary_7, no_trade, last_year_team_option, last_year_player_option FROM contracts WHERE player_id=?", (pid,)).fetchone()
     if c:
         yrs, cur_yr = c[0], c[1]
+        game_year = get_cfg().year
         salaries = [c[i] for i in range(2, 10)]
         remaining = [(i, salaries[i]) for i in range(cur_yr, min(yrs, 8)) if salaries[i]]
         contract = {
             "years": yrs, "current_year": cur_yr + 1,
-            "remaining": [(f"Y{i+1}", f"${s/1e6:.1f}M" if s >= 1e6 else f"${s/1e3:.0f}K") for i, s in remaining],
+            "remaining": [(str(game_year + i - cur_yr), f"${s/1e6:.1f}M" if s >= 1e6 else f"${s/1e3:.0f}K") for i, s in remaining],
             "no_trade": c[10], "team_option": c[11], "player_option": c[12],
         }
+        # Pending extension
+        ext = conn.execute("SELECT years, salary_0, salary_1, salary_2, salary_3, salary_4, salary_5, salary_6, salary_7, salary_8, salary_9, salary_10, salary_11, salary_12, salary_13, salary_14, no_trade, last_year_team_option, last_year_player_option FROM contract_extensions WHERE player_id=?", (pid,)).fetchone()
+        if ext and ext[0] > 0:
+            ext_yrs = ext[0]
+            cur_remaining = yrs - cur_yr
+            ext_start_year = game_year + cur_remaining
+            ext_sals = [(str(ext_start_year + i), f"${ext[1+i]/1e6:.1f}M" if ext[1+i] >= 1e6 else f"${ext[1+i]/1e3:.0f}K")
+                        for i in range(ext_yrs) if i < 15]
+            contract["extension"] = {
+                "years": ext_yrs,
+                "salaries": ext_sals,
+                "no_trade": ext[16],
+                "team_option": ext[17],
+                "player_option": ext[18],
+            }
 
     # League averages for ERA+/OPS+
     from web_league_context import league_averages as _load_la
@@ -335,6 +351,17 @@ def get_player(pid):
         "vl": [_pit_row(r) for r in conn.execute(_pit_sql, (pid, 2)).fetchall()],
         "vr": [_pit_row(r) for r in conn.execute(_pit_sql, (pid, 3)).fetchall()],
     }
+
+    # PAP inputs (gather before conn.close)
+    _pap_sal = 0
+    _pap_tg = 0
+    _pap_year = get_cfg().year
+    if surplus_row:
+        c_row = conn.execute("SELECT salary_0 FROM contracts WHERE player_id=?", (pid,)).fetchone()
+        _pap_sal = c_row[0] if c_row else 0
+        _pap_tg = conn.execute(
+            "SELECT COUNT(*) FROM games WHERE (home_team=? OR away_team=?) AND date>=? AND played=1",
+            (org_id, org_id, f"{_pap_year}-01-01")).fetchone()[0]
 
     conn.close()
 
@@ -455,6 +482,27 @@ def get_player(pid):
     if fielding_stats:
         fielding_pctiles = get_fielding_percentiles(pid)
 
+    # Prospect comps
+    prospect_comps = None
+    if valuation and valuation.get("type") == "prospect":
+        from queries import get_prospect_comps
+        prospect_comps = get_prospect_comps(pid)
+    elif valuation and valuation.get("type") == "MLB" and prospect_row:
+        from queries import get_prospect_comps
+        prospect_comps = get_prospect_comps(pid)
+
+    # PAP score (MLB players only — from actual production)
+    pap = None
+    if surplus_row and (bat_stats or pit_stats):
+        _war = 0
+        if bat_stats and bat_stats[-1]["year"] == _pap_year:
+            _war += bat_stats[-1]["war"]
+        if pit_stats and pit_stats[-1]["year"] == _pap_year:
+            _war += pit_stats[-1]["war"]
+        from web_league_context import league_averages as _load_la
+        _dpw = _load_la().get("dollar_per_war", 8_976_775)
+        pap = calc_pap(_war, _pap_sal, _pap_tg, _dpw)
+
     return {
         "pid": pid, "name": name, "age": age, "pos": pos_str,
         "team": team_names_map().get(org_id, "?"), "team_abbr": team_abbr_map().get(org_id, "?"), "tid": org_id,
@@ -466,6 +514,7 @@ def get_player(pid):
         "pctile_splits": pctile_splits, "fielding_stats": fielding_stats,
         "fielding_pctiles": fielding_pctiles,
         "bat_percentiles": bat_percentiles, "bat_pctile_splits": bat_pctile_splits,
+        "prospect_comps": prospect_comps, "pap": pap,
     }
 
 
@@ -533,12 +582,29 @@ def get_player_popup(pid):
     # Surplus
     ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
     sur = conn.execute(
-        "SELECT surplus, bucket FROM player_surplus WHERE player_id=? AND eval_date=?", (pid, ed)
+        "SELECT surplus, surplus_yr1, bucket FROM player_surplus WHERE player_id=? AND eval_date=?", (pid, ed)
     ).fetchone()
     # Prospect FV
     fv_row = conn.execute(
         "SELECT fv, fv_str, level, bucket FROM prospect_fv WHERE player_id=? AND eval_date=?", (pid, ed)
     ).fetchone()
+
+    # PAP from actual production
+    _pap = None
+    if sur:
+        _war = 0
+        if stats and "war" in stats:
+            _war += stats["war"] or 0
+        if bat_stats and "war" in bat_stats:
+            _war += bat_stats["war"] or 0
+        _tg = conn.execute(
+            "SELECT COUNT(*) FROM games WHERE (home_team=? OR away_team=?) AND date>=? AND played=1",
+            (org_id, org_id, f"{year}-01-01")).fetchone()[0]
+        from web_league_context import league_averages as _la_fn
+        _dpw = _la_fn().get("dollar_per_war", 8_976_775)
+        _sal = conn.execute("SELECT salary_0 FROM contracts WHERE player_id=?", (pid,)).fetchone()
+        _pap = calc_pap(_war, _sal[0] if _sal else 0, _tg, _dpw)
+
     conn.close()
 
     pos_str = ROLE_MAP.get(p["role"], pos_map().get(p["pos"], "?")) if is_pitcher else pos_map().get(p["pos"], "?")
@@ -592,6 +658,7 @@ def get_player_popup(pid):
         "stats": stats, "bat_stats": bat_stats, "ratings": ratings,
         "is_two_way": bat_stats is not None,
         "surplus": round(sur["surplus"] / 1e6, 1) if sur and sur["surplus"] else None,
+        "pap": _pap,
         "bucket": (sur["bucket"] if sur else fv_row["bucket"] if fv_row else None),
         "fv": fv_row["fv_str"] if fv_row else None,
     }

@@ -150,14 +150,6 @@ def _calibrate_ovr_to_war(conn, game_year, role_map):
         if len(data) >= MIN_REGRESSION_N:
             result = _linreg([d[0] for d in data], [d[1] for d in data])
             if result:
-                # RP regression targets P75 instead of mean: a team's primary
-                # RP at a given OVR is a closer/setup, not a mop-up arm.
-                # Shift intercept up by the mean residual of the top quartile.
-                if bucket == "RP":
-                    slope, intercept = result[0], result[1]
-                    residuals = sorted(y - (slope * x + intercept) for x, y in data)
-                    p75_shift = residuals[int(len(residuals) * 0.75)]
-                    result = (slope, intercept + p75_shift, result[2], result[3])
                 regressions[bucket] = result
                 continue
         # Fall back to grouped hitter regression
@@ -491,6 +483,19 @@ def calibrate(dry_run=False):
 
     conn.close()
 
+    # Step 5: PAP scale (2× stdev of surplus_yr1)
+    pap_scale = 25_000_000  # fallback
+    conn2 = _db.get_conn(league_dir)
+    yr1_rows = conn2.execute(
+        "SELECT surplus_yr1 FROM player_surplus WHERE surplus_yr1 IS NOT NULL AND eval_date=?",
+        (game_date,)).fetchall()
+    conn2.close()
+    if len(yr1_rows) >= 30:
+        import statistics
+        pap_scale = round(2 * statistics.stdev(r[0] for r in yr1_rows))
+    print(f"\n=== PAP_SCALE ===")
+    print(f"  N={len(yr1_rows)}  scale=${pap_scale/1e6:.1f}M")
+
     # Build output
     # OVR_TO_WAR stored as position-specific dicts for flexibility
     weights = {
@@ -506,6 +511,7 @@ def calibrate(dry_run=False):
         "ARB_PCT": {str(k): v for k, v in arb_pct.items()},
         "SCARCITY_MULT": {str(k): v for k, v in
                           (scarcity if scarcity else SCARCITY_MULT).items()},
+        "PAP_SCALE": pap_scale,
     }
 
     if dry_run:

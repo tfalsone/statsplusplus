@@ -50,6 +50,7 @@ statsplusplus/
 │   ├── queries.py              # League-wide queries (prospects, standings, leaders)
 │   ├── team_queries.py         # Team queries (roster, depth chart, contracts, farm)
 │   ├── player_queries.py       # Player detail (ratings, stats, splits, surplus)
+│   ├── trade_queries.py        # Trade tab queries (org roster, trade valuation)
 │   ├── percentiles.py          # Percentile rankings with expected-value modeling
 │   ├── templates/
 │   │   ├── base.html               # Layout (header, nav, breadcrumbs, refresh, player hover popup)
@@ -83,6 +84,7 @@ statsplusplus/
 | `ratings` | `refresh.py` | Scouting ratings (121 cols, latest snapshot only). Overall + L/R splits for batting and pitching tools, defensive grades, character traits, demographics. Extended ratings (BABIP, HRA, PBABIP, Prone) populated when the league's OOTP version provides them. PK: `(player_id, snapshot_date)`. |
 | `ratings_history` | `refresh.py` | Monthly in-game rating snapshots (53 cols). Ovr/pot, hitter/pitcher tools (cur+pot), all 12 pitch types (cur+pot), extended ratings when available. PK: `(player_id, snapshot_date)`. |
 | `contracts` | `refresh.py` | Active contracts league-wide (up to 15 salary years) |
+| `contract_extensions` | `refresh.py` | Pending contract extensions signed during the season |
 | `batting_stats` | `refresh.py` | MLB batting stats by player/year/split/team |
 | `pitching_stats` | `refresh.py` | MLB pitching stats by player/year/split/team |
 | `fielding_stats` | `refresh.py` | Player fielding stats by position (G, IP, TC, E, ZR, framing, arm) |

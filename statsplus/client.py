@@ -170,7 +170,7 @@ _RATINGS_EXPECTED_113 = (
     "IFR,IFE,IFA,TDP,OFR,OFE,OFA,CBlk,CArm,CFrm,"
     "P,C,1B,2B,3B,SS,LF,CF,RF,PotP,PotC,Pot1B,Pot2B,Pot3B,PotSS,PotLF,PotCF,PotRF,"
     "Speed,StlRt,Steal,Run,SacBunt,BuntHit,"
-    "Stf,Mov,Ctrl_R,Stf_R,Mov_R,Ctrl_L,Stf_L,Mov_L,Ctrl,"
+    "Stf,Mov,Ctrl,Stf_R,Mov_R,Ctrl_R,Stf_L,Mov_L,Ctrl_L,"
     "PotStf,PotMov,PotCtrl,Vel,GB,Stm,Hold,"
     "Fst,Snk,Cutt,Crv,Sld,Chg,Splt,Frk,CirChg,Scr,Kncrv,Knbl,"
     "PotFst,PotSnk,PotCutt,PotCrv,PotSld,PotChg,PotSplt,PotFrk,"
@@ -185,8 +185,8 @@ _RATINGS_EXPECTED_126 = (
     "IFR,IFE,IFA,TDP,OFR,OFE,OFA,CBlk,CArm,CFrm,"
     "P,C,1B,2B,3B,SS,LF,CF,RF,PotP,PotC,Pot1B,Pot2B,Pot3B,PotSS,PotLF,PotCF,PotRF,"
     "Speed,StlRt,Steal,Run,SacBunt,BuntHit,"
-    "Stf,Mov,HRA,PBABIP,Ctrl_R,Stf_R,Mov_R,HRA_R,PBABIP_R,"
-    "Ctrl_L,Stf_L,Mov_L,HRA_L,PBABIP_L,Ctrl,"
+    "Stf,Mov,HRA,PBABIP,Ctrl,Stf_R,Mov_R,HRA_R,PBABIP_R,"
+    "Ctrl_R,Stf_L,Mov_L,HRA_L,PBABIP_L,Ctrl_L,"
     "PotStf,PotMov,PotHRA,PotPBABIP,PotCtrl,Vel,GB,Stm,Hold,"
     "Fst,Snk,Cutt,Crv,Sld,Chg,Splt,Frk,CirChg,Scr,Kncrv,Knbl,"
     "PotFst,PotSnk,PotCutt,PotCrv,PotSld,PotChg,PotSplt,PotFrk,"
@@ -200,21 +200,45 @@ _RATINGS_KNOWN_FORMATS = {113: _RATINGS_EXPECTED_113, 126: _RATINGS_EXPECTED_126
 def _fix_ratings_header(text: str) -> str:
     """Fix known API header issues and validate against expected columns.
 
-    Known issue: API sends duplicate 'Ctrl_L' at positions 70 and 73.
-    Position 73 is actually overall Ctrl — rename it before DictReader
-    silently drops the real Ctrl_L (position 70).
+    Known issue: the API mislabels all three Ctrl columns. The data order is
+    correct (overall, vs_R, vs_L) but the labels are wrong:
+      - Position with overall Ctrl is labeled "Ctrl_R"
+      - Position with Ctrl vs R is labeled "Ctrl_L"
+      - Position with Ctrl vs L is labeled "Ctrl_L" (duplicate)
+    We fix by renaming based on the pattern: Ctrl_R → Ctrl, first Ctrl_L → Ctrl_R,
+    second Ctrl_L → Ctrl_L (no-op, but the first rename frees the name).
     """
     lines = text.split("\n", 1)
     if len(lines) < 2:
         return text
-    header = lines[0]
 
-    # Fix duplicate Ctrl_L: rename the SECOND occurrence to Ctrl
-    first = header.find("Ctrl_L")
-    if first >= 0:
-        second = header.find("Ctrl_L", first + 1)
-        if second >= 0:
-            header = header[:second] + "Ctrl" + header[second + 6:]
+    cols = lines[0].split(",")
+
+    # Find the three Ctrl columns by scanning for the pattern
+    ctrl_r_idx = None
+    ctrl_l_indices = []
+    for i, c in enumerate(cols):
+        if c == "Ctrl_R":
+            ctrl_r_idx = i
+        elif c == "Ctrl_L":
+            ctrl_l_indices.append(i)
+
+    if ctrl_r_idx is not None and len(ctrl_l_indices) >= 2:
+        # API sends: Ctrl_R (=overall), Ctrl_L (=vs_R), Ctrl_L (=vs_L)
+        # Fix to:    Ctrl,              Ctrl_R,          Ctrl_L
+        cols[ctrl_r_idx] = "Ctrl"
+        cols[ctrl_l_indices[0]] = "Ctrl_R"
+        # ctrl_l_indices[1] stays as Ctrl_L
+    elif ctrl_r_idx is not None and len(ctrl_l_indices) == 1:
+        # Only one Ctrl_L — just need to add overall Ctrl
+        cols[ctrl_r_idx] = "Ctrl"
+        cols[ctrl_l_indices[0]] = "Ctrl_R"
+        # No second Ctrl_L to keep — insert would shift columns, skip
+    elif len(ctrl_l_indices) >= 2:
+        # No Ctrl_R but two Ctrl_L — old assumption: second is overall
+        cols[ctrl_l_indices[1]] = "Ctrl"
+
+    header = ",".join(cols)
 
     # Validate: compare corrected header against known column formats
     actual = header.split(",")

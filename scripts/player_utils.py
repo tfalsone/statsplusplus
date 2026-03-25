@@ -453,17 +453,27 @@ def stat_peak_war(pid, bucket, bat_hist, pit_hist, two_way=None):
     if two_way and pid in two_way:
         return _two_way_peak_war(pid, bucket, bat_hist, pit_hist)
 
+    role_changed = False
     if bucket in ("SP", "RP"):
-        seasons = [s for s in pit_hist.get(pid, [])
-                   if s["is_sp"] == (bucket == "SP")]
+        is_sp = bucket == "SP"
+        seasons = [s for s in pit_hist.get(pid, []) if s["is_sp"] == is_sp]
+        # Role-change fallback: if no qualifying seasons in current role,
+        # use the other pitcher role's stats, scaled by IP ratio (SP~140ip, RP~65ip).
+        if not seasons:
+            seasons = [s for s in pit_hist.get(pid, []) if s["is_sp"] != is_sp]
+            role_changed = bool(seasons)
     else:
         seasons = bat_hist.get(pid, [])
 
-    if len(seasons) < 2:
+    if len(seasons) < 1:
         return None
     weights = [3, 2, 1][:len(seasons)]
     effective_wars = [s["war"] / (0.5 if s.get("incomplete") else 1.0) for s in seasons]
-    return sum(w * ew for w, ew in zip(weights, effective_wars)) / sum(weights)
+    result = sum(w * ew for w, ew in zip(weights, effective_wars)) / sum(weights)
+    # Scale for role change: SP→RP reduces WAR (fewer IP), RP→SP increases it.
+    if role_changed:
+        result *= 0.46 if bucket == "RP" else 2.15  # ~65ip/140ip and inverse
+    return result
 
 
 def _two_way_peak_war(pid, bucket, bat_hist, pit_hist):
@@ -472,8 +482,23 @@ def _two_way_peak_war(pid, bucket, bat_hist, pit_hist):
     bat_by_yr = {s["year"]: s["war"] for s in bat_hist.get(pid, [])}
     pit_by_yr = {s["year"]: s["war"] for s in pit_hist.get(pid, [])}
     years = sorted(set(bat_by_yr) | set(pit_by_yr), reverse=True)
-    if len(years) < 2:
+    if len(years) < 1:
         return None
     combined = [bat_by_yr.get(y, 0) + pit_by_yr.get(y, 0) for y in years[:3]]
     weights = [3, 2, 1][:len(combined)]
     return sum(w * c for w, c in zip(weights, combined)) / sum(weights)
+
+
+# ── PAP (Payroll Adjusted Performance) ──────────────────────────────────
+from math import tanh
+from constants import _w as _cw
+
+def calc_pap(war, salary, team_games, dpw):
+    """PAP from actual production. war=season WAR so far, salary=annual,
+    team_games=team GP this season, dpw=$/WAR."""
+    if war is None or team_games is None or team_games < 5:
+        return None
+    annualized = war * (162 / team_games)
+    surplus = annualized * dpw - salary
+    scale = _cw("PAP_SCALE", 25_000_000)
+    return round(5 + 5 * tanh(surplus / scale), 2)

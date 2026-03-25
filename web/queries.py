@@ -10,7 +10,7 @@ import os, sys, json
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(BASE, "scripts"))
 from player_utils import display_pos as _display_pos
-from web_league_context import get_db, get_cfg, team_abbr_map, team_names_map, pos_order, year, mlb_team_ids
+from web_league_context import get_db, get_cfg, team_abbr_map, team_names_map, pos_order, year, mlb_team_ids, level_map
 
 ROLE_MAP = {11: "SP", 12: "RP", 13: "CL"}
 
@@ -216,6 +216,37 @@ def get_pitching_leaders(yr=None, min_ip=10):
     return result
 
 
+def search_players(query):
+    """League-wide player search. Returns up to 15 matches (MLB first, then prospects)."""
+    if not query or len(query) < 2:
+        return []
+    conn = get_db()
+    conn.row_factory = None
+    _abbr = team_abbr_map()
+    _lm = level_map()
+    _pm = {str(k): v for k, v in get_cfg().pos_map.items()}
+    like = f"%{query}%"
+    rows = conn.execute("""
+        SELECT p.player_id, p.name, p.age, p.level,
+               COALESCE(NULLIF(p.parent_team_id,0), p.team_id) AS org_id,
+               r.ovr, pf.fv, COALESCE(pf.bucket, ps.bucket) AS bucket, p.pos
+        FROM players p
+        LEFT JOIN latest_ratings r ON p.player_id = r.player_id
+        LEFT JOIN prospect_fv pf ON p.player_id = pf.player_id
+        LEFT JOIN player_surplus ps ON p.player_id = ps.player_id
+        WHERE p.name LIKE ?
+        ORDER BY (CASE WHEN p.level = '1' THEN 0 ELSE 1 END),
+                 COALESCE(r.ovr, 0) DESC
+        LIMIT 15
+    """, (like,)).fetchall()
+    return [{"pid": r[0], "name": r[1], "age": r[2],
+             "level": _lm.get(str(r[3]), str(r[3])),
+             "team": _abbr.get(r[4], "FA"),
+             "ovr": r[5], "fv": r[6],
+             "pos": _display_pos(r[7], r[8]) if r[7] else _pm.get(str(r[8]), "?")}
+            for r in rows]
+
+
 def get_all_prospects():
     """All FV≥40 prospects for by-team/by-position views."""
     conn = get_db()
@@ -288,10 +319,6 @@ def get_prospect_summary(pid):
     cols = [d[0] for d in conn.execute("SELECT * FROM latest_ratings LIMIT 0").description]
     rd = dict(zip(cols, r))
 
-    def n80(v):
-        if not v: return 20
-        return round((20 + (v / 100) * 60) / 5) * 5
-
     is_pitcher = bucket in ('SP', 'RP')
 
     ovr_val = rd.get("ovr")
@@ -308,60 +335,7 @@ def get_prospect_summary(pid):
         "bats": rd.get("bats", ""), "throws": rd.get("throws", ""),
     }
 
-    if is_pitcher:
-        ctrl_r, ctrl_l = rd.get("ctrl_r", 0) or 0, rd.get("ctrl_l", 0) or 0
-        ctrl = rd.get("ctrl") or (round((ctrl_r + ctrl_l) / 2) if ctrl_r and ctrl_l else ctrl_r or ctrl_l)
-        out["tools"] = [
-            {"name": "Stuff", "cur": n80(rd.get("stf")), "fut": n80(rd.get("pot_stf"))},
-            {"name": "Movement", "cur": n80(rd.get("mov")), "fut": n80(rd.get("pot_mov"))},
-            {"name": "Control", "cur": n80(ctrl), "fut": n80(rd.get("pot_ctrl"))},
-        ]
-        if rd.get("hra") is not None:
-            out["tools"].insert(2, {"name": "HR Allow", "cur": n80(rd["hra"]), "fut": n80(rd.get("pot_hra"))})
-        if rd.get("pbabip") is not None:
-            out["tools"].insert(3 if rd.get("hra") is not None else 2,
-                                {"name": "BABIP Allow", "cur": n80(rd["pbabip"]), "fut": n80(rd.get("pot_pbabip"))})
-        if rd.get("stm"):
-            out["tools"].append({"name": "Stamina", "cur": n80(rd["stm"]), "fut": None})
-        if rd.get("vel"):
-            out["velocity"] = rd["vel"]
-        # Top pitches (up to 4, sorted by current grade)
-        pitch_map = [
-            ("fst", "Fastball"), ("snk", "Sinker"), ("crv", "Curveball"),
-            ("sld", "Slider"), ("chg", "Changeup"), ("splt", "Splitter"),
-            ("cutt", "Cutter"), ("cir_chg", "Circle Change"), ("scr", "Screwball"),
-            ("frk", "Forkball"), ("kncrv", "Knuckle Curve"), ("knbl", "Knuckleball"),
-        ]
-        pitches = []
-        for col, label in pitch_map:
-            cur, fut = rd.get(col), rd.get(f"pot_{col}")
-            if cur or fut:
-                pitches.append({"name": label, "cur": n80(cur), "fut": n80(fut)})
-        pitches.sort(key=lambda x: -(x["cur"] or 0))
-        out["pitches"] = pitches[:5]
-    else:
-        out["tools"] = [
-            {"name": "Hit", "cur": n80(rd.get("cntct")), "fut": n80(rd.get("pot_cntct"))},
-            {"name": "Gap", "cur": n80(rd.get("gap")), "fut": n80(rd.get("pot_gap"))},
-            {"name": "Power", "cur": n80(rd.get("pow")), "fut": n80(rd.get("pot_pow"))},
-            {"name": "Eye", "cur": n80(rd.get("eye")), "fut": n80(rd.get("pot_eye"))},
-            {"name": "K-Rate", "cur": n80(rd.get("ks")), "fut": n80(rd.get("pot_ks"))},
-        ]
-        if rd.get("babip") is not None:
-            out["tools"].insert(5, {"name": "BABIP", "cur": n80(rd["babip"]), "fut": n80(rd.get("pot_babip"))})
-        out["tools"].append({"name": "Speed", "cur": n80(rd.get("speed")), "fut": None})
-        # Primary defense grade for bucket
-        def_map = {"C": "c", "1B": "first_b", "2B": "second_b", "3B": "third_b",
-                    "SS": "ss", "LF": "lf", "CF": "cf", "RF": "rf"}
-        # Show all viable positions
-        defense = []
-        for pos_lbl, col in def_map.items():
-            cur = rd.get(col)
-            fut = rd.get(f"pot_{col}")
-            if cur and cur >= 20:
-                defense.append({"pos": pos_lbl, "cur": n80(cur), "fut": n80(fut)})
-        defense.sort(key=lambda x: -(x["cur"] or 0))
-        out["defense"] = defense
+    _build_tools(rd, is_pitcher, out)
 
     # Scouting summary
     import json as _json
@@ -378,11 +352,330 @@ def get_prospect_summary(pid):
     return out
 
 
+def _n80(v):
+    if not v: return 20
+    return round((20 + (v / 100) * 60) / 5) * 5
+
+
+def _build_tools(rd, is_pitcher, out):
+    """Populate out with tools, pitches, defense from a ratings dict."""
+    n80 = _n80
+    if is_pitcher:
+        ctrl_r, ctrl_l = rd.get("ctrl_r", 0) or 0, rd.get("ctrl_l", 0) or 0
+        ctrl = rd.get("ctrl") or (round((ctrl_r + ctrl_l) / 2) if ctrl_r and ctrl_l else ctrl_r or ctrl_l)
+        tools = [
+            {"name": "Stuff", "cur": n80(rd.get("stf")), "fut": n80(rd.get("pot_stf"))},
+            {"name": "Movement", "cur": n80(rd.get("mov")), "fut": n80(rd.get("pot_mov"))},
+        ]
+        if rd.get("hra") is not None:
+            tools.append({"name": "HR Allow", "cur": n80(rd["hra"]), "fut": n80(rd.get("pot_hra")), "sub": True})
+        if rd.get("pbabip") is not None:
+            tools.append({"name": "BABIP Allow", "cur": n80(rd["pbabip"]), "fut": n80(rd.get("pot_pbabip")), "sub": True})
+        tools.append({"name": "Control", "cur": n80(ctrl), "fut": n80(rd.get("pot_ctrl"))})
+        if rd.get("stm"):
+            tools.append({"name": "Stamina", "cur": n80(rd["stm"]), "fut": None})
+        out["tools"] = tools
+        if rd.get("vel"):
+            out["velocity"] = rd["vel"]
+        pitch_map = [
+            ("fst", "Fastball"), ("snk", "Sinker"), ("crv", "Curveball"),
+            ("sld", "Slider"), ("chg", "Changeup"), ("splt", "Splitter"),
+            ("cutt", "Cutter"), ("cir_chg", "Circle Change"), ("scr", "Screwball"),
+            ("frk", "Forkball"), ("kncrv", "Knuckle Curve"), ("knbl", "Knuckleball"),
+        ]
+        pitches = []
+        for col, label in pitch_map:
+            cur, fut = rd.get(col), rd.get(f"pot_{col}")
+            if cur or fut:
+                pitches.append({"name": label, "cur": n80(cur), "fut": n80(fut)})
+        pitches.sort(key=lambda x: -(x["cur"] or 0))
+        out["pitches"] = pitches[:5]
+    else:
+        tools = [
+            {"name": "Hit", "cur": n80(rd.get("cntct")), "fut": n80(rd.get("pot_cntct"))},
+        ]
+        if rd.get("babip") is not None:
+            tools.append({"name": "BABIP", "cur": n80(rd["babip"]), "fut": n80(rd.get("pot_babip")), "sub": True})
+        tools.append({"name": "Avoid K's", "cur": n80(rd.get("ks")), "fut": n80(rd.get("pot_ks")), "sub": True})
+        tools += [
+            {"name": "Gap", "cur": n80(rd.get("gap")), "fut": n80(rd.get("pot_gap"))},
+            {"name": "Power", "cur": n80(rd.get("pow")), "fut": n80(rd.get("pot_pow"))},
+            {"name": "Eye", "cur": n80(rd.get("eye")), "fut": n80(rd.get("pot_eye"))},
+        ]
+        tools.append({"name": "Speed", "cur": n80(rd.get("speed")), "fut": None})
+        out["tools"] = tools
+        def_map = {"C": "c", "1B": "first_b", "2B": "second_b", "3B": "third_b",
+                    "SS": "ss", "LF": "lf", "CF": "cf", "RF": "rf"}
+        _def_order = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"]
+        defense = []
+        for pos_lbl, col in def_map.items():
+            cur = rd.get(col)
+            fut = rd.get(f"pot_{col}")
+            if cur and cur >= 20:
+                defense.append({"pos": pos_lbl, "cur": n80(cur), "fut": n80(fut)})
+        defense.sort(key=lambda x: _def_order.index(x["pos"]))
+        out["defense"] = defense
+
+
+def get_player_card(pid):
+    """Side-panel-style card data for any player (MLB or prospect)."""
+    conn = get_db()
+    conn.row_factory = None
+    _abbr = team_abbr_map()
+
+    p = conn.execute("""
+        SELECT p.name, p.age, p.role, p.team_id, p.parent_team_id, p.level
+        FROM players p WHERE p.player_id = ?
+    """, (pid,)).fetchone()
+    if not p:
+        return None
+    name, age, role, tid, ptid, level = p
+    org_id = tid if not ptid else ptid
+    is_pitcher = role in (11, 12, 13)
+    bucket_row = conn.execute(
+        "SELECT bucket FROM player_surplus WHERE player_id=? "
+        "UNION ALL SELECT bucket FROM prospect_fv WHERE player_id=? LIMIT 1",
+        (pid, pid)).fetchone()
+    bucket = bucket_row[0] if bucket_row else ({11: "SP", 12: "RP", 13: "RP"}.get(role, "?"))
+
+    r = conn.execute("SELECT * FROM latest_ratings WHERE player_id=?", (pid,)).fetchone()
+    if not r:
+        return None
+    cols = [d[0] for d in conn.execute("SELECT * FROM latest_ratings LIMIT 0").description]
+    rd = dict(zip(cols, r))
+
+    _lm = level_map()
+    out = {
+        "pid": pid, "name": name, "age": age, "bucket": bucket,
+        "level": _lm.get(str(level), str(level)),
+        "team": _abbr.get(org_id, "FA"),
+        "ovr": rd.get("ovr"), "pot": rd.get("pot"),
+        "height": _fmt_ht(rd.get("height")),
+        "bats": rd.get("bats", ""), "throws": rd.get("throws", ""),
+    }
+    _build_tools(rd, is_pitcher, out)
+
+    # Current season stats
+    year = get_cfg().year
+    if is_pitcher:
+        st = conn.execute("""
+            SELECT SUM(ip), SUM(er)*27.0/NULLIF(SUM(outs),0), SUM(k), SUM(bb),
+                   SUM(war), SUM(sv), SUM(hld)
+            FROM pitching_stats WHERE player_id=? AND year=? AND split_id=1
+        """, (pid, year)).fetchone()
+        if st and st[0]:
+            out["stats"] = {"ip": round(st[0], 1), "era": round(st[1], 2) if st[1] else None,
+                            "k": st[2], "bb": st[3], "war": round(st[4], 1)}
+    else:
+        st = conn.execute("""
+            SELECT SUM(ab), SUM(h)*1.0/NULLIF(SUM(ab),0),
+                   (SUM(h)+SUM(bb)+SUM(hbp))*1.0/NULLIF(SUM(ab)+SUM(bb)+SUM(hbp)+SUM(sf),0),
+                   (SUM(h)-SUM(d)-SUM(t)-SUM(hr)+2*SUM(d)+3*SUM(t)+4*SUM(hr))*1.0/NULLIF(SUM(ab),0),
+                   SUM(hr), SUM(sb), SUM(war)
+            FROM batting_stats WHERE player_id=? AND year=? AND split_id=1
+        """, (pid, year)).fetchone()
+        if st and st[0]:
+            out["stats"] = {"avg": round(st[1], 3) if st[1] else None,
+                            "obp": round(st[2], 3) if st[2] else None,
+                            "slg": round(st[3], 3) if st[3] else None,
+                            "hr": st[4], "sb": st[5], "war": round(st[6], 1)}
+
+    return out
+
+
 def _fmt_ht(cm):
     if not cm: return ""
     ft = int(cm / 30.48)
     inch = round((cm % 30.48) / 2.54)
     return f"{ft}'{inch}\""
+
+
+def get_prospect_comps(pid):
+    """Find MLB player comps for a prospect at 3 outcome tiers (upside/likely/floor).
+
+    Matches prospect's scaled potential ratings against MLB players' current ratings
+    in the same bucket, weighted 70% tool shape + 30% WAR proximity.
+    Returns list of {tier, pct, comp_pid, comp_name, comp_team, comp_ovr, comp_war, comp_age}.
+    """
+    from math import sqrt
+    from player_utils import peak_war_from_ovr
+
+    conn = get_db()
+    conn.row_factory = None
+    _abbr = team_abbr_map()
+
+    _DEF_COL = {"C": "r.c", "1B": "r.first_b", "2B": "r.second_b", "3B": "r.third_b",
+                "SS": "r.ss", "LF": "r.lf", "CF": "r.cf", "RF": "r.rf", "COF": "r.cf"}
+
+    # Get prospect info
+    ed = conn.execute("SELECT MAX(eval_date) FROM prospect_fv").fetchone()[0]
+    bucket_row = conn.execute(
+        "SELECT bucket FROM prospect_fv WHERE eval_date=? AND player_id=?", (ed, pid)).fetchone()
+    if not bucket_row:
+        return None
+    def_col = _DEF_COL.get(bucket_row[0], "NULL")
+    pf = conn.execute(f"""
+        SELECT pf.fv, pf.bucket, pf.level, p.age,
+               r.cntct, r.gap, r.pow, r.eye, r.ks, r.speed,
+               r.pot_cntct, r.pot_gap, r.pot_pow, r.pot_eye, r.pot_ks,
+               r.stf, r.mov, r.ctrl, r.pot_stf, r.pot_mov, r.pot_ctrl,
+               r.ovr, r.pot, p.role, {def_col}
+        FROM prospect_fv pf
+        JOIN players p ON pf.player_id = p.player_id
+        JOIN latest_ratings r ON pf.player_id = r.player_id
+        WHERE pf.eval_date = ? AND pf.player_id = ?
+    """, (ed, pid)).fetchone()
+    if not pf:
+        return None
+
+    fv, bucket, level, age = pf[0], pf[1], pf[2], pf[3]
+    is_pit = bucket in ("SP", "RP")
+
+    if is_pit:
+        cur_tools = [pf[15] or 20, pf[16] or 20, pf[17] or 20]  # stf, mov, ctrl
+        pot_tools = [pf[18] or 20, pf[19] or 20, pf[20] or 20]
+    else:
+        def_val = pf[24] or 20
+        cur_tools = [pf[4] or 20, pf[5] or 20, pf[6] or 20, pf[7] or 20, pf[8] or 20, pf[9] or 20, def_val]
+        pot_tools = [pf[10] or 20, pf[11] or 20, pf[12] or 20, pf[13] or 20, pf[14] or 20, pf[9] or 20, def_val]
+
+    # Build target tool vectors for 3 tiers (blend cur→pot)
+    # Upside: 100% pot, Likely: 70% pot, Floor: 40% pot
+    tiers = []
+    for label, blend in [("Upside", 1.1), ("Likely", 0.7), ("Floor", 0.4)]:
+        target = [c + blend * (p - c) for c, p in zip(cur_tools, pot_tools)]
+        tiers.append((label, target))
+
+    # Get outcome probabilities for the tier WAR targets
+    import prospect_value as _pv
+    outcome = _pv.career_outcome_probs(fv, age, level, bucket,
+                                        ovr=pf[21], pot=pf[22])
+    # Extract p75/p50/p25 WAR from the tier distribution
+    total_area = sum(t["prob"] for t in outcome["tiers"])
+    cum = 0
+    p25_war, p50_war, p75_war = 0.125, 0.125, 0.125
+    p25_pct, p50_pct, p75_pct = 0, 0, 0
+    for t in outcome["tiers"]:
+        cum += t["prob"]
+        if cum < total_area * 0.25:
+            p25_war = t["war"]
+            p25_pct = t["prob"]
+        if cum < total_area * 0.50:
+            p50_war = t["war"]
+            p50_pct = t["prob"]
+        if cum < total_area * 0.75:
+            p75_war = t["war"]
+            p75_pct = t["prob"]
+    tier_wars = [p75_war, p50_war, p25_war]
+
+    # Get all MLB players in matching bucket(s)
+    of_buckets = ("CF", "COF", "LF", "RF")
+    if bucket in of_buckets:
+        bucket_clause = f"ps.bucket IN ({','.join('?' * len(of_buckets))})"
+        bucket_params = list(of_buckets)
+    else:
+        bucket_clause = "ps.bucket = ?"
+        bucket_params = [bucket]
+
+    if is_pit:
+        tool_sql = "r.stf, r.mov, r.ctrl"
+    else:
+        mlb_def_col = _DEF_COL.get(bucket, "NULL")
+        tool_sql = f"r.cntct, r.gap, r.pow, r.eye, r.ks, r.speed, {mlb_def_col}"
+
+    mlb_rows = conn.execute(f"""
+        SELECT ps.player_id, p.name, ps.ovr, p.age,
+               COALESCE(NULLIF(p.parent_team_id,0), p.team_id) AS org_id,
+               {tool_sql}
+        FROM player_surplus ps
+        JOIN players p ON ps.player_id = p.player_id
+        JOIN latest_ratings r ON ps.player_id = r.player_id
+        WHERE {bucket_clause}
+          AND (p.age >= 26 OR (r.pot - r.ovr) <= 5)
+          AND ps.player_id != ?
+          AND ps.player_id NOT IN (SELECT player_id FROM prospect_fv)
+    """, bucket_params + [pid]).fetchall()
+
+    if not mlb_rows:
+        return None
+
+    # Build MLB player list with tool vectors and WAR
+    n_tools = 3 if is_pit else 7
+    mlb_players = []
+    for row in mlb_rows:
+        tools = [row[5 + i] or 20 for i in range(n_tools)]
+        war = peak_war_from_ovr(row[2], bucket)
+        mlb_players.append({
+            "pid": row[0], "name": row[1], "ovr": row[2], "age": row[3],
+            "team": _abbr.get(row[4], "FA"), "tools": tools, "war": round(war, 2),
+        })
+
+    # For each tier, score all MLB players and pick best
+    def tool_dist(a, b):
+        return sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+    # Normalize distances for scoring
+    max_tool_dist = sqrt(n_tools * 60 ** 2)  # max possible (all 20 vs all 80)
+
+    comps = []
+    used_pids = set()
+    for (label, target), target_war in zip(tiers, tier_wars):
+        best, best_score = None, float("inf")
+        for mp in mlb_players:
+            if mp["pid"] in used_pids:
+                continue
+            td = tool_dist(target, mp["tools"]) / max_tool_dist
+            wd = abs(mp["war"] - target_war) / max(target_war, 0.5)
+            score = 0.7 * td + 0.3 * min(1.0, wd)
+            if score < best_score:
+                best_score = score
+                best = mp
+        if best:
+            used_pids.add(best["pid"])
+            comps.append({
+                "tier": label,
+                "pid": best["pid"], "name": best["name"],
+                "team": best["team"], "ovr": best["ovr"],
+                "age": best["age"], "war": best["war"],
+            })
+
+    # Attach outcome probability: P(WAR >= comp's WAR) from the tier distribution
+    for comp, target_war in zip(comps, tier_wars):
+        # Find the tier closest to the comp's projected WAR
+        prob = 0
+        for t in outcome["tiers"]:
+            if t["war"] <= comp["war"] + 0.063:  # half a tier step
+                prob = t["prob"]
+            else:
+                break
+        comp["pct"] = round(prob * 100)
+
+    # Attach current-year stats to each comp
+    yr = get_cfg().year
+    for comp in comps:
+        cpid = comp["pid"]
+        if is_pit:
+            st = conn.execute("""
+                SELECT SUM(ip), SUM(er)*27.0/NULLIF(SUM(outs),0), SUM(k), SUM(war)
+                FROM pitching_stats WHERE player_id=? AND year=? AND split_id=1
+            """, (cpid, yr)).fetchone()
+            if st and st[0]:
+                comp["line"] = f"{round(st[1],2) if st[1] else 0:.2f} ERA · {round(st[0],1)} IP · {round(st[3],1)} WAR"
+        else:
+            st = conn.execute("""
+                SELECT SUM(h)*1.0/NULLIF(SUM(ab),0),
+                       (SUM(h)+SUM(bb)+SUM(hbp))*1.0/NULLIF(SUM(ab)+SUM(bb)+SUM(hbp)+SUM(sf),0),
+                       (SUM(h)-SUM(d)-SUM(t)-SUM(hr)+2*SUM(d)+3*SUM(t)+4*SUM(hr))*1.0/NULLIF(SUM(ab),0),
+                       SUM(hr), SUM(war)
+                FROM batting_stats WHERE player_id=? AND year=? AND split_id=1
+            """, (cpid, yr)).fetchone()
+            if st and st[0]:
+                avg = f"{st[0]:.3f}"[1:]
+                obp = f"{st[1]:.3f}"[1:]
+                slg = f"{st[2]:.3f}"[1:]
+                comp["line"] = f"{avg}/{obp}/{slg} · {st[3]} HR · {round(st[4],1)} WAR"
+
+    return comps
 
 
 # ── re-exports from extracted modules ───────────────────────────────────

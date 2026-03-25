@@ -172,6 +172,7 @@ from player_utils import (
     normalize_grade,      # Raw 1-100 → 20-80 scale
     display_pos,          # Numeric pos → display string
     fmt_height,           # cm → feet/inches string
+    calc_pap,             # PAP score from WAR, salary, team games, $/WAR
 )
 ```
 
@@ -202,7 +203,7 @@ from constants import FV_TO_WAR, OVR_TO_WAR, AGING_CURVES, ARB_PCT, DISCOUNT_RAT
 
 ## Web Query Functions
 
-These are in `web/queries.py`, `web/team_queries.py`, and `web/player_queries.py`.
+These are in `web/queries.py`, `web/team_queries.py`, `web/player_queries.py`, and `web/trade_queries.py`.
 Import with `sys.path.insert(0, 'web')`. All are read-only against the DB.
 
 ### League-Level (`queries.py`)
@@ -217,6 +218,7 @@ Import with `sys.path.insert(0, 'web')`. All are read-only against the DB.
 | `get_prospect_summary(pid)` | Full prospect detail for side panel |
 | `get_batting_leaders(year, min_pa)` | Top 5 per stat, MLB/AL/NL |
 | `get_pitching_leaders(year, min_ip)` | Top 5 per stat, MLB/AL/NL |
+| `search_players(query)` | Up to 15 matching players (MLB + prospects) across all orgs |
 
 ### Team-Level (`team_queries.py`)
 
@@ -249,6 +251,13 @@ Import with `sys.path.insert(0, 'web')`. All are read-only against the DB.
 |---|---|
 | `get_player(pid)` | Full player detail — bio, ratings (current/potential), stat history, contract, surplus, splits, percentiles |
 | `get_player_popup(pid)` | Lightweight popup data — bio, key ratings, current stats, surplus |
+
+### Trade-Level (`trade_queries.py`)
+
+| Function | Returns |
+|---|---|
+| `get_org_players(team_id)` | Full org roster (MLB + farm) with Ovr/Pot/FV/surplus/WAR for trade tab |
+| `get_trade_value(player_id, retention_pct)` | Single-player valuation — contract breakdown or prospect surplus + career outcomes |
 
 ---
 
