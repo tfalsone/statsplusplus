@@ -183,7 +183,7 @@
           if (R.pitches && R.pitches.length) {
             h += '<div class="pp-pitches">';
             R.pitches.forEach(function(p) {
-              h += '<span class="pp-pitch"><span class="pp-dim">' + p.name + '</span> <span style="color:' + gradeColor(p.grade) + '">' + p.grade + '</span></span>';
+              h += '<span class="pp-pitch"><span class="pp-dim">' + p.name + '</span> <span style="color:' + gradeColor(p.pot || p.grade) + '">' + (p.pot ? p.cur + '/' + p.pot : p.grade) + '</span></span>';
             });
             h += '</div>';
           }

@@ -91,6 +91,8 @@ documentation pass.
 - `league_config.py` — single abstraction for league-specific settings.
 - SQLite WAL mode for concurrent reads during writes.
 - Web layer is read-only against the DB. All writes go through `refresh.py` or `fv_calc.py`.
+- **Do not run tests** unless the user explicitly asks to run them.
+- **Do not push to git** without explicit user permission. Prepare commits but wait for approval before pushing.
 
 ---
 

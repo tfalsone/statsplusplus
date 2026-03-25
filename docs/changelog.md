@@ -70,6 +70,22 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 - **Impact**: Players like Jack Trainor went from 1yr/$31.6M surplus to 6yr/$90.7M — the model now sees the full commitment.
 - **Player page**: Contract tab shows extension salaries below current contract with "Pending Extension (Xyr)" divider. All contract years now show actual game years (2033, 2034...) instead of Y1, Y2.
 
+### Draft Tab
+- New tab on the league page (Overview | Prospects | Trade | Draft) for amateur draft scouting and tracking.
+- **Draft pool**: CSV upload from OOTP's draft-eligible player export. Stores player IDs in `config/draft_pool.json`. Auto-detects amateur levels (10/11 for college/HS, 0 for combined) with age filters.
+- **FV calculation**: Pot-weighted for draft prospects (`dev_weight` ≈ 0.75) — a 30 Ovr / 50 Pot player grades higher than a 40 Ovr / 45 Pot player, reflecting that pre-pro Ovr doesn't indicate talent ceiling.
+- **Three table views**: All (compact), Hitters (tools + individual position defense + fielding ratings), Pitchers (tools + individual pitch potentials). All columns sortable, color-graded on the 20-80 scale.
+- **Prospect detail panel**: StatsPlus-style compact grids showing tools (Pot/Cur), pitches (Cur/Pot), Run/Bunt, Fielding (C/IF/OF), Position grades, Character traits. All color-graded.
+- **Compare mode**: Checkbox column (⚖) to select up to 2 prospects for side-by-side full detail comparison.
+- **Draft pick tracking**: "Update Picks" button fetches from `/draftv2/` API, marks drafted players in the table, populates My Picks panel with rank/FV.
+- **Position mismatch detection**: Flags players whose defensive ratings suggest a different (more/less valuable) position than their listed one (e.g., SS listed but only 1B-viable defense).
+- **State detection**: Uploaded pool → Active draft (API picks match pool) → Pre-draft (stale API, approximate pool) → No data.
+- **Filters**: All/Hitters/Pitchers views, name search, College/HS level dropdown, Hide Drafted toggle.
+- Spec: `.kiro/specs/draft-page.md`.
+
+### Refresh Fix
+- `state.json` now updated after successful refresh, not before. Previously a failed refresh (e.g., expired cookie) left the game date ahead of actual data, causing the sync badge to show "up to date" incorrectly.
+
 ---
 
 ## Session 39 (2026-03-24)

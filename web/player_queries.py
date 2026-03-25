@@ -256,7 +256,10 @@ def get_player(pid):
             "no_trade": c[10], "team_option": c[11], "player_option": c[12],
         }
         # Pending extension
-        ext = conn.execute("SELECT years, salary_0, salary_1, salary_2, salary_3, salary_4, salary_5, salary_6, salary_7, salary_8, salary_9, salary_10, salary_11, salary_12, salary_13, salary_14, no_trade, last_year_team_option, last_year_player_option FROM contract_extensions WHERE player_id=?", (pid,)).fetchone()
+        try:
+            ext = conn.execute("SELECT years, salary_0, salary_1, salary_2, salary_3, salary_4, salary_5, salary_6, salary_7, salary_8, salary_9, salary_10, salary_11, salary_12, salary_13, salary_14, no_trade, last_year_team_option, last_year_player_option FROM contract_extensions WHERE player_id=?", (pid,)).fetchone()
+        except Exception:
+            ext = None
         if ext and ext[0] > 0:
             ext_yrs = ext[0]
             cur_remaining = yrs - cur_yr
@@ -622,9 +625,10 @@ def get_player_popup(pid):
                                ("chg","CH"),("splt","SPL"),("cutt","CUT"),("cir_chg","CC"),
                                ("scr","SCR"),("frk","FRK"),("kncrv","KC"),("knbl","KN")]:
                 v = r[fld]
-                if v and v >= 25:
-                    pitches.append({"name": name, "grade": n(v)})
-            pitches.sort(key=lambda x: x["grade"], reverse=True)
+                pot_v = r["pot_" + fld] if ("pot_" + fld) in r.keys() else None
+                if (v and v >= 25) or (pot_v and pot_v >= 25):
+                    pitches.append({"name": name, "cur": n(v or 0), "pot": n(pot_v or v or 0)})
+            pitches.sort(key=lambda x: x["pot"], reverse=True)
             ratings = {
                 "stf": [n(r["stf"]), n(r["pot_stf"])] if r["stf"] else None,
                 "mov": [n(r["mov"]), n(r["pot_mov"])] if r["mov"] else None,
@@ -648,6 +652,19 @@ def get_player_popup(pid):
                 "eye": [n(r["eye"]), n(r["pot_eye"])] if r["eye"] else None,
                 "spd": n(r["speed"]) if r["speed"] else None,
             }
+            # Primary position defense
+            _def_map = {"c":"C","ss":"SS","second_b":"2B","third_b":"3B","first_b":"1B","lf":"LF","cf":"CF","rf":"RF"}
+            best_def_pos = None
+            best_def_grade = 0
+            for col, label in _def_map.items():
+                pot_col = "pot_" + col
+                v = (r[pot_col] if pot_col in r.keys() else None) or (r[col] if col in r.keys() else None) or 0
+                g = n(v)
+                if g and g > best_def_grade:
+                    best_def_grade = g
+                    best_def_pos = label
+            if best_def_pos and best_def_grade > 20:
+                ratings["def"] = {"pos": best_def_pos, "grade": best_def_grade}
 
     result = {
         "name": p["name"], "age": p["age"], "pos": pos_str,

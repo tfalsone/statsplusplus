@@ -212,7 +212,10 @@ def contract_value(player_id, retention_pct=0.0, _conn=None, _hist=None):
     remaining    = years_total - current_year
 
     # Check for pending contract extension
-    ext = conn.execute("SELECT * FROM contract_extensions WHERE player_id=?", (pid,)).fetchone()
+    try:
+        ext = conn.execute("SELECT * FROM contract_extensions WHERE player_id=?", (pid,)).fetchone()
+    except Exception:
+        ext = None
     ext_start = None  # index in breakdown where extension kicks in
 
     # For 1yr contracts, estimate full team control period

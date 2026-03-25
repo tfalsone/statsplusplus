@@ -324,13 +324,17 @@ def league():
     avg_gp = sum(r["w"] + r["l"] for r in standings) / max(len(standings), 1)
     season_remaining = max(0, (162 - avg_gp) / 162)
 
+    # Draft pool
+    draft_pool = queries.get_draft_pool()
+
     return render_template("league.html", league_groups=league_groups,
                            prospects=prospects, all_prospects=all_prospects,
                            bat_leaders=bat_leaders,
                            pit_leaders=pit_leaders, power=power,
                            summary=summary, my_abbr=my_abbr, lg_avg=lg_avg,
                            trade_orgs=trade_orgs, my_team_id=my_team_id(),
-                           season_remaining=round(season_remaining, 3))
+                           season_remaining=round(season_remaining, 3),
+                           draft_pool=draft_pool)
 
 
 @app.route("/player/<int:pid>")
@@ -374,12 +378,158 @@ def api_player_search():
     return jsonify(queries.search_players(q))
 
 
+@app.route("/api/draft-detail/<int:pid>")
+def api_draft_detail(pid):
+    """Compact grid data for draft prospect detail panel."""
+    from web_league_context import get_db, level_map
+    from player_utils import norm as _norm
+    conn = get_db()
+    from player_utils import norm as _pnorm
+    n = lambda v: _pnorm(v) if v else None
+
+    p = conn.execute("SELECT name, age, pos, role, level FROM players WHERE player_id=?", (pid,)).fetchone()
+    if not p:
+        return jsonify({"error": "not found"}), 404
+
+    r = conn.execute("SELECT * FROM latest_ratings WHERE player_id=?", (pid,)).fetchone()
+    if not r:
+        return jsonify({"error": "no ratings"}), 404
+    # Convert Row to dict for .get() access
+    r = dict(zip([d[0] for d in conn.execute("SELECT * FROM latest_ratings LIMIT 0").description], r))
+
+    is_pitcher = p["role"] in (11, 12, 13)
+    pos_str = {11:"SP",12:"RP",13:"CL"}.get(p["role"]) or {1:'P',2:'C',3:'1B',4:'2B',5:'3B',6:'SS',7:'LF',8:'CF',9:'RF'}.get(p["pos"],"?")
+
+    from player_utils import height_str as _ht
+    out = {
+        "pid": pid, "name": p["name"], "age": p["age"], "pos": pos_str,
+        "ovr": r["ovr"], "pot": r["pot"],
+        "height": _ht(r["height"]) if r["height"] else None,
+        "bats": r["bats"], "throws": r["throws"],
+        "acc": r["acc"], "inj": r["prone"],
+        "we": r["wrk_ethic"], "int": r["int_"],
+        "lead": r["lead"], "loy": r["loy"], "greed": r["greed"],
+        "is_pitcher": is_pitcher,
+    }
+
+    if is_pitcher:
+        t_l, t_p, t_c = ["Stuff","Mov"], [n(r.get("pot_stf")),n(r.get("pot_mov"))], [n(r.get("stf")),n(r.get("mov"))]
+        if r.get("hra") or r.get("pot_hra"):
+            t_l.append("HRA"); t_p.append(n(r.get("pot_hra"))); t_c.append(n(r.get("hra")))
+        if r.get("pbabip") or r.get("pot_pbabip"):
+            t_l.append("BA"); t_p.append(n(r.get("pot_pbabip"))); t_c.append(n(r.get("pbabip")))
+        t_l.append("Ctrl"); t_p.append(n(r.get("pot_ctrl"))); t_c.append(n(r.get("ctrl")))
+        out["tools"] = {"labels": t_l, "pot": t_p, "cur": t_c}
+        pitches = []
+        for fld, nm in [("fst","FB"),("snk","SI"),("crv","CB"),("sld","SL"),("chg","CH"),
+                          ("splt","SPL"),("cutt","CUT"),("cir_chg","CC"),("scr","SCR"),
+                          ("frk","FRK"),("kncrv","KC"),("knbl","KN")]:
+            cur = r.get(fld) or 0
+            pot = r.get("pot_" + fld) or 0
+            if cur >= 20 or pot >= 20:
+                pitches.append({"name": nm, "cur": n(cur), "pot": n(pot)})
+        pitches.sort(key=lambda x: x["pot"] or 0, reverse=True)
+        out["pitches"] = pitches
+        out["misc"] = {"vel": r.get("vel"), "stm": n(r.get("stm")), "hold": n(r.get("hold"))}
+    else:
+        t_l, t_p, t_c = ["Con"], [n(r.get("pot_cntct"))], [n(r.get("cntct"))]
+        if r.get("babip") or r.get("pot_babip"):
+            t_l.append("BA"); t_p.append(n(r.get("pot_babip"))); t_c.append(n(r.get("babip")))
+        if r.get("ks") or r.get("pot_ks"):
+            t_l.append("Ks"); t_p.append(n(r.get("pot_ks"))); t_c.append(n(r.get("ks")))
+        t_l += ["Gap","Pow","Eye"]
+        t_p += [n(r.get("pot_gap")),n(r.get("pot_pow")),n(r.get("pot_eye"))]
+        t_c += [n(r.get("gap")),n(r.get("pow")),n(r.get("eye"))]
+        out["tools"] = {"labels": t_l, "pot": t_p, "cur": t_c}
+        out["running"] = {
+            "labels": ["Spd", "Stl", "Run", "Sac", "Bunt"],
+            "vals": [n(r.get("speed")), n(r.get("steal")), n(r.get("run")), n(r.get("sac_bunt")), n(r.get("bunt_hit"))],
+        }
+        out["fielding"] = {
+            "cols": ["C", "IF", "OF"],
+            "range": [None, n(r.get("ifr")), n(r.get("ofr"))],
+            "error": [None, n(r.get("ife")), n(r.get("ofe"))],
+            "arm":   [n(r.get("c_arm")), n(r.get("ifa")), n(r.get("ofa"))],
+            "tdp": n(r.get("tdp")),
+            "c_blk": n(r.get("c_blk")),
+            "c_frm": n(r.get("c_frm")),
+        }
+        pos_grades = {}
+        for col, label in [("c","C"),("first_b","1B"),("second_b","2B"),("third_b","3B"),
+                           ("ss","SS"),("lf","LF"),("cf","CF"),("rf","RF")]:
+            cur = n(r.get(col) or 0)
+            pot = n(r.get("pot_" + col) or 0)
+            if (cur and cur > 20) or (pot and pot > 20):
+                pos_grades[label] = [cur, pot]
+        out["positions"] = pos_grades
+
+    return jsonify(out)
+
+
 @app.route("/api/player-card/<int:pid>")
 def api_player_card(pid):
     data = queries.get_player_card(pid)
     if not data:
         return jsonify({"error": "not found"}), 404
     return jsonify(data)
+
+
+@app.route("/api/draft-picks")
+def api_draft_picks():
+    """Fetch current draft picks from StatsPlus API."""
+    try:
+        from statsplus import client
+        from league_context import get_statsplus_cookie
+        cfg = _get_cfg()
+        slug = cfg.settings.get("statsplus_slug", "emlb")
+        cookie = get_statsplus_cookie()
+        if slug and cookie:
+            client.configure(slug, cookie)
+        raw = client.get_draft()
+        picks = [{"pid": d["ID"], "name": d["Player Name"], "team": d["Team"],
+                  "tid": d["Team ID"], "pos": d["Position"], "age": d["Age"],
+                  "round": d["Round"], "pick": d["Pick In Round"],
+                  "overall": d["Overall"], "college": d["College"]}
+                 for d in raw if d.get("ID")]
+        return jsonify({"picks": picks})
+    except Exception as e:
+        return jsonify({"picks": [], "error": str(e)})
+
+
+@app.route("/api/draft-pool-upload", methods=["POST"])
+def api_draft_pool_upload():
+    """Upload a CSV of draft-eligible player IDs exported from OOTP."""
+    import csv, io
+    from league_context import get_league_dir
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"ok": False, "error": "No file uploaded"}), 400
+    try:
+        text = f.read().decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(text))
+        # Find the player ID column (could be "ID", "Player ID", "PlayerID", etc.)
+        headers = reader.fieldnames or []
+        id_col = None
+        for h in headers:
+            if h.strip().lower().replace(" ", "").replace("_", "") in ("id", "playerid", "pid"):
+                id_col = h
+                break
+        if not id_col:
+            return jsonify({"ok": False, "error": f"No player ID column found. Headers: {headers[:10]}"}), 400
+        pids = []
+        for row in reader:
+            val = row.get(id_col, "").strip()
+            if val.isdigit():
+                pids.append(int(val))
+        if not pids:
+            return jsonify({"ok": False, "error": "No valid player IDs found in file"}), 400
+        # Store
+        pool_path = get_league_dir() / "config" / "draft_pool.json"
+        _json = __import__("json")
+        pool_path.write_text(_json.dumps({"player_ids": pids}, indent=2))
+        return jsonify({"ok": True, "count": len(pids)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
 
 
 @app.route("/api/org-players/<int:team_id>")

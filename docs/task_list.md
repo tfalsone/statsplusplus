@@ -49,6 +49,14 @@ Open work items. Completed items are in `docs/changelog.md`.
 - [x] **Trade review tab** — ~~interactive trade builder on the league page (Overview | Prospects | Trade). Org picker per side, filterable roster tables, player cards with surplus valuations, career outcome summaries for prospects, salary retention sliders, cash considerations, live trade balance with pessimistic/base/optimistic scenarios.~~ Implemented: full two-column trade builder with org picker (Side A defaults to user's team), level filters, name search, MLB + prospect roster tables, player cards with contract breakdown / career outcome details, retention sliders, cash considerations, live balance panel with verdict. Balance uses crossed scenarios (pessimistic = sent players overperform + received underperform) and mid-season pro-rating. Spec: `.kiro/specs/trade-review-tab.md`. **Done Session 37.**
 - [ ] **Power rankings trend indicators** — store historical rank snapshots (per eval_date or game_date) and show ▲/▼/— movement arrows next to rank. Needs: new DB table or JSON file for rank history, delta calculation. **LOE: Medium.**
 - [ ] **League news / milestone ticker** — horizontal strip between standings and power rankings showing notable milestones (e.g. "Player X: 3 HR from 50"). Needs: milestone detection logic from stats. **LOE: Medium-High.**
+- [x] **Draft tab** — ~~amateur draft scouting and tracking tool on the league page.~~ Implemented: Draft tab (Overview | Prospects | Trade | Draft) with CSV pool upload, FV calculation tuned for draft prospects (Pot-weighted), JS-rendered table with All/Hitters/Pitchers views, individual position defense and pitch columns, color-graded ratings, prospect detail panel with StatsPlus-style grids, compare mode (checkbox side-by-side), draft pick tracking via API, My Picks panel, search/filter/hide-drafted. Spec: `.kiro/specs/draft-page.md`. **Done Session 40.**
+
+### Draft Tab — Future Improvements
+- [ ] **Split B/T into separate columns** — allow sorting/filtering by bats and throws individually. **LOE: Low.**
+- [ ] **Pill displays** — use pill/badge styling for FV, Acc, W/E, Level columns for better visual scanning. **LOE: Low.**
+- [ ] **Advanced filtering** — min/max threshold sliders per tool (e.g., "show power ≥ 55 with contact ≥ 45"). **LOE: Medium.**
+- [ ] **Comparison diff view** — middle pane showing tool-by-tool deltas between two compared prospects. **LOE: Low.**
+- [ ] **Post-draft grades** — team haul summaries after draft completion. **LOE: Medium.**
 
 ---
 

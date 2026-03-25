@@ -228,6 +228,9 @@ Local Flask app at `web/`. Dark theme, monospace font, no CSS/JS frameworks.
 | `/refresh/status` | JSON | GET — returns `{running, result, message}` for polling. |
 | `/api/player-search` | JSON | GET — autocomplete player search (`?q=`), up to 15 results. Used by nav search bar and trade tab. |
 | `/api/player-card/<pid>` | JSON | GET — side-panel-style player data (tools with grade bars, pitches, defense, stats) for any player. Used by comp inline expand. |
+| `/api/draft-detail/<pid>` | JSON | GET — compact grid data for draft prospect detail panel (tools, pitches, fielding, positions, character). |
+| `/api/draft-picks` | JSON | GET — fetch current draft picks from StatsPlus API. |
+| `/api/draft-pool-upload` | JSON | POST — upload CSV of draft-eligible player IDs from OOTP export. |
 | `/api/org-players/<tid>` | JSON | GET — full org roster (MLB + farm) for trade tab |
 | `/api/trade-value` | JSON | POST — single-player trade valuation with retention support |
 

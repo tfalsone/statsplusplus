@@ -37,6 +37,7 @@
   <button class="tab active" data-tab="overview">Overview</button>
   <button class="tab" data-tab="prospects">Prospects</button>
   <button class="tab" data-tab="trade">Trade</button>
+  <button class="tab" data-tab="draft">Draft</button>
 </div>
 
 {# ══════ Overview Tab ══════ #}
@@ -213,6 +214,66 @@
     <div class="trade-balance-grid" id="balance-grid"></div>
     <div class="trade-verdict" id="trade-verdict"></div>
   </div>
+</div>
+
+{# ══════ Draft ══════ #}
+<div class="tab-content" id="tab-draft">
+{% if draft_pool.players %}
+  {% set dp_state = draft_pool.state %}
+
+  <div class="draft-top-panels">
+    <div class="panel draft-detail-panel" id="draft-detail-panel">
+      <div class="dd-panel-header"><span class="panel-section-title">Prospect Detail</span><button class="btn btn-sm" id="dd-clear-btn" onclick="clearCompare()" style="display:none">Clear</button></div>
+      <p class="text-dim" id="draft-detail-placeholder">Select a prospect to view ratings. Check two to compare.</p>
+      <div id="draft-detail-content" style="display:none"></div>
+    </div>
+    <div class="panel draft-my-picks-panel" id="draft-my-picks">
+      <div class="panel-section-title">My Picks</div>
+      <div id="my-picks-list"><p class="text-dim">No picks yet</p></div>
+    </div>
+  </div>
+
+  <div class="draft-board-controls">
+    <div class="draft-filters">
+      <button class="split-btn active" onclick="renderDraftBoard('all')">All</button>
+      <button class="split-btn" onclick="renderDraftBoard('hit')">Hitters</button>
+      <button class="split-btn" onclick="renderDraftBoard('pit')">Pitchers</button>
+      <button class="split-btn" id="draft-hide-picked-btn" onclick="toggleHideDrafted()">Hide Drafted</button>
+    </div>
+    <input type="text" id="draft-search" placeholder="Search name…" oninput="applyDraftFilters()" class="draft-search-input">
+    <select id="draft-level-filter" onchange="applyDraftFilters()" class="draft-search-input" style="width:auto">
+      <option value="">All Levels</option>
+      <option value="college">College</option>
+      <option value="hs">HS</option>
+    </select>
+    <div class="draft-controls-right">
+      <span class="draft-status" id="draft-status">
+        {% if dp_state == 'uploaded' %}{{ draft_pool.players|length }} prospects
+        {% elif dp_state == 'active' %}{{ draft_pool.picks|length }} picks
+        {% elif dp_state == 'pre_draft' %}Approximate{% endif %}
+      </span>
+      {% if dp_state in ('uploaded', 'active') %}
+      <button class="btn" onclick="updateDraftPicks()">⟳ Update Picks</button>
+      {% endif %}
+      <label class="btn" style="cursor:pointer">📁 Upload Pool
+        <input type="file" accept=".csv" style="display:none" onchange="uploadDraftPool(this)">
+      </label>
+    </div>
+  </div>
+  <div class="draft-board-panel">
+    <table id="draft-table" class="sortable">
+      <thead id="draft-thead"></thead>
+      <tbody id="draft-tbody"></tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="panel">
+    <p class="text-dim">No draft pool available. Upload a draft-eligible player list exported from OOTP, or wait for the draft to begin in StatsPlus.</p>
+    <label class="btn" style="cursor:pointer;margin-top:8px;display:inline-block">📁 Upload Draft Pool
+      <input type="file" accept=".csv" style="display:none" onchange="uploadDraftPool(this)">
+    </label>
+  </div>
+{% endif %}
 </div>
 
 <script>
@@ -815,6 +876,470 @@ function renderBalance() {
   document.getElementById('trade-verdict').className = 'trade-verdict ' +
     (nb > 1e6 ? 'surplus-pos' : nb < -1e6 ? 'surplus-neg' : '');
 }
+
+/* ── Draft Tab ── */
+var draftPicks = {};
+var draftDetailCache = {};
+var currentDraftView = 'all';
+var DRAFT_POOL = {{ draft_pool.players|tojson if draft_pool else '[]' }};
+var DRAFT_PICKS_INIT = {{ draft_pool.picks|tojson if draft_pool else '[]' }};
+DRAFT_PICKS_INIT.forEach(function(p) { draftPicks[p.pid] = p; });
+
+function gradeClr(v) {
+  if (v >= 70) return 'dg-elite';
+  if (v >= 60) return 'dg-plus';
+  if (v >= 50) return 'dg-avg';
+  if (v >= 40) return 'dg-below';
+  return 'dg-poor';
+}
+function gtd(v) { return '<td class="' + gradeClr(v) + '">' + v + '</td>'; }
+function charClr(v) {
+  if (!v) return '';
+  var u = v.toUpperCase();
+  if (u === 'VH' || u === 'EH') return 'dg-elite';
+  if (u === 'H') return 'dg-plus';
+  if (u === 'N' || u === 'NORMAL') return '';
+  if (u === 'L') return 'dg-below';
+  if (u === 'VL' || u === 'EL' || u === 'F') return 'dg-poor';
+  return '';
+}
+function ctd(v) { var c = charClr(v); return '<td' + (c ? ' class="' + c + '"' : '') + '>' + (v||'-') + '</td>'; }
+
+function uploadDraftPool(input) {
+  if (!input.files.length) return;
+  var fd = new FormData();
+  fd.append('file', input.files[0]);
+  fetch('/api/draft-pool-upload', {method: 'POST', body: fd})
+    .then(function(r) { return r.json(); }).then(function(d) {
+      input.value = '';
+      if (d.ok) { alert('Uploaded ' + d.count + ' players. Reloading…'); location.reload(); }
+      else { alert('Upload failed: ' + d.error); }
+    }).catch(function() { alert('Upload failed'); });
+}
+
+function toggleHideDrafted() {
+  document.getElementById('draft-hide-picked-btn').classList.toggle('active');
+  applyDraftFilters();
+}
+
+function renderDraftBoard(view) {
+  currentDraftView = view;
+  document.querySelectorAll('.draft-board-controls .draft-filters .split-btn:not(#draft-hide-picked-btn)').forEach(function(b) { b.classList.remove('active'); });
+  if (event && event.target) event.target.classList.add('active');
+  else document.querySelector('.draft-filters .split-btn').classList.add('active');
+
+  var thead = document.getElementById('draft-thead');
+  var base = '<th class="dd-cmp-th" title="Compare">⚖</th><th data-sort="num">Rk</th><th data-sort="str">Pos</th><th data-sort="str" class="left">Name</th>' +
+    '<th data-sort="num">Age</th><th data-sort="str">Lvl</th><th data-sort="num">Ovr</th><th data-sort="num">Pot</th><th data-sort="str">FV</th>';
+  if (view === 'hit') {
+    thead.innerHTML = '<tr>' + base +
+      '<th data-sort="str">B/T</th>' +
+      '<th data-sort="num" class="col-sep">Con</th><th data-sort="num">Gap</th><th data-sort="num">Pow</th>' +
+      '<th data-sort="num">Eye</th><th data-sort="num">Spd</th>' +
+      '<th data-sort="num" class="col-sep">C</th><th data-sort="num">1B</th><th data-sort="num">2B</th><th data-sort="num">3B</th>' +
+      '<th data-sort="num">SS</th><th data-sort="num">LF</th><th data-sort="num">CF</th><th data-sort="num">RF</th>' +
+      '<th data-sort="num" class="col-sep">IFR</th><th data-sort="num">IFA</th><th data-sort="num">OFR</th><th data-sort="num">OFA</th>' +
+      '<th data-sort="num">CBlk</th><th data-sort="num">CFrm</th>' +
+      '<th data-sort="str" class="col-sep">Acc</th><th data-sort="str">W/E</th><th data-sort="str">Lead</th><th data-sort="str">Int</th></tr>';
+  } else if (view === 'pit') {
+    thead.innerHTML = '<tr>' + base +
+      '<th data-sort="str">T</th>' +
+      '<th data-sort="num" class="col-sep">Stf</th><th data-sort="num">Mov</th><th data-sort="num">Ctrl</th>' +
+      '<th data-sort="str">Vel</th><th data-sort="num">Stm</th>' +
+      '<th data-sort="num" class="col-sep">FB</th><th data-sort="num">SI</th><th data-sort="num">CB</th>' +
+      '<th data-sort="num">SL</th><th data-sort="num">CH</th><th data-sort="num">CUT</th>' +
+      '<th data-sort="num">SPL</th><th data-sort="num">#P</th>' +
+      '<th data-sort="str" class="col-sep">Acc</th><th data-sort="str">W/E</th><th data-sort="str">Lead</th><th data-sort="str">Int</th></tr>';
+  } else {
+    thead.innerHTML = '<tr>' + base + '<th data-sort="str">B/T</th></tr>';
+  }
+  applyDraftFilters();
+  if (typeof initSort === 'function') initSort(document.getElementById('draft-table'));
+}
+
+function applyDraftFilters() {
+  var search = (document.getElementById('draft-search').value || '').toLowerCase();
+  var hidePicked = document.getElementById('draft-hide-picked-btn').classList.contains('active');
+  var levelFilter = document.getElementById('draft-level-filter').value;
+  var view = currentDraftView;
+
+  var filtered = DRAFT_POOL.filter(function(p) {
+    var isPit = p.pos === 'SP' || p.pos === 'RP' || p.pos === 'CL';
+    if (view === 'hit' && isPit) return false;
+    if (view === 'pit' && !isPit) return false;
+    if (search && p.name.toLowerCase().indexOf(search) < 0) return false;
+    if (hidePicked && draftPicks[p.pid]) return false;
+    if (levelFilter && p.type.toLowerCase() !== levelFilter) return false;
+    return true;
+  });
+
+  var tbody = document.getElementById('draft-tbody');
+  tbody.innerHTML = '';
+  filtered.forEach(function(p) {
+    var picked = draftPicks[p.pid];
+    var isMine = picked && picked.tid === MY_TEAM_ID;
+    var cls = 'draft-row' + (picked ? ' draft-picked' : '') + (isMine ? ' draft-mine' : '');
+    var isPit = p.pos === 'SP' || p.pos === 'RP' || p.pos === 'CL';
+    var posNote = p.pos_note ? ' <span class="draft-pos-note" title="Defense suggests ' + p.pos_note + '">→' + p.pos_note + '</span>' : '';
+    var tr = '<tr class="' + cls + '" data-pid="' + p.pid + '" data-rank="' + p.rank + '" data-fv="' + p.fv_str + '">';
+    var cmpChecked = compareSlots.indexOf(p.pid) >= 0;
+    var cmpDisabled = !cmpChecked && compareSlots.length >= 2;
+    tr += '<td class="dd-cmp-td"><input type="checkbox" class="dd-cmp-cb" data-pid="' + p.pid + '"' + (cmpChecked ? ' checked' : '') + (cmpDisabled ? ' disabled' : '') + '></td>';
+    tr += '<td>' + p.rank + '</td>';
+    tr += '<td>' + p.pos + posNote + '</td>';
+    tr += '<td class="left"><a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a></td>';
+    tr += '<td>' + p.age + '</td><td>' + p.type + '</td>';
+    tr += gtd(p.ovr) + gtd(p.pot) + '<td class="' + gradeClr(p.fv) + '"><b>' + p.fv_str + '</b></td>';
+    if (view === 'hit' && !isPit) {
+      var t = p.tools;
+      var d = p.defense || {};
+      var fl = p.field || {};
+      tr += '<td>' + (p.bats||'') + '/' + (p.throws||'') + '</td>';
+      tr += '<td class="col-sep ' + gradeClr(t.con[1]) + '">' + t.con[1] + '</td>';
+      tr += gtd(t.gap[1]) + gtd(t.pow[1]) + gtd(t.eye[1]) + gtd(t.spd);
+      ['C','1B','2B','3B','SS','LF','CF','RF'].forEach(function(pos) {
+        var v = d[pos];
+        tr += v ? '<td class="' + (pos==='C' ? 'col-sep ' : '') + gradeClr(v) + '">' + v + '</td>' : '<td' + (pos==='C' ? ' class="col-sep"' : '') + '>-</td>';
+      });
+      // Fielding ratings
+      ['ifr','ifa','ofr','ofa','cblk','cfrm'].forEach(function(k, i) {
+        var v = fl[k];
+        tr += v && v > 20 ? '<td class="' + (i===0 ? 'col-sep ' : '') + gradeClr(v) + '">' + v + '</td>' : '<td' + (i===0 ? ' class="col-sep"' : '') + '>-</td>';
+      });
+      tr += ctd(p.acc).replace('<td','<td class="col-sep"');
+      tr += ctd(p.we) + ctd(p.lead) + ctd(p.int);
+    } else if (view === 'pit' && isPit) {
+      var t = p.tools;
+      var pt = t.pitches || {};
+      tr += '<td>' + (p.throws||'') + '</td>';
+      tr += '<td class="col-sep ' + gradeClr(t.stf[1]) + '">' + t.stf[1] + '</td>';
+      tr += gtd(t.mov[1]) + gtd(t.ctrl[1]);
+      tr += '<td>' + (t.vel || '-') + '</td>' + gtd(t.stm);
+      ['FB','SI','CB','SL','CH','CUT','SPL'].forEach(function(pn) {
+        var v = pt[pn];
+        tr += v ? '<td class="' + (pn==='FB' ? 'col-sep ' : '') + gradeClr(v) + '">' + v + '</td>' : '<td' + (pn==='FB' ? ' class="col-sep"' : '') + '>-</td>';
+      });
+      tr += '<td>' + t.num_pitches + '</td>';
+      tr += ctd(p.acc).replace('<td','<td class="col-sep"');
+      tr += ctd(p.we) + ctd(p.lead) + ctd(p.int);
+    } else {
+      // All view - just B/T
+      tr += '<td>' + (p.bats||'') + '/' + (p.throws||'') + '</td>';
+    }
+    tr += '</tr>';
+    tbody.insertAdjacentHTML('beforeend', tr);
+  });
+
+  // Checkbox compare handlers
+  tbody.querySelectorAll('.dd-cmp-cb').forEach(function(cb) {
+    cb.addEventListener('change', function(e) {
+      e.stopPropagation();
+      var pid = parseInt(this.dataset.pid);
+      if (this.checked) {
+        if (compareSlots.length < 2) compareSlots.push(pid);
+      } else {
+        compareSlots = compareSlots.filter(function(p) { return p !== pid; });
+      }
+      updateCompareState();
+    });
+  });
+
+  // Row click still shows single detail
+  tbody.querySelectorAll('.draft-row').forEach(function(row) {
+    row.addEventListener('click', function(e) {
+      if (e.target.tagName === 'A' || e.target.tagName === 'INPUT') return;
+      tbody.querySelectorAll('.draft-row').forEach(function(r) { r.classList.remove('selected'); });
+      this.classList.add('selected');
+      showDraftDetail(this.dataset.pid);
+    });
+  });
+}
+
+var compareSlots = [];
+
+function updateCompareState() {
+  // Disable unchecked boxes when 2 are selected
+  document.querySelectorAll('.dd-cmp-cb').forEach(function(cb) {
+    var pid = parseInt(cb.dataset.pid);
+    if (compareSlots.indexOf(pid) < 0) {
+      cb.disabled = compareSlots.length >= 2;
+    }
+  });
+  // Show clear button
+  document.getElementById('dd-clear-btn').style.display = compareSlots.length > 0 ? '' : 'none';
+  // Render
+  if (compareSlots.length === 2) {
+    showCompare(compareSlots[0], compareSlots[1]);
+  } else if (compareSlots.length === 1) {
+    showDraftDetail(compareSlots[0]);
+  } else {
+    var content = document.getElementById('draft-detail-content');
+    var placeholder = document.getElementById('draft-detail-placeholder');
+    content.style.display = 'none';
+    placeholder.style.display = '';
+  }
+}
+
+function clearCompare() {
+  compareSlots = [];
+  document.querySelectorAll('.dd-cmp-cb').forEach(function(cb) {
+    cb.checked = false;
+    cb.disabled = false;
+  });
+  updateCompareState();
+}
+
+function showCompare(pidA, pidB) {
+  var content = document.getElementById('draft-detail-content');
+  var placeholder = document.getElementById('draft-detail-placeholder');
+
+  function fetchDetail(pid) {
+    if (draftDetailRaw[pid]) return Promise.resolve(draftDetailRaw[pid]);
+    return fetch('/api/draft-detail/' + pid).then(function(r) { return r.json(); }).then(function(d) {
+      draftDetailRaw[pid] = d;
+      return d;
+    });
+  }
+
+  function renderOne(d) {
+    function gc(v) { return v ? gradeClr(v) : ''; }
+    function cv(v) { return v ? '<td class="' + gc(v) + '">' + v + '</td>' : '<td>-</td>'; }
+
+    var h = '<div class="dd-header">' + d.pos + ' <strong>' + d.name + '</strong> (' + d.age + ') ' +
+      'B/T ' + (d.bats||'?') + '/' + (d.throws||'?') +
+      ' Ovr <span class="' + gc(d.ovr) + '">' + d.ovr + '</span>' +
+      ' Pot <span class="' + gc(d.pot) + '">' + d.pot + '</span>' +
+      ' Acc <span class= + charClr(d.acc) + >' + (d.acc||'?') + '</span>' +
+      (d.inj && d.inj !== 'Normal' ? ' Inj ' + d.inj : '') +
+      ' <a href="/player/' + d.pid + '" class="ext-link">↗</a></div>';
+
+    h += '<div class="dd-grids">';
+    var t = d.tools;
+    h += '<table class="dd-grid"><thead><tr><td></td>';
+    t.labels.forEach(function(l) { h += '<th>' + l + '</th>'; });
+    h += '</tr></thead><tbody><tr><td class="dd-rl">Pot</td>';
+    t.pot.forEach(function(v) { h += cv(v); });
+    h += '</tr><tr><td class="dd-rl">Cur</td>';
+    t.cur.forEach(function(v) { h += cv(v); });
+    h += '</tr></tbody></table>';
+
+    if (d.is_pitcher) {
+      if (d.pitches && d.pitches.length) {
+        h += '<table class="dd-grid"><thead><tr><td>Pitches</td><th>Cur</th><th>Pot</th></tr></thead><tbody>';
+        d.pitches.forEach(function(p) {
+          h += '<tr><td class="dd-rl">' + p.name + '</td>' + cv(p.cur) + cv(p.pot) + '</tr>';
+        });
+        h += '</tbody></table>';
+      }
+      h += '<table class="dd-grid"><thead><tr><th colspan="2">Misc</th></tr></thead><tbody>';
+      if (d.misc.vel) h += '<tr><td class="dd-rl">Velo</td><td>' + d.misc.vel + '</td></tr>';
+      h += '<tr><td class="dd-rl">Stam</td>' + cv(d.misc.stm) + '</tr>';
+      h += '<tr><td class="dd-rl">Hold</td>' + cv(d.misc.hold) + '</tr>';
+      h += '</tbody></table>';
+      h += '<table class="dd-grid"><thead><tr><th colspan="2">Character</th></tr></thead><tbody>';
+      h += '<tr><td class="dd-rl">W/E</td>' + ctd(d.we) + '</tr>';
+      h += '<tr><td class="dd-rl">Leader</td>' + ctd(d.lead) + '</tr>';
+      h += '<tr><td class="dd-rl">Loyalty</td>' + ctd(d.loy) + '</tr>';
+      h += '<tr><td class="dd-rl">Greed</td>' + ctd(d.greed) + '</tr>';
+      h += '<tr><td class="dd-rl">Intel</td>' + ctd(d.int) + '</tr>';
+      h += '</tbody></table>';
+    } else {
+      var rn = d.running;
+      h += '<table class="dd-grid"><thead><tr><th colspan="2">Run/Bunt</th></tr></thead><tbody>';
+      for (var i = 0; i < rn.labels.length; i++) {
+        h += '<tr><td class="dd-rl">' + rn.labels[i] + '</td>' + cv(rn.vals[i]) + '</tr>';
+      }
+      h += '</tbody></table>';
+      var fl = d.fielding;
+      h += '<table class="dd-grid"><thead><tr><td>Field</td>';
+      fl.cols.forEach(function(c) { h += '<th>' + c + '</th>'; });
+      h += '</tr></thead><tbody>';
+      h += '<tr><td class="dd-rl">Range</td>'; fl.range.forEach(function(v) { h += cv(v); }); h += '</tr>';
+      h += '<tr><td class="dd-rl">Error</td>'; fl.error.forEach(function(v) { h += cv(v); }); h += '</tr>';
+      h += '<tr><td class="dd-rl">Arm</td>'; fl.arm.forEach(function(v) { h += cv(v); }); h += '</tr>';
+      if (fl.tdp) h += '<tr><td class="dd-rl">TDP</td><td></td>' + cv(fl.tdp) + '<td></td></tr>';
+      if (fl.c_blk) h += '<tr><td class="dd-rl">C Blk</td>' + cv(fl.c_blk) + '<td></td><td></td></tr>';
+      if (fl.c_frm) h += '<tr><td class="dd-rl">C Frm</td>' + cv(fl.c_frm) + '<td></td><td></td></tr>';
+      h += '</tbody></table>';
+      var pos = d.positions;
+      if (pos && Object.keys(pos).length) {
+        var pk = Object.keys(pos);
+        h += '<table class="dd-grid"><thead><tr><td>Pos</td>';
+        pk.forEach(function(p) { h += '<th>' + p + '</th>'; });
+        h += '</tr></thead><tbody><tr><td class="dd-rl">Cur</td>';
+        pk.forEach(function(p) { h += cv(pos[p][0]); });
+        h += '</tr><tr><td class="dd-rl">Pot</td>';
+        pk.forEach(function(p) { h += cv(pos[p][1]); });
+        h += '</tr></tbody></table>';
+      }
+      h += '<table class="dd-grid"><thead><tr><th colspan="2">Character</th></tr></thead><tbody>';
+      h += '<tr><td class="dd-rl">W/E</td>' + ctd(d.we) + '</tr>';
+      h += '<tr><td class="dd-rl">Leader</td>' + ctd(d.lead) + '</tr>';
+      h += '<tr><td class="dd-rl">Loyalty</td>' + ctd(d.loy) + '</tr>';
+      h += '<tr><td class="dd-rl">Greed</td>' + ctd(d.greed) + '</tr>';
+      h += '<tr><td class="dd-rl">Intel</td>' + ctd(d.int) + '</tr>';
+      h += '</tbody></table>';
+    }
+    h += '</div>';
+    return h;
+  }
+
+  Promise.all([fetchDetail(pidA), fetchDetail(pidB)]).then(function(results) {
+    var h = '<div class="dd-compare">';
+    h += '<div class="dd-cmp-side">' + renderOne(results[0]) + '</div>';
+    h += '<div class="dd-cmp-divider"></div>';
+    h += '<div class="dd-cmp-side">' + renderOne(results[1]) + '</div>';
+    h += '</div>';
+    placeholder.style.display = 'none';
+    content.style.display = 'block';
+    content.innerHTML = h;
+  });
+}
+
+var draftDetailRaw = {};
+
+function showDraftDetail(pid) {
+  var content = document.getElementById('draft-detail-content');
+  var placeholder = document.getElementById('draft-detail-placeholder');
+  if (draftDetailCache[pid]) {
+    placeholder.style.display = 'none'; content.style.display = 'block';
+    content.innerHTML = draftDetailCache[pid]; return;
+  }
+  fetch('/api/draft-detail/' + pid).then(function(resp) { return resp.json(); }).then(function(d) {
+    function gc(v) { return v ? gradeClr(v) : ''; }
+    function cv(v) { return v ? '<td class="' + gc(v) + '">' + v + '</td>' : '<td>-</td>'; }
+
+    // Header
+    var h = '<div class="dd-header">' + d.pos + ' <strong>' + d.name + '</strong> (' + d.age + ') ' +
+      'B/T ' + (d.bats||'?') + '/' + (d.throws||'?') +
+      ' Ovr <span class="' + gc(d.ovr) + '">' + d.ovr + '</span>' +
+      ' Pot <span class="' + gc(d.pot) + '">' + d.pot + '</span>' +
+      ' Acc <span class= + charClr(d.acc) + >' + (d.acc||'?') + '</span>' +
+      (d.inj && d.inj !== 'Normal' ? ' Inj ' + d.inj : '') +
+      ' <a href="/player/' + pid + '" class="ext-link">↗</a></div>';
+
+    h += '<div class="dd-grids">';
+
+    // Tools grid (shared for hitter/pitcher)
+    var t = d.tools;
+    h += '<table class="dd-grid"><thead><tr><td></td>';
+    t.labels.forEach(function(l) { h += '<th>' + l + '</th>'; });
+    h += '</tr></thead><tbody><tr><td class="dd-rl">Pot</td>';
+    t.pot.forEach(function(v) { h += cv(v); });
+    h += '</tr><tr><td class="dd-rl">Cur</td>';
+    t.cur.forEach(function(v) { h += cv(v); });
+    h += '</tr></tbody></table>';
+
+    if (d.is_pitcher) {
+      // Pitches
+      if (d.pitches && d.pitches.length) {
+        h += '<table class="dd-grid"><thead><tr><td>Pitches</td><th>Cur</th><th>Pot</th></tr></thead><tbody>';
+        d.pitches.forEach(function(p) {
+          h += '<tr><td class="dd-rl">' + p.name + '</td>' + cv(p.cur) + cv(p.pot) + '</tr>';
+        });
+        h += '</tbody></table>';
+      }
+      // Misc
+      h += '<table class="dd-grid"><thead><tr><th colspan="2">Misc</th></tr></thead><tbody>';
+      if (d.misc.vel) h += '<tr><td class="dd-rl">Velo</td><td>' + d.misc.vel + '</td></tr>';
+      h += '<tr><td class="dd-rl">Stam</td>' + cv(d.misc.stm) + '</tr>';
+      h += '<tr><td class="dd-rl">Hold</td>' + cv(d.misc.hold) + '</tr>';
+      h += '</tbody></table>';
+      // Character (vertical)
+      h += '<table class="dd-grid"><thead><tr><th colspan="2">Character</th></tr></thead><tbody>';
+      h += '<tr><td class="dd-rl">W/E</td>' + ctd(d.we) + '</tr>';
+      h += '<tr><td class="dd-rl">Leader</td>' + ctd(d.lead) + '</tr>';
+      h += '<tr><td class="dd-rl">Loyalty</td>' + ctd(d.loy) + '</tr>';
+      h += '<tr><td class="dd-rl">Greed</td>' + ctd(d.greed) + '</tr>';
+      h += '<tr><td class="dd-rl">Intel</td>' + ctd(d.int) + '</tr>';
+      h += '</tbody></table>';
+    } else {
+      // Running (vertical)
+      var rn = d.running;
+      h += '<table class="dd-grid"><thead><tr><th colspan="2">Run/Bunt</th></tr></thead><tbody>';
+      for (var i = 0; i < rn.labels.length; i++) {
+        h += '<tr><td class="dd-rl">' + rn.labels[i] + '</td>' + cv(rn.vals[i]) + '</tr>';
+      }
+      h += '</tbody></table>';
+
+      // Fielding + Positions side by side
+      var fl = d.fielding;
+      h += '<table class="dd-grid"><thead><tr><td>Field</td>';
+      fl.cols.forEach(function(c) { h += '<th>' + c + '</th>'; });
+      h += '</tr></thead><tbody>';
+      h += '<tr><td class="dd-rl">Range</td>'; fl.range.forEach(function(v) { h += cv(v); }); h += '</tr>';
+      h += '<tr><td class="dd-rl">Error</td>'; fl.error.forEach(function(v) { h += cv(v); }); h += '</tr>';
+      h += '<tr><td class="dd-rl">Arm</td>'; fl.arm.forEach(function(v) { h += cv(v); }); h += '</tr>';
+      if (fl.tdp) h += '<tr><td class="dd-rl">TDP</td><td></td>' + cv(fl.tdp) + '<td></td></tr>';
+      if (fl.c_blk) h += '<tr><td class="dd-rl">C Blk</td>' + cv(fl.c_blk) + '<td></td><td></td></tr>';
+      if (fl.c_frm) h += '<tr><td class="dd-rl">C Frm</td>' + cv(fl.c_frm) + '<td></td><td></td></tr>';
+      h += '</tbody></table>';
+
+      // Positions
+      var pos = d.positions;
+      if (pos && Object.keys(pos).length) {
+        var pk = Object.keys(pos);
+        h += '<table class="dd-grid"><thead><tr><td>Pos</td>';
+        pk.forEach(function(p) { h += '<th>' + p + '</th>'; });
+        h += '</tr></thead><tbody><tr><td class="dd-rl">Cur</td>';
+        pk.forEach(function(p) { h += cv(pos[p][0]); });
+        h += '</tr><tr><td class="dd-rl">Pot</td>';
+        pk.forEach(function(p) { h += cv(pos[p][1]); });
+        h += '</tr></tbody></table>';
+      }
+
+      // Character (vertical, rightmost)
+      h += '<table class="dd-grid"><thead><tr><th colspan="2">Character</th></tr></thead><tbody>';
+      h += '<tr><td class="dd-rl">W/E</td>' + ctd(d.we) + '</tr>';
+      h += '<tr><td class="dd-rl">Leader</td>' + ctd(d.lead) + '</tr>';
+      h += '<tr><td class="dd-rl">Loyalty</td>' + ctd(d.loy) + '</tr>';
+      h += '<tr><td class="dd-rl">Greed</td>' + ctd(d.greed) + '</tr>';
+      h += '<tr><td class="dd-rl">Intel</td>' + ctd(d.int) + '</tr>';
+      h += '</tbody></table>';
+    }
+
+    h += '</div>';
+    draftDetailCache[pid] = h;
+    placeholder.style.display = 'none'; content.style.display = 'block';
+    content.innerHTML = h;
+  });
+}
+
+function renderMyPicks(allPicks) {
+  var myPicks = allPicks.filter(function(p) { return p.tid === MY_TEAM_ID; });
+  var el = document.getElementById('my-picks-list');
+  if (!myPicks.length) { el.innerHTML = '<p class="text-dim">No picks yet</p>'; return; }
+  var poolMap = {};
+  DRAFT_POOL.forEach(function(p) { poolMap[p.pid] = p; });
+  el.innerHTML = myPicks.map(function(p) {
+    var pp = poolMap[p.pid];
+    var rank = pp ? pp.rank : '?';
+    var fv = pp ? pp.fv_str : '?';
+    return '<div class="my-pick-row"><span class="my-pick-rd">R' + p.round + '.' + p.pick + '</span> ' +
+      '<a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a> ' +
+      '<span class="text-dim">' + p.pos + ' · #' + rank + ' · FV ' + fv + '</span></div>';
+  }).join('');
+}
+
+function updateDraftPicks() {
+  var btn = event.target;
+  btn.disabled = true; btn.textContent = 'Updating…';
+  fetch('/api/draft-picks').then(function(r) { return r.json(); }).then(function(data) {
+    var newCount = 0;
+    (data.picks || []).forEach(function(p) {
+      if (!draftPicks[p.pid]) newCount++;
+      draftPicks[p.pid] = p;
+    });
+    renderMyPicks(data.picks || []);
+    document.getElementById('draft-status').textContent =
+      data.picks.length + ' picks' + (newCount ? ' · ' + newCount + ' new' : '');
+    btn.disabled = false; btn.textContent = '⟳ Update Picks';
+    applyDraftFilters();
+  }).catch(function() { btn.disabled = false; btn.textContent = '⟳ Update Picks'; });
+}
+
+renderMyPicks(DRAFT_PICKS_INIT);
+renderDraftBoard('all');
 
 // Auto-select user's team on Side A when trade tab is first opened
 let tradeInitialized = false;

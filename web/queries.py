@@ -354,7 +354,8 @@ def get_prospect_summary(pid):
 
 def _n80(v):
     if not v: return 20
-    return round((20 + (v / 100) * 60) / 5) * 5
+    from player_utils import norm
+    return norm(v)
 
 
 def _build_tools(rd, is_pitcher, out):
@@ -402,7 +403,7 @@ def _build_tools(rd, is_pitcher, out):
             {"name": "Power", "cur": n80(rd.get("pow")), "fut": n80(rd.get("pot_pow"))},
             {"name": "Eye", "cur": n80(rd.get("eye")), "fut": n80(rd.get("pot_eye"))},
         ]
-        tools.append({"name": "Speed", "cur": n80(rd.get("speed")), "fut": None})
+        tools.append({"name": "Speed", "cur": n80(rd.get("speed")), "fut": n80(rd.get("speed"))})
         out["tools"] = tools
         def_map = {"C": "c", "1B": "first_b", "2B": "second_b", "3B": "third_b",
                     "SS": "ss", "LF": "lf", "CF": "cf", "RF": "rf"}
@@ -436,7 +437,28 @@ def get_player_card(pid):
         "SELECT bucket FROM player_surplus WHERE player_id=? "
         "UNION ALL SELECT bucket FROM prospect_fv WHERE player_id=? LIMIT 1",
         (pid, pid)).fetchone()
-    bucket = bucket_row[0] if bucket_row else ({11: "SP", 12: "RP", 13: "RP"}.get(role, "?"))
+    if bucket_row:
+        bucket = bucket_row[0]
+    elif is_pitcher:
+        bucket = {11: "SP", 12: "RP", 13: "RP"}.get(role, "SP")
+    else:
+        # Derive bucket from ratings for amateur/untracked players
+        from player_utils import assign_bucket, norm
+        r_tmp = conn.execute("SELECT * FROM latest_ratings WHERE player_id=?", (pid,)).fetchone()
+        if r_tmp:
+            cols_tmp = [d[0] for d in conn.execute("SELECT * FROM latest_ratings LIMIT 0").description]
+            rd_tmp = dict(zip(cols_tmp, r_tmp))
+            n = _n80
+            p_dict = {"Age": age, "Pos": "P" if is_pitcher else str(role or ""),
+                       "_role": {11:"starter",12:"reliever",13:"closer"}.get(role, "position_player"),
+                       "_is_pitcher": is_pitcher, "Pot": rd_tmp.get("pot", 0)}
+            for f, c in [("PotC","pot_c"),("PotSS","pot_ss"),("Pot2B","pot_second_b"),
+                         ("Pot3B","pot_third_b"),("Pot1B","pot_first_b"),
+                         ("PotCF","pot_cf"),("PotLF","pot_lf"),("PotRF","pot_rf")]:
+                p_dict[f] = rd_tmp.get(c, 0)
+            bucket = assign_bucket(p_dict)
+        else:
+            bucket = "?"
 
     r = conn.execute("SELECT * FROM latest_ratings WHERE player_id=?", (pid,)).fetchone()
     if not r:
@@ -445,8 +467,10 @@ def get_player_card(pid):
     rd = dict(zip(cols, r))
 
     _lm = level_map()
+    _pos_str = {11:"SP",12:"RP",13:"CL"}.get(role) if is_pitcher else bucket
     out = {
         "pid": pid, "name": name, "age": age, "bucket": bucket,
+        "pos": _pos_str,
         "level": _lm.get(str(level), str(level)),
         "team": _abbr.get(org_id, "FA"),
         "ovr": rd.get("ovr"), "pot": rd.get("pot"),
@@ -690,3 +714,235 @@ from team_queries import (get_summary, get_standings, get_division_standings,
                           get_org_overview)
 from player_queries import get_player
 from percentiles import get_hitter_percentiles, get_pitcher_percentiles
+
+
+# ── Draft Pool ──────────────────────────────────────────────────────────
+
+def _detect_amateur_levels(conn):
+    """Detect which DB levels represent the amateur draft pool."""
+    levels = []
+    for lvl in ('10', '11', '0'):
+        cnt = conn.execute(
+            "SELECT COUNT(*) FROM players WHERE level=? AND age BETWEEN 17 AND 23", (lvl,)
+        ).fetchone()[0]
+        if cnt >= 50:
+            levels.append(lvl)
+    return levels
+
+
+def get_draft_pool():
+    """Return draft board: either from API picks (if draft is active/complete)
+    or top 800 amateurs by Pot (pre-draft scouting approximation).
+
+    Returns dict with 'state', 'players', and optionally 'picks'.
+    """
+    conn = get_db()
+    amateur_levels = _detect_amateur_levels(conn)
+
+    from fv_calc import RATINGS_SQL
+    from player_utils import (assign_bucket, calc_fv, norm, LEVEL_NORM_AGE)
+
+    # Extend RATINGS_SQL with bats/throws which aren't in the base query
+    _DRAFT_SQL = RATINGS_SQL.replace("r.league_id AS LeagueId",
+        "r.league_id AS LeagueId, r.bats AS Bats, r.throws AS Throws")
+
+    n = _n80
+    role_map = {str(k): v for k, v in get_cfg().role_map.items()}
+    _LVL_KEY = {'11': 'intl', '10': 'a', '0': 'dsl'}
+    _POS_LABEL = {1:'P',2:'C',3:'1B',4:'2B',5:'3B',6:'SS',7:'LF',8:'CF',9:'RF',10:'DH'}
+
+    def _build_prospect(rat):
+        p = dict(rat)
+        role_str = role_map.get(str(p.get("role") or 0), "position_player")
+        p["_role"] = role_str
+        p["Pos"] = str(p.get("pos") or "")
+        p["_is_pitcher"] = (p["Pos"] == "P" or role_str in ("starter", "reliever", "closer"))
+        bucket = assign_bucket(p)
+        p["_bucket"] = bucket
+        level = str(p["level"])
+        level_key = _LVL_KEY.get(level, 'dsl')
+        # Draft prospects: weight Pot heavily — Ovr reflects pre-pro development,
+        # not talent ceiling. HS gets slightly more Pot weight than college.
+        p["_norm_age"] = p["Age"] + 4  # force diff >= 3 → base 0.65
+        p["_level"] = "a-short"  # +0.10 low_level bonus, no cap → dw = 0.75
+        fv_base, fv_plus = calc_fv(p)
+        pos_str = ROLE_MAP.get(p.get("role"), _POS_LABEL.get(p.get("pos"), "?"))
+        college_hs = "College" if level == '10' else "HS" if level == '11' else "Amateur"
+        entry = {
+            "pid": p["ID"], "name": p["Name"], "age": p["Age"],
+            "pos": pos_str, "bucket": bucket, "type": college_hs,
+            "ovr": p["Ovr"], "pot": p["Pot"],
+            "fv": fv_base, "fv_str": f"{fv_base}+" if fv_plus else str(fv_base),
+            "bats": p.get("Bats", ""), "throws": p.get("Throws", ""),
+            "acc": p.get("Acc", ""), "we": p.get("WrkEthic", ""),
+            "lead": p.get("Lead", ""), "int": p.get("Int", ""),
+        }
+        if p["_is_pitcher"]:
+            # Count viable pitches (pot >= 45)
+            from constants import PITCH_FIELDS
+            _pitch_names = {'Fst':'FB','Snk':'SI','Crv':'CB','Sld':'SL','Chg':'CH',
+                            'Splt':'SPL','Cutt':'CUT','CirChg':'CC','Scr':'SCR',
+                            'Frk':'FRK','Kncrv':'KC','Knbl':'KN'}
+            pitch_data = {}
+            num_p = 0
+            best_p = 20
+            for pf in PITCH_FIELDS:
+                v = n(p.get("Pot" + pf) or 0)
+                if v and v >= 30:
+                    pitch_data[_pitch_names.get(pf, pf)] = v
+                    num_p += 1
+                    if v > best_p: best_p = v
+            entry["tools"] = {
+                "stf": [n(p.get("Stf") or 0), n(p.get("PotStf") or 0)],
+                "mov": [n(p.get("Mov") or 0), n(p.get("PotMov") or 0)],
+                "ctrl": [n(p.get("Ctrl") or 0), n(p.get("PotCtrl") or 0)],
+                "stm": n(p.get("Stm") or 0),
+                "vel": p.get("Vel"),
+                "num_pitches": num_p,
+                "best_pitch": best_p,
+                "pitches": pitch_data,
+            }
+        else:
+            entry["tools"] = {
+                "con": [n(p.get("Cntct") or 0), n(p.get("PotCntct") or 0)],
+                "gap": [n(p.get("Gap") or 0), n(p.get("PotGap") or 0)],
+                "pow": [n(p.get("Pow") or 0), n(p.get("PotPow") or 0)],
+                "eye": [n(p.get("Eye") or 0), n(p.get("PotEye") or 0)],
+                "spd": n(p.get("Speed") or 0),
+            }
+            # Position defense columns
+            _def_fields = [("C","PotC"),("1B","Pot1B"),("2B","Pot2B"),("3B","Pot3B"),
+                           ("SS","PotSS"),("LF","PotLF"),("CF","PotCF"),("RF","PotRF")]
+            defs = {}
+            best_def = 20
+            for pos_label, field in _def_fields:
+                v = n(p.get(field) or 0)
+                if v > 20:
+                    defs[pos_label] = v
+                    if v > best_def:
+                        best_def = v
+            entry["tools"]["def"] = best_def
+            entry["defense"] = defs
+            entry["field"] = {
+                "ifr": n(p.get("IFR") or 0), "ifa": n(p.get("IFA") or 0),
+                "ofr": n(p.get("OFR") or 0), "ofa": n(p.get("OFA") or 0),
+                "cblk": n(p.get("CBlk") or 0), "cfrm": n(p.get("CFrm") or 0),
+            }
+            # Position mismatch detection
+            _thresholds = {"C":45,"SS":50,"2B":50,"CF":55,"3B":45,"LF":45,"RF":45,"1B":45}
+            _value_order = ["C","SS","2B","CF","3B","COF","1B"]
+            best_pos = None
+            for vpos in _value_order:
+                if vpos == "COF":
+                    for dp in ("LF","RF"):
+                        if defs.get(dp, 0) >= _thresholds.get(dp, 45):
+                            best_pos = "COF"
+                            break
+                elif defs.get(vpos, 0) >= _thresholds.get(vpos, 45):
+                    best_pos = vpos
+                if best_pos:
+                    break
+            if not best_pos:
+                best_pos = "1B"  # fallback
+            if best_pos != bucket:
+                entry["pos_note"] = best_pos  # flag: could play a different position
+        return entry
+
+    # Try to load uploaded draft pool first
+    uploaded_pids = None
+    try:
+        from league_context import get_league_dir
+        pool_path = get_league_dir() / "config" / "draft_pool.json"
+        if pool_path.exists():
+            import json as _json
+            uploaded_pids = _json.loads(pool_path.read_text()).get("player_ids", [])
+    except Exception:
+        pass
+
+    # Try to get draft picks from API to determine state
+    picks = []
+    try:
+        from statsplus import client as _dc
+        from league_context import get_statsplus_cookie
+        cfg = get_cfg()
+        slug = cfg.settings.get("statsplus_slug", "emlb")
+        cookie = get_statsplus_cookie()
+        if slug and cookie:
+            _dc.configure(slug, cookie)
+        raw = _dc.get_draft()
+        picks = [{"pid": d["ID"], "name": d["Player Name"], "team": d["Team"],
+                  "tid": d["Team ID"], "pos": d["Position"], "age": d["Age"],
+                  "round": d["Round"], "pick": d["Pick In Round"],
+                  "overall": d["Overall"], "college": d["College"]}
+                 for d in raw if d.get("ID")]
+    except Exception:
+        pass
+
+    # Determine state and build pool
+    state = "no_data"
+    if uploaded_pids:
+        state = "uploaded"
+    elif picks:
+        sample_pids = [p["pid"] for p in picks[:10]]
+        in_amateur = 0
+        in_org = 0
+        for pid in sample_pids:
+            row = conn.execute("SELECT level, parent_team_id FROM players WHERE player_id=?", (pid,)).fetchone()
+            if row:
+                if str(row[0]) in ('10', '11', '0'):
+                    in_amateur += 1
+                elif row[1] and row[1] > 0:
+                    in_org += 1
+        if in_amateur > in_org:
+            state = "active"
+        else:
+            state = "pre_draft"
+    elif amateur_levels:
+        state = "pre_draft"
+
+    if state == "uploaded":
+        # Use exact uploaded pool
+        placeholders = ",".join("?" * len(uploaded_pids))
+        sql = _DRAFT_SQL + f" AND r.player_id IN ({placeholders})"
+        rows = conn.execute(sql, uploaded_pids).fetchall()
+        results = [_build_prospect(r) for r in rows]
+        results.sort(key=lambda x: (x['fv'], x['pot']), reverse=True)
+        for i, r in enumerate(results):
+            r['rank'] = i + 1
+        return {"state": state, "players": results, "picks": picks}
+
+    elif state == "active":
+        # Use draft API player IDs as the definitive pool
+        pick_pids = [p["pid"] for p in picks]
+        if not pick_pids:
+            return {"state": state, "players": [], "picks": picks}
+        placeholders = ",".join("?" * len(pick_pids))
+        sql = _DRAFT_SQL + f" AND r.player_id IN ({placeholders})"
+        rows = conn.execute(sql, pick_pids).fetchall()
+        by_pid = {dict(r)["ID"]: r for r in rows}
+        results = []
+        for r in rows:
+            results.append(_build_prospect(r))
+        results.sort(key=lambda x: (x['fv'], x['pot']), reverse=True)
+        for i, r in enumerate(results):
+            r['rank'] = i + 1
+        return {"state": state, "players": results, "picks": picks}
+
+    elif state == "pre_draft" and amateur_levels:
+        # Scouting approximation: top 800 amateurs by Pot
+        clauses = []
+        for lvl in amateur_levels:
+            min_age = 19 if lvl == '10' else 18
+            clauses.append(f"(p.level = '{lvl}' AND p.age >= {min_age})")
+        where = " OR ".join(clauses)
+        sql = _DRAFT_SQL + f" AND ({where}) ORDER BY r.pot DESC LIMIT 800"
+        rows = conn.execute(sql).fetchall()
+        results = [_build_prospect(r) for r in rows]
+        results.sort(key=lambda x: (x['fv'], x['pot']), reverse=True)
+        for i, r in enumerate(results):
+            r['rank'] = i + 1
+        return {"state": state, "players": results, "picks": picks}
+
+    return {"state": "no_data", "players": [], "picks": []}
+
+
