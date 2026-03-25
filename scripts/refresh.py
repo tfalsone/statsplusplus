@@ -596,7 +596,7 @@ def _detect_league_structure(conn, year):
     return divisions_out, leagues_out, team_abbr_out, team_names_out
 
 
-def refresh_league(year):
+def refresh_league(year, game_date=None):
     """Pull all teams into DB for the active league."""
     import time as _time
     log.info("=== refresh_league started (year=%s) ===", year)
@@ -675,7 +675,7 @@ def refresh_league(year):
         log.info("── ratings (collecting...)")
 
     state = json.loads((league_dir / "config" / "state.json").read_text())
-    snapshot_date = state.get("game_date", "unknown")
+    snapshot_date = game_date or state.get("game_date", "unknown")
     org_id = _cfg.my_team_id
     all_ratings = client.get_ratings(poll_url=ratings_poll_url, skip_initial_wait=elapsed >= 30)
     my_ids = {p["ID"] for p in players if p.get("Team ID") == org_id or p.get("Parent Team ID") == org_id}
@@ -891,8 +891,8 @@ if __name__ == "__main__":
             args = args[1:]
         year = int(args[0]) if args else default_year
         game_date = client.get_date()
+        refresh_league(year, game_date=game_date)
         update_state(game_date, year)
-        refresh_league(year)
         if not skip_fv:
             _run_calibrate()
             _run_fv_calc()
