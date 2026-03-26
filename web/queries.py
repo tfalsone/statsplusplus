@@ -845,7 +845,28 @@ def get_draft_pool():
             if not best_pos:
                 best_pos = "1B"  # fallback
             if best_pos != bucket:
-                entry["pos_note"] = best_pos  # flag: could play a different position
+                entry["pos_note"] = best_pos
+
+        # Career outcome summary for range indicator
+        try:
+            import prospect_value as _pv
+            # Map Ovr to equivalent minor league level for outcome model
+            _ovr = p["Ovr"]
+            if _ovr >= 45: _oc_level = 'aaa'
+            elif _ovr >= 35: _oc_level = 'aa'
+            elif _ovr >= 28: _oc_level = 'a'
+            else: _oc_level = 'a-short'
+            oc = _pv.career_outcome_probs(
+                fv_base, p["Age"], _oc_level, bucket,
+                ovr=p["Ovr"], pot=p["Pot"])
+            if oc:
+                entry["outcome"] = {
+                    "thresholds": oc.get("thresholds", {}),
+                    "likely": oc.get("likely_range", [0, 0]),
+                }
+        except Exception:
+            pass
+
         return entry
 
     # Try to load uploaded draft pool first
@@ -906,7 +927,7 @@ def get_draft_pool():
         sql = _DRAFT_SQL + f" AND r.player_id IN ({placeholders})"
         rows = conn.execute(sql, uploaded_pids).fetchall()
         results = [_build_prospect(r) for r in rows]
-        results.sort(key=lambda x: (x['fv'], x['pot']), reverse=True)
+        results.sort(key=lambda x: (x['fv'] + (0.5 if '+' in x['fv_str'] else 0), x['pot']), reverse=True)
         for i, r in enumerate(results):
             r['rank'] = i + 1
         return {"state": state, "players": results, "picks": picks}
@@ -923,7 +944,7 @@ def get_draft_pool():
         results = []
         for r in rows:
             results.append(_build_prospect(r))
-        results.sort(key=lambda x: (x['fv'], x['pot']), reverse=True)
+        results.sort(key=lambda x: (x['fv'] + (0.5 if '+' in x['fv_str'] else 0), x['pot']), reverse=True)
         for i, r in enumerate(results):
             r['rank'] = i + 1
         return {"state": state, "players": results, "picks": picks}
@@ -938,7 +959,7 @@ def get_draft_pool():
         sql = _DRAFT_SQL + f" AND ({where}) ORDER BY r.pot DESC LIMIT 800"
         rows = conn.execute(sql).fetchall()
         results = [_build_prospect(r) for r in rows]
-        results.sort(key=lambda x: (x['fv'], x['pot']), reverse=True)
+        results.sort(key=lambda x: (x['fv'] + (0.5 if '+' in x['fv_str'] else 0), x['pot']), reverse=True)
         for i, r in enumerate(results):
             r['rank'] = i + 1
         return {"state": state, "players": results, "picks": picks}

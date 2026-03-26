@@ -435,6 +435,39 @@ def get_player(pid):
                 ovr=ratings["ovr"] if ratings else None,
                 pot=ratings["pot"] if ratings else None,
                 def_rating=valuation.get("def_rating"))
+        # Amateur/draft prospect — not in prospect_fv or player_surplus
+        if not valuation and outcome_probs is None and level_str not in ('MLB','AAA','AA','A','A-Short','Rookie','International'):
+            try:
+                import prospect_value as _pv
+                from player_utils import assign_bucket, calc_fv, LEVEL_NORM_AGE
+                from fv_calc import RATINGS_SQL
+                _conn2 = get_db()
+                _rat = _conn2.execute(RATINGS_SQL + " AND r.player_id = ?", (pid,)).fetchone()
+                if _rat:
+                    _p = dict(_rat)
+                    _role_map = {str(k): v for k, v in get_cfg().role_map.items()}
+                    _p["_role"] = _role_map.get(str(_p.get("role") or 0), "position_player")
+                    _p["Pos"] = str(_p.get("pos") or "")
+                    _p["_is_pitcher"] = (_p["Pos"] == "P" or _p["_role"] in ("starter","reliever","closer"))
+                    _bucket = assign_bucket(_p)
+                    _p["_bucket"] = _bucket
+                    _lvl_key = {'11':'intl','10':'a','0':'dsl'}.get(str(_p.get("level","")), 'dsl')
+                    _p["_norm_age"] = _p["Age"] + 4
+                    _p["_level"] = "a-short"
+                    _fv, _fv_plus = calc_fv(_p)
+                    _fv_str = f"{_fv}+" if _fv_plus else str(_fv)
+                    valuation = {
+                        "type": "prospect", "bucket": _display_pos(_bucket),
+                        "fv": _fv, "fv_str": _fv_str,
+                        "ovr": _p["Ovr"], "pot": _p["Pot"],
+                        "surplus": 0, "level": _lvl_key,
+                    }
+                    outcome_probs = _pv.career_outcome_probs(
+                        _fv, age,
+                        'aaa' if _p["Ovr"] >= 45 else 'aa' if _p["Ovr"] >= 35 else 'a' if _p["Ovr"] >= 28 else 'a-short',
+                        _bucket, ovr=_p["Ovr"], pot=_p["Pot"])
+            except Exception:
+                pass
     except Exception:
         pass
 

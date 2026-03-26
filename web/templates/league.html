@@ -903,7 +903,40 @@ function charClr(v) {
   if (u === 'VL' || u === 'EL' || u === 'F') return 'dg-poor';
   return '';
 }
-function ctd(v) { var c = charClr(v); return '<td' + (c ? ' class="' + c + '"' : '') + '>' + (v||'-') + '</td>'; }
+function charClrGreed(v) {
+  if (!v) return '';
+  var u = v.toUpperCase();
+  if (u === 'VL' || u === 'EL') return 'dg-elite';
+  if (u === 'L') return 'dg-plus';
+  if (u === 'N' || u === 'NORMAL') return '';
+  if (u === 'H') return 'dg-below';
+  if (u === 'VH' || u === 'EH') return 'dg-poor';
+  return '';
+}
+function ctd(v, isGreed) { var c = isGreed ? charClrGreed(v) : charClr(v); return '<td' + (c ? ' class="' + c + '"' : '') + '>' + (v||'-') + '</td>'; }
+function fvPill(v) { var n = parseInt(v); return '<span class="draft-pill dp-fv ' + gradeClr(n) + '">' + v + '</span>'; }
+function charPill(v, isGreed) { var c = isGreed ? charClrGreed(v) : charClr(v); return '<span class="draft-pill dp-char ' + c + '">' + (v||'-') + '</span>'; }
+function lvlPill(v) { return '<span class="draft-pill dp-lvl">' + v + '</span>'; }
+function profilePill(oc) {
+  if (!oc || !oc.thresholds) return '';
+  var c = Math.round((oc.thresholds.Contributor||0)*100);
+  var a = Math.round((oc.thresholds['All-Star']||0)*100);
+  var bust = 100 - c;
+  var label, cls;
+  if (c >= 50 && a >= 25) { label = 'Safe Star'; cls = 'dp-prof-star'; }
+  else if (a >= 25 && bust >= 60) { label = 'Boom/Bust'; cls = 'dp-prof-boom'; }
+  else if (a >= 25) { label = 'Upside+'; cls = 'dp-prof-up'; }
+  else if (c >= 50) { label = 'Safe'; cls = 'dp-prof-safe'; }
+  else if (bust >= 70) { label = 'Lottery'; cls = 'dp-prof-lot'; }
+  else if (c >= 35 && a >= 15) { label = 'Upside'; cls = 'dp-prof-up'; }
+  else if (c >= 35) { label = 'Steady'; cls = 'dp-prof-steady'; }
+  else { label = 'Lottery'; cls = 'dp-prof-lot'; }
+  return '<span class="draft-pill ' + cls + '">' + label + '</span>';
+}
+function bustPct(oc) {
+  if (!oc || !oc.thresholds) return '-';
+  return (100 - Math.round((oc.thresholds.Contributor||0)*100)) + '%';
+}
 
 function uploadDraftPool(input) {
   if (!input.files.length) return;
@@ -951,7 +984,7 @@ function renderDraftBoard(view) {
       '<th data-sort="num">SPL</th><th data-sort="num">#P</th>' +
       '<th data-sort="str" class="col-sep">Acc</th><th data-sort="str">W/E</th><th data-sort="str">Lead</th><th data-sort="str">Int</th></tr>';
   } else {
-    thead.innerHTML = '<tr>' + base + '<th data-sort="str">B/T</th></tr>';
+    thead.innerHTML = '<tr>' + base + '<th data-sort="str">B/T</th><th data-sort="num" class="col-sep" title="P(Contributor)">C%</th><th data-sort="num" title="P(Regular)">R%</th><th data-sort="num" title="P(All-Star)">AS%</th><th data-sort="num" title="Bust probability (1 - P(Contributor))">Bust%</th><th data-sort="str">Profile</th></tr>';
   }
   applyDraftFilters();
   if (typeof initSort === 'function') initSort(document.getElementById('draft-table'));
@@ -988,8 +1021,8 @@ function applyDraftFilters() {
     tr += '<td>' + p.rank + '</td>';
     tr += '<td>' + p.pos + posNote + '</td>';
     tr += '<td class="left"><a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a></td>';
-    tr += '<td>' + p.age + '</td><td>' + p.type + '</td>';
-    tr += gtd(p.ovr) + gtd(p.pot) + '<td class="' + gradeClr(p.fv) + '"><b>' + p.fv_str + '</b></td>';
+    tr += '<td>' + p.age + '</td><td>' + lvlPill(p.type) + '</td>';
+    tr += gtd(p.ovr) + gtd(p.pot) + '<td>' + fvPill(p.fv_str) + '</td>';
     if (view === 'hit' && !isPit) {
       var t = p.tools;
       var d = p.defense || {};
@@ -1006,8 +1039,8 @@ function applyDraftFilters() {
         var v = fl[k];
         tr += v && v > 20 ? '<td class="' + (i===0 ? 'col-sep ' : '') + gradeClr(v) + '">' + v + '</td>' : '<td' + (i===0 ? ' class="col-sep"' : '') + '>-</td>';
       });
-      tr += ctd(p.acc).replace('<td','<td class="col-sep"');
-      tr += ctd(p.we) + ctd(p.lead) + ctd(p.int);
+      tr += '<td class="col-sep">' + charPill(p.acc) + '</td>';
+      tr += '<td>' + charPill(p.we) + '</td><td>' + charPill(p.lead) + '</td><td>' + charPill(p.int) + '</td>';
     } else if (view === 'pit' && isPit) {
       var t = p.tools;
       var pt = t.pitches || {};
@@ -1020,11 +1053,17 @@ function applyDraftFilters() {
         tr += v ? '<td class="' + (pn==='FB' ? 'col-sep ' : '') + gradeClr(v) + '">' + v + '</td>' : '<td' + (pn==='FB' ? ' class="col-sep"' : '') + '>-</td>';
       });
       tr += '<td>' + t.num_pitches + '</td>';
-      tr += ctd(p.acc).replace('<td','<td class="col-sep"');
-      tr += ctd(p.we) + ctd(p.lead) + ctd(p.int);
+      tr += '<td class="col-sep">' + charPill(p.acc) + '</td>';
+      tr += '<td>' + charPill(p.we) + '</td><td>' + charPill(p.lead) + '</td><td>' + charPill(p.int) + '</td>';
     } else {
-      // All view - just B/T
+      // All view - B/T + outcome probabilities
       tr += '<td>' + (p.bats||'') + '/' + (p.throws||'') + '</td>';
+      var oc = p.outcome && p.outcome.thresholds || {};
+      tr += '<td class="col-sep">' + (oc.Contributor ? Math.round(oc.Contributor*100) + '%' : '-') + '</td>';
+      tr += '<td>' + (oc.Regular ? Math.round(oc.Regular*100) + '%' : '-') + '</td>';
+      tr += '<td>' + (oc['All-Star'] ? Math.round(oc['All-Star']*100) + '%' : '-') + '</td>';
+      tr += '<td>' + bustPct(p.outcome) + '</td>';
+      tr += '<td>' + profilePill(p.outcome) + '</td>';
     }
     tr += '</tr>';
     tbody.insertAdjacentHTML('beforeend', tr);
@@ -1044,10 +1083,18 @@ function applyDraftFilters() {
     });
   });
 
-  // Row click still shows single detail
+  // Row click: clear checkboxes and show single detail
   tbody.querySelectorAll('.draft-row').forEach(function(row) {
     row.addEventListener('click', function(e) {
       if (e.target.tagName === 'A' || e.target.tagName === 'INPUT') return;
+      // Clear any compare selections
+      if (compareSlots.length > 0) {
+        compareSlots = [];
+        document.querySelectorAll('.dd-cmp-cb').forEach(function(cb) {
+          cb.checked = false; cb.disabled = false;
+        });
+        document.getElementById('dd-clear-btn').style.display = 'none';
+      }
       tbody.querySelectorAll('.draft-row').forEach(function(r) { r.classList.remove('selected'); });
       this.classList.add('selected');
       showDraftDetail(this.dataset.pid);
@@ -1140,7 +1187,7 @@ function showCompare(pidA, pidB) {
       h += '<tr><td class="dd-rl">W/E</td>' + ctd(d.we) + '</tr>';
       h += '<tr><td class="dd-rl">Leader</td>' + ctd(d.lead) + '</tr>';
       h += '<tr><td class="dd-rl">Loyalty</td>' + ctd(d.loy) + '</tr>';
-      h += '<tr><td class="dd-rl">Greed</td>' + ctd(d.greed) + '</tr>';
+      h += '<tr><td class="dd-rl">Greed</td>' + ctd(d.greed, true) + '</tr>';
       h += '<tr><td class="dd-rl">Intel</td>' + ctd(d.int) + '</tr>';
       h += '</tbody></table>';
     } else {
@@ -1176,7 +1223,7 @@ function showCompare(pidA, pidB) {
       h += '<tr><td class="dd-rl">W/E</td>' + ctd(d.we) + '</tr>';
       h += '<tr><td class="dd-rl">Leader</td>' + ctd(d.lead) + '</tr>';
       h += '<tr><td class="dd-rl">Loyalty</td>' + ctd(d.loy) + '</tr>';
-      h += '<tr><td class="dd-rl">Greed</td>' + ctd(d.greed) + '</tr>';
+      h += '<tr><td class="dd-rl">Greed</td>' + ctd(d.greed, true) + '</tr>';
       h += '<tr><td class="dd-rl">Intel</td>' + ctd(d.int) + '</tr>';
       h += '</tbody></table>';
     }
@@ -1250,7 +1297,7 @@ function showDraftDetail(pid) {
       h += '<tr><td class="dd-rl">W/E</td>' + ctd(d.we) + '</tr>';
       h += '<tr><td class="dd-rl">Leader</td>' + ctd(d.lead) + '</tr>';
       h += '<tr><td class="dd-rl">Loyalty</td>' + ctd(d.loy) + '</tr>';
-      h += '<tr><td class="dd-rl">Greed</td>' + ctd(d.greed) + '</tr>';
+      h += '<tr><td class="dd-rl">Greed</td>' + ctd(d.greed, true) + '</tr>';
       h += '<tr><td class="dd-rl">Intel</td>' + ctd(d.int) + '</tr>';
       h += '</tbody></table>';
     } else {
@@ -1293,7 +1340,7 @@ function showDraftDetail(pid) {
       h += '<tr><td class="dd-rl">W/E</td>' + ctd(d.we) + '</tr>';
       h += '<tr><td class="dd-rl">Leader</td>' + ctd(d.lead) + '</tr>';
       h += '<tr><td class="dd-rl">Loyalty</td>' + ctd(d.loy) + '</tr>';
-      h += '<tr><td class="dd-rl">Greed</td>' + ctd(d.greed) + '</tr>';
+      h += '<tr><td class="dd-rl">Greed</td>' + ctd(d.greed, true) + '</tr>';
       h += '<tr><td class="dd-rl">Intel</td>' + ctd(d.int) + '</tr>';
       h += '</tbody></table>';
     }

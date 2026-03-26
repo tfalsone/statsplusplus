@@ -1201,3 +1201,22 @@ td.stat-bad  { color: var(--red); }
 .dg-poor { color: #c0392b; }
 .my-pick-row { padding: 3px 0; font-size: 13px; }
 .my-pick-rd { color: var(--text-dim); font-size: 11px; min-width: 40px; display: inline-block; }
+.draft-pill { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 11px; font-weight: 600; line-height: 16px; text-align: center; min-width: 24px; }
+.dp-fv { background: rgba(58,111,216,0.15); color: #6fa8ff; }
+.dp-fv.dg-elite { background: rgba(58,111,216,0.25); color: #7db8ff; }
+.dp-fv.dg-plus { background: rgba(39,174,96,0.2); color: #5fd89a; }
+.dp-fv.dg-avg { background: rgba(183,176,32,0.15); color: #d4cc44; }
+.dp-fv.dg-below { background: rgba(230,126,34,0.15); color: #e8944a; }
+.dp-fv.dg-poor { background: rgba(192,57,43,0.15); color: #d06050; }
+.dp-char { padding: 1px 5px; border-radius: 8px; font-size: 10px; font-weight: 600; background: rgba(255,255,255,0.05); color: var(--text-dim); }
+.dp-char.dg-elite { background: rgba(58,111,216,0.2); color: #7db8ff; }
+.dp-char.dg-plus { background: rgba(39,174,96,0.15); color: #5fd89a; }
+.dp-char.dg-below { background: rgba(230,126,34,0.12); color: #e8944a; }
+.dp-char.dg-poor { background: rgba(192,57,43,0.12); color: #d06050; }
+.dp-lvl { padding: 1px 5px; border-radius: 8px; font-size: 10px; background: rgba(255,255,255,0.06); color: var(--text-dim); }
+.dp-prof-star { background: rgba(58,111,216,0.25); color: #7db8ff; }
+.dp-prof-boom { background: rgba(230,126,34,0.2); color: #f0a050; }
+.dp-prof-safe { background: rgba(39,174,96,0.2); color: #5fd89a; }
+.dp-prof-up { background: rgba(183,176,32,0.2); color: #d4cc44; }
+.dp-prof-steady { background: rgba(255,255,255,0.08); color: var(--text-dim); }
+.dp-prof-lot { background: rgba(192,57,43,0.15); color: #d06050; }
