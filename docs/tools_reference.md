@@ -219,6 +219,9 @@ Import with `sys.path.insert(0, 'web')`. All are read-only against the DB.
 | `get_batting_leaders(year, min_pa)` | Top 5 per stat, MLB/AL/NL |
 | `get_pitching_leaders(year, min_ip)` | Top 5 per stat, MLB/AL/NL |
 | `search_players(query)` | Up to 15 matching players (MLB + prospects) across all orgs |
+| `get_prospect_comps(pid)` | 3-tier MLB comps for a prospect (Upside/Likely/Floor) |
+| `get_player_card(pid)` | Side-panel-style data for any player (tools, pitches, defense, stats) |
+| `get_draft_pool()` | Draft board: state detection, FV-ranked pool, outcome probabilities |
 
 ### Team-Level (`team_queries.py`)
 

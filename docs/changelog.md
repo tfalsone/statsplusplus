@@ -81,6 +81,15 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 - **Position mismatch detection**: Flags players whose defensive ratings suggest a different (more/less valuable) position than their listed one (e.g., SS listed but only 1B-viable defense).
 - **State detection**: Uploaded pool → Active draft (API picks match pool) → Pre-draft (stale API, approximate pool) → No data.
 - **Filters**: All/Hitters/Pitchers views, name search, College/HS level dropdown, Hide Drafted toggle.
+- **Outcome probabilities**: C% (Contributor), R% (Regular), AS% (All-Star), Bust% columns in All view. Ovr-based level mapping for outcome model (Ovr≥45→AAA, ≥35→AA, ≥28→A, else A-Short).
+- **Profile classification**: Auto-labels prospects as Safe Star / Upside+ / Boom-Bust / Safe / Upside / Steady / Lottery based on outcome thresholds and bust probability. Displayed as colored pills.
+- **Pill displays**: FV (color-graded), Level (College/HS), character traits (Acc/W/E/Lead/Int) shown as pill badges for scannability.
+- **Career outcome chart**: Draft prospect player pages now show the full career outcome probability chart on the Valuation tab.
+- **Hitter table expanded**: Individual fielding ratings (IFR/IFA/OFR/OFA/CBlk/CFrm), B/T, Lead, Int columns.
+- **Pitcher table expanded**: Individual pitch potential columns (FB/SI/CB/SL/CH/CUT/SPL), throws hand, Lead, Int.
+- **Normalization fix**: `_n80()` and draft-detail API now use `player_utils.norm()` respecting league ratings scale (no double-conversion on 20-80 leagues).
+- **Greed coloring inverted**: Low greed = good (green), high greed = bad (red).
+- **FV+ sort fix**: 65+ now ranks above 65 in the draft board.
 - Spec: `.kiro/specs/draft-page.md`.
 
 ### Refresh Fix
