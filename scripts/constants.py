@@ -1,12 +1,47 @@
 # constants.py — shared constants across all scripts
+#
+# Sections:
+#   1. Shared identifiers
+#   2. Calibrated model weight loader
+#   3. Prospect surplus model constants
+#   4. MLB contract surplus model constants
+#   5. WAR projection tables
+#   6. Aging curves
 
 import json
 from pathlib import Path
 
+# ---------------------------------------------------------------------------
+# 1. Shared identifiers
+# ---------------------------------------------------------------------------
+
 PITCH_FIELDS = ["Fst","Snk","Crv","Sld","Chg","Splt","Cutt","CirChg","Scr","Frk","Kncrv","Knbl"]
 
+# Role ID → positional bucket (OOTP role codes: 11=SP, 12=RP, 13=CL)
+ROLE_MAP = {11: "SP", 12: "RP", 13: "CL"}
+
+# Default minimum salary fallback when league_settings.json is absent.
+# Matches OOTP default minimum; overridden by league_settings.json in practice.
+DEFAULT_MINIMUM_SALARY = 825_000
+
+# Default $/WAR fallback used before the first league refresh populates
+# league_averages.json. Computed from actual league contracts by refresh.py.
+# This value is a reasonable starting estimate only — do not tune it manually.
+DEFAULT_DOLLARS_PER_WAR = 9_000_000
+
+# Peak performance age by role. Players before peak age are on the development
+# ramp; players after are on the decline curve.
+PEAK_AGE_PITCHER = 27
+PEAK_AGE_HITTER  = 28
+
+# Service time denominators for fractional service year estimation.
+# Hitters: games / full season. SP: starts / full rotation. RP: appearances / full bullpen.
+SERVICE_GAMES_HITTER = 162
+SERVICE_STARTS_SP    = 32
+SERVICE_GAMES_RP     = 65
+
 # ---------------------------------------------------------------------------
-# Calibrated model weights (loaded from config/model_weights.json if present)
+# 2. Calibrated model weight loader
 # ---------------------------------------------------------------------------
 
 _weights = None
@@ -40,7 +75,7 @@ def _w(key, default):
     return raw
 
 # ---------------------------------------------------------------------------
-# Defaults (used when model_weights.json is absent)
+# 3. Prospect surplus model constants
 # ---------------------------------------------------------------------------
 
 # Arbitration salary as % of market value by arb year.
@@ -48,9 +83,6 @@ def _w(key, default):
 # OOTP arb pays ~20-33% of FA market rate (vs ~45-80% in real MLB).
 _ARB_PCT_DEFAULT = {1: 0.20, 2: 0.22, 3: 0.33}
 ARB_PCT = _w("ARB_PCT", _ARB_PCT_DEFAULT)
-
-# Prospect surplus model
-# ---------------------------------------------------------------------------
 
 # FV → expected peak WAR/year (midpoint of each FV band per farm_analysis_guide.md)
 # Interpolate linearly between defined points.
@@ -105,6 +137,24 @@ YEARS_TO_MLB = {
 # Annual discount rate for time value + residual development risk
 PROSPECT_DISCOUNT_RATE = 0.05
 
+# Age-vs-level discount adjustment rate: +/- per year vs level norm age.
+# Steeper than original 3%/yr (Session 33) to better reward young-for-level prospects.
+LEVEL_AGE_DISCOUNT_RATE = 0.04
+
+# WAR production ramp for early control years (players don't immediately produce
+# peak WAR on MLB debut — adjustment period + development variance).
+# Year 3+ = 1.0 (full production).
+PROSPECT_WAR_RAMP = {1: 0.60, 2: 0.80}
+
+# Discount applied to ratings-based WAR projection for players with no MLB track record.
+# Unproven players produce ~50% of ratings-based WAR on average.
+NO_TRACK_RECORD_DISCOUNT = 0.50
+
+# RP FV Pot discount factor. RPs produce less WAR per FV grade than other positions.
+# Scales Pot down so only elite RPs earn high FV grades.
+# 0.80 calibrated to produce ~5% RP share in top prospect lists (real-baseball norm).
+RP_POT_DISCOUNT = 0.80
+
 # Scarcity multiplier by talent tier. Low-ceiling players are freely available (waivers,
 # minor league FA) so their theoretical surplus has no trade value. Applied using Pot
 # (ceiling) rather than FV so developing players are valued for what they'll become.
@@ -113,8 +163,48 @@ PROSPECT_DISCOUNT_RATE = 0.05
 _SCARCITY_MULT_DEFAULT = {40: 0.0, 42: 0.05, 44: 0.20, 45: 0.35, 46: 0.55, 47: 0.75, 48: 0.92, 49: 1.0, 80: 1.0}
 SCARCITY_MULT = _w("SCARCITY_MULT", _SCARCITY_MULT_DEFAULT)
 
+# Minimum data points required for position-specific regression in calibrate.py.
+MIN_REGRESSION_N = 40
+
+# Number of complete seasons used for calibration regression.
+CALIBRATION_YEARS = 3
+
 # ---------------------------------------------------------------------------
-# WAR projection tables
+# 4. MLB contract surplus model constants
+# ---------------------------------------------------------------------------
+
+# MLB positional scarcity premium: multiplier on market value (WAR * $/WAR).
+# Premium positions are harder to replace on the open market.
+# Centered near 1.0; SS/CF/SP get a premium, 1B/COF a discount.
+# Calibrated Session 37 from positional supply analysis.
+MLB_SCARCITY = {
+    'SS': 1.10, 'CF': 1.06, 'SP': 1.06, 'C': 1.03, '2B': 1.03, '3B': 1.03,
+    'COF': 0.94, 'RP': 0.94, '1B': 0.91,
+}
+
+# Arb salary model — hitter/SP exponential base formula.
+# Calibrated from OOTP arb outcomes. Formula: base * exp(exp_coeff * ovr).
+# Represents first arb year salary; subsequent years use ARB_RAISE_* below.
+ARB_HITTER_BASE  = 318_400
+ARB_HITTER_EXP   = 0.0495
+
+# Arb salary model — RP exponential base formula.
+# RPs calibrated separately (35 RP arb contracts): 25% annual raises applied.
+ARB_RP_BASE = 566_254
+ARB_RP_EXP  = 0.0294
+
+# Annual arb raise formula for hitters/SPs: max(ARB_RAISE_MIN, intercept + slope * ovr).
+# Applied to prior year salary for arb years 2+.
+ARB_RAISE_INTERCEPT = -2_500_000
+ARB_RAISE_SLOPE     =    110_000
+ARB_RAISE_MIN       =  1_000_000
+
+# Salary threshold above which a player is assumed to be in deep arb (year 4+).
+# Used when service time is ambiguous from games data alone.
+ARB_DEEP_SALARY_THRESHOLD = 5_500_000
+
+# ---------------------------------------------------------------------------
+# 5. WAR projection tables
 # ---------------------------------------------------------------------------
 
 # OVR → peak WAR/year by bucket.
@@ -147,24 +237,14 @@ def _load_calibrated_ovr():
 OVR_TO_WAR_CALIBRATED = _load_calibrated_ovr()
 
 # ---------------------------------------------------------------------------
-# Aging curves
+# 6. Aging curves
 # ---------------------------------------------------------------------------
-
-# MLB contract scarcity premium: multiplier on market value (WAR * $/WAR).
-# Premium positions are harder to replace on the open market, so their WAR
-# is worth more. Centered near 1.0; SS/CF/SP get a premium, 1B/COF a discount.
-# Calibrated Session 37 from positional supply analysis.
-MLB_SCARCITY = {
-    'SS': 1.10, 'CF': 1.06, 'SP': 1.06, 'C': 1.03, '2B': 1.03, '3B': 1.03,
-    'COF': 0.94, 'RP': 0.94, '1B': 0.91,
-}
 
 # Multiplier on peak WAR by age. Interpolated for intermediate ages.
 # Calibrated 2033-04-25 from Marcel/BP/FanGraphs consensus aging research.
 # Decline rates calibrated from league data (Session 37):
 # ~3%/yr at 29-30, ~9%/yr 31-32, ~11%/yr 33-35, ~16%/yr 36+.
 # Steeper than MLB IRL — OOTP aging mechanics are more aggressive.
-
 AGING_HITTER = {
     27: 1.00, 28: 1.00, 29: 0.97, 30: 0.92, 31: 0.84,
     32: 0.76, 33: 0.68, 34: 0.60, 35: 0.51, 36: 0.42,

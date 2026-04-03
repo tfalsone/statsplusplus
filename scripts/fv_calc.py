@@ -23,7 +23,6 @@ from player_utils import (assign_bucket, calc_fv, LEVEL_NORM_AGE,
                            peak_war_from_ovr, aging_mult)
 from prospect_value import prospect_surplus_with_option as _prospect_surplus_opt
 from contract_value import contract_value as _contract_value
-from contract_value import contract_value as _contract_value
 
 LEVEL_INT_KEY   = {2:"aaa", 3:"aa", 4:"a", 5:"a-short", 6:"usl", 8:"intl"}
 LEVEL_INT_LABEL = {1:"MLB", 2:"AAA", 3:"AA", 4:"A", 5:"A-Short", 6:"Rookie", 8:"International"}

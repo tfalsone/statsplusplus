@@ -19,6 +19,7 @@ import json
 from pathlib import Path
 
 from league_context import get_league_dir
+from constants import DEFAULT_MINIMUM_SALARY
 
 
 class LeagueConfig:
@@ -102,7 +103,7 @@ class LeagueConfig:
     @property
     def minimum_salary(self):
         self._load()
-        return self._settings.get("minimum_salary", 825000)
+        return self._settings.get("minimum_salary", DEFAULT_MINIMUM_SALARY)
 
     @property
     def ratings_scale(self):

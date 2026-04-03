@@ -33,24 +33,31 @@ Quick wins that reduce duplication and clarify boundaries without restructuring.
 
 ### Reduce hardcoded values
 
+- [x] **Consolidate magic numbers into `constants.py`** — All model levers, salary thresholds, service time denominators, arb coefficients, and default fallbacks extracted to named constants in `constants.py` under clearly labeled sections. Replaced across `contract_value.py`, `projections.py`, `team_queries.py`, `player_utils.py`, `prospect_value.py`, `calibrate.py`, `free_agents.py`, `app.py`, `league_config.py`. **Done Session 41.**
+- [x] **Standardize `norm`/`_n80`** — `_n80()` wrapper removed from `queries.py`. `norm_floor()` added to `ratings.py` for call sites that require a numeric result. All `norm(x or 0)` patterns replaced with `norm_floor(x)`. **Done Session 41.**
+- [x] **Standardize `dollar_per_war` and `minimum_salary`** — `DEFAULT_DOLLARS_PER_WAR` and `DEFAULT_MINIMUM_SALARY` added to `constants.py`. All inline fallback values replaced. Web layer uses `dollars_per_war()` function instead of duplicating `_load_la().get(...)`. **Done Session 41.**
 - [ ] **Read year from `state.json` instead of hardcoding 2033** — `app.py` `_run_refresh()` hardcodes `"2033"`. Several scripts default to 2033. Should read from state or accept as parameter.
-- [ ] **Replace `ANGELS_ORG_ID` usage in CLI scripts with `my_team_id`** — `farm_analysis.py`, `roster_analysis.py`, `free_agents.py --angels` all hardcode Angels. Should read `my_team_id` from `state.json` so they work for any configured team.
 
 ---
 
-## Phase 2 — Structural Improvements
+## Phase 2 — Structural Improvements (Session 41)
 
-Larger changes that improve maintainability. Do after Phase 1.
+### File restructuring — Done
+
+- [x] **Extract `scripts/ratings.py`** — `norm()`, `norm_floor()`, `get_ratings_scale()`, `init_ratings_scale()` extracted from `player_utils.py`. Eliminates circular import between `player_utils` and `fv_model`. **Done Session 41.**
+- [x] **Extract `scripts/fv_model.py`** — `calc_fv()`, `dev_weight()`, `effective_pot()`, `versatility_bonus()`, `defensive_score()`, `DEFENSIVE_WEIGHTS`, `LEVEL_NORM_AGE` extracted from `player_utils.py`. **Done Session 41.**
+- [x] **Extract `scripts/war_model.py`** — `peak_war_from_ovr()`, `aging_mult()`, `load_stat_history()`, `stat_peak_war()` extracted from `player_utils.py`. **Done Session 41.**
+- [x] **Extract `scripts/arb_model.py`** — `estimate_service_time()`, `estimate_control()` extracted from `contract_value.py`. New `arb_salary()` function consolidates the arb formula previously duplicated across `contract_value.py`, `team_queries.py`, and `projections.py`. **Done Session 41.**
+- [x] **`player_utils.py` reduced** — now contains only bucketing, display helpers, league settings accessors, PAP, and re-exports from the new modules for backward compatibility. **Done Session 41.**
 
 ### DB access patterns
 
 - [ ] **Connection context manager** — many query functions open a connection, do work, close it. A `with db.get_conn() as conn:` pattern or a helper that auto-closes would reduce boilerplate and prevent leaked connections.
-- [ ] **Parameterize `row_factory`** — some functions set `conn.row_factory = None` to get tuples, others use the default `sqlite3.Row`. Inconsistent. Consider always using Row and indexing by name.
+- [ ] **Standardize `row_factory`** — web query layer uses `conn.row_factory = None` (tuple rows, positional indexing) consistently. Scripts layer uses `sqlite3.Row`. Documented in module docstrings. Consider unifying in a future pass.
 
 ### Script boundaries
 
 - [ ] **`refresh.py` — separate fetch from transform** — currently each `_upsert_*` function fetches from API and writes to DB in one step. Separating fetch (returns raw data) from upsert (writes to DB) would make the pipeline testable and allow dry-run mode.
-- [ ] **`contract_value.py` — extract control estimation** — `_estimate_control()` is reused conceptually by `queries.py` (upcoming FA filter mirrors its logic). Should be importable rather than reimplemented.
 
 ### Web layer
 
@@ -59,12 +66,10 @@ Larger changes that improve maintainability. Do after Phase 1.
 
 ---
 
-## Phase 3 — Testing
+## Phase 3 — Testing (Session 41)
 
-Add after refactors stabilize. Focus on model correctness first, UI second.
-
-- [ ] **Model unit tests** — `calc_fv()`, `contract_value()`, `prospect_surplus_with_option()`, aging curves, OVR→WAR interpolation. These are the highest-value tests: if the model is wrong, everything downstream is wrong.
-- [ ] **Query integration tests** — verify key queries return expected shapes (column count, non-null fields) against a test DB fixture.
+- [x] **Model unit tests** — `tests/test_player_utils.py` (21 tests: norm, calc_fv, peak_war_from_ovr, aging_mult), `tests/test_prospect_value.py` (12 tests: prospect_surplus, option value, invariants), `tests/test_arb_model.py` (11 tests: arb_salary known values and invariants). 63 tests total, all passing. **Done Session 41.**
+- [ ] **Query integration tests** — verify key queries return expected shapes against a minimal SQLite fixture. Inline import errors in web layer are invisible until a page is hit. **Tracked in task_list.md.**
 - [ ] **Refresh dry-run test** — verify `refresh.py` transform functions produce correct output from sample API responses without hitting the real API.
 
 ---

@@ -9,7 +9,7 @@ Implements Step 3 of docs/trade_analysis_guide.md.
 import argparse, json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from player_utils import dollars_per_war, league_minimum, POSITIONAL_WAR_ADJUSTMENTS, aging_mult, LEVEL_NORM_AGE, peak_war_from_ovr
-from constants import ARB_PCT, FV_TO_PEAK_WAR, FV_TO_PEAK_WAR_SP, FV_TO_PEAK_WAR_RP, FV_TO_PEAK_WAR_BY_POS, DEVELOPMENT_DISCOUNT, YEARS_TO_MLB, PROSPECT_DISCOUNT_RATE, SCARCITY_MULT
+from constants import ARB_PCT, FV_TO_PEAK_WAR, FV_TO_PEAK_WAR_SP, FV_TO_PEAK_WAR_RP, FV_TO_PEAK_WAR_BY_POS, DEVELOPMENT_DISCOUNT, YEARS_TO_MLB, PROSPECT_DISCOUNT_RATE, SCARCITY_MULT, LEVEL_AGE_DISCOUNT_RATE, PROSPECT_WAR_RAMP, NO_TRACK_RECORD_DISCOUNT
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -59,7 +59,7 @@ def _age_adjusted_discount(level, age):
     norm_age = LEVEL_NORM_AGE.get(norm_key)
     if norm_age is None:
         return base
-    return max(0.15, min(0.95, base + (norm_age - age) * 0.04))
+    return max(0.15, min(0.95, base + (norm_age - age) * LEVEL_AGE_DISCOUNT_RATE))
 
 
 def _certainty_mult(ovr, pot):
@@ -147,7 +147,7 @@ def prospect_surplus(fv, age, level, bucket, positional_adjust=False, fv_plus=Fa
             blend_w = max(0, (realization - 0.7) / 0.3) ** 2  # 0 at 0.7, 1 at 1.0
             pw = pw * (1 - blend_w) + ovr_war * blend_w
 
-    RAMP = {1: 0.60, 2: 0.80}  # year 3+ = 1.0
+    RAMP = PROSPECT_WAR_RAMP  # year 3+ = 1.0
 
     rows = []
     total_surplus = 0.0

@@ -10,7 +10,7 @@ from datetime import date
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from player_utils import (norm, height_str, fmt_table, assign_bucket,
+from player_utils import (norm, norm_floor, height_str, fmt_table, assign_bucket,
                            calc_fv, dev_weight, effective_pot, versatility_bonus,
                            PITCH_FIELDS, PITCH_NAMES, LEVEL_NORM_AGE)
 from league_config import config as _cfg
@@ -245,13 +245,13 @@ def batter_card(p, bucket):
 
     # Defensive detail — Range/Error for notable values
     is_if = bucket in ("SS", "2B", "3B", "1B")
-    rng = norm(p.get("IFR" if is_if else "OFR", 0) or 0)
-    err = norm(p.get("IFE" if is_if else "OFE", 0) or 0)
+    rng = norm_floor(p.get("IFR" if is_if else "OFR", 0))
+    err = norm_floor(p.get("IFE" if is_if else "OFE", 0))
     def_parts = []
     if rng >= 60 or rng <= 35: def_parts.append(f"Range {rng}")
     if err >= 60 or err <= 35: def_parts.append(f"Error {err}")
     if bucket in ("SS", "2B"):
-        tdp = norm(p.get("TDP", 0) or 0)
+        tdp = norm_floor(p.get("TDP", 0))
         if tdp >= 60 or tdp <= 35: def_parts.append(f"TDP {tdp}")
     if def_parts:
         table += "\nDefense detail: " + ", ".join(def_parts)

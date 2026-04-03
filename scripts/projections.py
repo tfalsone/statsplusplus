@@ -6,6 +6,7 @@ Used by web/team_queries.py::get_depth_chart().
 """
 
 from player_utils import peak_war_from_ovr, aging_mult
+from constants import PEAK_AGE_PITCHER, PEAK_AGE_HITTER
 
 # ---------------------------------------------------------------------------
 # OPS+ model — calibrated from 2,573 qualified hitter-seasons (PA >= 200)
@@ -29,7 +30,7 @@ _RP_FULL_IP = 65
 
 def project_ovr(ovr, pot, age, bucket, year_offset):
     """Project Ovr for a future year using development ramp."""
-    peak_age = 27 if bucket in ("SP", "RP") else 28
+    peak_age = PEAK_AGE_PITCHER if bucket in ("SP", "RP") else PEAK_AGE_HITTER
     future_age = age + year_offset
     if pot <= ovr or age >= peak_age:
         return ovr
@@ -67,7 +68,7 @@ def project_war(ovr, pot, age, bucket, year_offset=0, stat_war=None):
 def _to_model_scale(val):
     """Convert a tool rating to the 1-100 scale used by projection model coefficients.
     On 1-100 leagues this is a no-op. On 20-80 leagues, maps 20→0, 50→50, 80→100."""
-    from player_utils import _get_ratings_scale
+    from ratings import get_ratings_scale as _get_ratings_scale
     if _get_ratings_scale() == "20-80":
         return (val - 20) / 60 * 100
     return val
@@ -130,7 +131,7 @@ def project_ratings(ratings, year_offset, age, bucket):
     Returns a new dict with projected values for cntct, gap, pow, eye,
     stf, mov, ctrl (averaged from ctrl_r/ctrl_l).
     """
-    peak_age = 27 if bucket in ("SP", "RP") else 28
+    peak_age = PEAK_AGE_PITCHER if bucket in ("SP", "RP") else PEAK_AGE_HITTER
     if year_offset == 0 or age >= peak_age:
         progress = 0.0
     else:
@@ -649,15 +650,10 @@ def roster_availability(players, year_offsets=(0, 1, 2)):
                 # Check non-tender gate for arb-eligible years
                 pre_arb = ctrl.get("pre_arb_left", 0)
                 if off >= pre_arb:
-                    # Arb-eligible: estimate salary, check vs market value
-                    rp_mult = 0.80 if bucket == "RP" else 1.0
-                    if off == pre_arb and pre_arb > 0:
-                        arb_sal = round(318400 * math.exp(0.0495 * ovr) * rp_mult)
-                    else:
-                        # Rough arb raise per year
-                        arb_raise = max(1_000_000, round((-2_500_000 + 110_000 * ovr) * rp_mult))
-                        base_sal = c["salaries"][0] if c["salaries"] else min_sal
-                        arb_sal = base_sal + arb_raise * off
+                    from arb_model import arb_salary as _arb_salary
+                    arb_yr = off - pre_arb + 1  # 1-indexed
+                    base_sal = c["salaries"][0] if c["salaries"] else min_sal
+                    arb_sal = _arb_salary(ovr, bucket, arb_yr, base_sal, min_sal)
                     future_war = project_war(ovr, pot, age, bucket, off)
                     if arb_sal > max(future_war * dpw, min_sal):
                         continue  # non-tendered

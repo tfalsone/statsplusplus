@@ -90,13 +90,13 @@ def _babip_expected(pid, cntct, speed, conn, year, babip_rating=None):
         # BABIP rating → expected stat-line BABIP.
         # League average BABIP ≈ .300, rating 50 = average on both scales.
         # On 1-100: each point ≈ 0.002 BABIP. On 20-80: each point ≈ 0.00333.
-        from player_utils import _get_ratings_scale
+        from ratings import get_ratings_scale as _get_ratings_scale
         if _get_ratings_scale() == "20-80":
             model_babip = 0.200 + (babip_rating - 20) / 60 * 0.200
         else:
             model_babip = 0.200 + babip_rating * 0.002
     else:
-        from player_utils import _get_ratings_scale
+        from ratings import get_ratings_scale as _get_ratings_scale
         c, s = cntct, speed
         if _get_ratings_scale() == "20-80":
             c = (cntct - 20) / 60 * 100

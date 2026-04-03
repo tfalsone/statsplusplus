@@ -145,34 +145,87 @@ python3 scripts/calibrate.py --dry-run # Show results without writing
 These scripts double as importable modules. Use from Python when you need structured
 data rather than CLI text output.
 
-### `contract_value`
+### `ratings`
+
+Rating normalization — the foundation for all tool grade display and model inputs.
 
 ```python
-from contract_value import get_contract_summary
-summary = get_contract_summary(player_id)
-# Returns dict: name, age, pos, ovr, pot, salary, years_remaining, total_surplus,
-#               year_by_year (list of dicts), contract_flags
+from ratings import norm, norm_floor, get_ratings_scale, init_ratings_scale
+norm(75)              # → 65 (1-100 scale) or 75 (20-80 scale)
+norm_floor(0)         # → 20 (floor for numeric comparisons)
+get_ratings_scale()   # → '1-100' or '20-80'
+```
+
+### `fv_model`
+
+Prospect FV grade calculation. Pure functions — no DB access.
+
+```python
+from fv_model import calc_fv, dev_weight, defensive_score
+fv_base, fv_plus = calc_fv(player_dict)   # player_dict needs Ovr, Pot, Age, _bucket, _norm_age
+```
+
+### `war_model`
+
+WAR projection and stat history loading.
+
+```python
+from war_model import peak_war_from_ovr, aging_mult, load_stat_history, stat_peak_war
+peak_war_from_ovr(60, 'SP')          # → float
+aging_mult(33, 'SP')                 # → float (multiplier on peak WAR)
+bat_hist, pit_hist, two_way = load_stat_history(conn, game_date)
+war = stat_peak_war(pid, 'SP', bat_hist, pit_hist)
+```
+
+### `arb_model`
+
+Arb salary estimation and service time calculation.
+
+```python
+from arb_model import arb_salary, estimate_service_time, estimate_control
+arb_salary(60, 'SS', arb_year=1, prior_salary=825000, min_sal=825000)  # → int
+svc = estimate_service_time(conn, player_id)                            # → float (years)
+ctrl, sals, pre_arb = estimate_control(conn, player_id, age, salary)   # → (int, list, int) or (None,None,None)
+```
+
+### `contract_value`
+
+MLB contract surplus/deficit breakdown.
+
+```python
+from contract_value import contract_value
+result = contract_value(player_id)
+# Returns dict: player_id, name, bucket, age, ovr, years_left, flags,
+#               breakdown (list of year dicts), total_surplus {pessimistic, base, optimistic}
 ```
 
 ### `prospect_value`
 
+Prospect trade surplus calculator.
+
 ```python
-from prospect_value import calc_prospect_surplus
-surplus = calc_prospect_surplus(fv=50, age=21, level="AA", bucket="SP")
-# Returns float: surplus in dollars
+from prospect_value import prospect_surplus, prospect_surplus_with_option
+result = prospect_surplus(fv=55, age=21, level='AA', bucket='SP', ovr=50, pot=70)
+# Returns dict: total_surplus, dev_discount, certainty_mult, scarcity_mult, breakdown
+opt = prospect_surplus_with_option(fv=55, age=21, level='AA', bucket='SP', ovr=50, pot=70)
+# Returns int: surplus including option value from upside scenarios
 ```
 
 ### `player_utils`
 
-Shared evaluation utilities — bucketing, FV calculation, WAR projection, normalization.
+Shared utilities — bucketing, display helpers, league settings, PAP.
+Also re-exports `norm`, `norm_floor`, `calc_fv`, `peak_war_from_ovr`, `aging_mult`,
+`load_stat_history`, `stat_peak_war` for backward compatibility.
 
 ```python
 from player_utils import (
-    bucket_position,      # Determine positional bucket from ratings
-    normalize_grade,      # Raw 1-100 → 20-80 scale
-    display_pos,          # Numeric pos → display string
-    fmt_height,           # cm → feet/inches string
-    calc_pap,             # PAP score from WAR, salary, team games, $/WAR
+    assign_bucket,    # Determine positional bucket from ratings dict
+    display_pos,      # Convert bucket to display string (COF → OF)
+    height_str,       # cm → feet/inches string
+    fmt_table,        # Format markdown table row
+    calc_pap,         # PAP score from WAR, salary, team games, $/WAR
+    dollars_per_war,  # Current $/WAR from league_averages.json
+    league_minimum,   # League minimum salary from league_settings.json
 )
 ```
 
@@ -182,22 +235,25 @@ Single source of truth for league settings.
 
 ```python
 from league_config import config
-config.my_team_id        # 44
-config.year              # 2033
-config.team_abbr(44)     # "ANA"
-config.team_name(44)     # "Anaheim Angels"
-config.team_abbr_map     # {44: "ANA", 48: "NYY", ...}
+config.my_team_id        # int
+config.year              # int
+config.team_abbr(44)     # str e.g. "ANA"
+config.team_name(44)     # str e.g. "Anaheim Angels"
+config.team_abbr_map     # {int: str}
 config.level_map         # {"1": "MLB", "2": "AAA", ...}
-config.settings          # Full league_settings.json dict
+config.minimum_salary    # int
+config.ratings_scale     # "1-100" or "20-80"
+config.settings          # full league_settings.json dict
 ```
 
 ### `constants`
 
-Valuation tables and curves.
-
-```python
-from constants import FV_TO_WAR, OVR_TO_WAR, AGING_CURVES, ARB_PCT, DISCOUNT_RATE
-```
+Named constants for all model levers. Sections:
+- **Shared identifiers**: `PITCH_FIELDS`, `ROLE_MAP`, `DEFAULT_DOLLARS_PER_WAR`, `DEFAULT_MINIMUM_SALARY`, `PEAK_AGE_PITCHER/HITTER`, `SERVICE_GAMES_*`
+- **Prospect model**: `ARB_PCT`, `FV_TO_PEAK_WAR*`, `DEVELOPMENT_DISCOUNT`, `YEARS_TO_MLB`, `PROSPECT_DISCOUNT_RATE`, `LEVEL_AGE_DISCOUNT_RATE`, `PROSPECT_WAR_RAMP`, `NO_TRACK_RECORD_DISCOUNT`, `RP_POT_DISCOUNT`, `SCARCITY_MULT`, `MIN_REGRESSION_N`, `CALIBRATION_YEARS`
+- **MLB contract model**: `MLB_SCARCITY`, `ARB_HITTER_BASE/EXP`, `ARB_RP_BASE/EXP`, `ARB_RAISE_*`, `ARB_DEEP_SALARY_THRESHOLD`
+- **WAR tables**: `OVR_TO_WAR`, `OVR_TO_WAR_CALIBRATED`
+- **Aging curves**: `AGING_HITTER`, `AGING_PITCHER`
 
 ---
 

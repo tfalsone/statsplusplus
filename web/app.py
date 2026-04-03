@@ -12,6 +12,10 @@ from flask import Flask, render_template, redirect, request, jsonify, g
 import queries
 from league_config import LeagueConfig
 from league_context import get_league_dir, get_active_league_slug
+from log_config import get_logger
+from constants import DEFAULT_MINIMUM_SALARY
+
+log = get_logger("web")
 
 app = Flask(__name__)
 app.json.sort_keys = False
@@ -49,7 +53,14 @@ def _set_league_context():
 
 @app.teardown_request
 def _close_db(exc):
-    pass
+    if exc:
+        log.error("Request teardown error: %s", exc, exc_info=exc)
+
+
+@app.errorhandler(Exception)
+def _handle_exception(e):
+    log.error("Unhandled exception on %s %s: %s", request.method, request.path, e, exc_info=True)
+    raise e
 
 
 def _get_cfg():
@@ -64,7 +75,7 @@ def _get_cfg():
 @app.context_processor
 def _inject_globals():
     cfg = _get_cfg()
-    slug = cfg.settings.get("statsplus_slug", "emlb")
+    slug = cfg.settings.get("statsplus_slug", "")
     # Discover all leagues for the switcher
     from league_context import APP_CONFIG_PATH
     import json as _json
@@ -80,7 +91,7 @@ def _inject_globals():
         "all_teams": sorted(cfg.team_names_map.items(), key=lambda x: x[1]),
         "league_name": cfg.settings.get("league", "League"),
         "league_list": league_list,
-        "active_league_slug": g.league_slug if hasattr(g, "league_slug") else "emlb",
+        "active_league_slug": g.league_slug if hasattr(g, "league_slug") else "",
         "league_ready": getattr(g, "league_ready", False),
     }
 
@@ -115,16 +126,8 @@ app.jinja_env.filters["short"] = _short_name
 
 
 def _get_web_logger():
-    import logging
-    _log = logging.getLogger("emlb.web")
-    if not _log.handlers:
-        _ld = Path(__file__).resolve().parent.parent / "data" / "logs"
-        _ld.mkdir(parents=True, exist_ok=True)
-        _fh = logging.FileHandler(_ld / "web.log", encoding="utf-8")
-        _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-5s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-        _log.addHandler(_fh)
-        _log.setLevel(logging.DEBUG)
-    return _log
+    from log_config import get_logger as _gl
+    return _gl("web")
 
 
 def _run_refresh():
@@ -481,7 +484,7 @@ def api_draft_picks():
         from statsplus import client
         from league_context import get_statsplus_cookie
         cfg = _get_cfg()
-        slug = cfg.settings.get("statsplus_slug", "emlb")
+        slug = cfg.settings.get("statsplus_slug", "")
         cookie = get_statsplus_cookie()
         if slug and cookie:
             client.configure(slug, cookie)
@@ -635,12 +638,20 @@ def settings():
             dh = request.form.get("dh_rule", "")
             if dh in ("No DH", "Universal DH", "AL Only DH"):
                 s["dh_rule"] = dh
+            scale_changed = False
             rs = request.form.get("ratings_scale", "")
             if rs in ("1-100", "20-80"):
+                scale_changed = rs != s.get("ratings_scale")
                 s["ratings_scale"] = rs
             settings_path = cfg.league_dir / "config" / "league_settings.json"
             settings_path.write_text(_json.dumps(s, indent=2) + "\n")
             cfg.reload()
+            if scale_changed:
+                def _recalc():
+                    import fv_calc
+                    fv_calc.run()
+                threading.Thread(target=_recalc, daemon=True).start()
+                log.info("ratings_scale changed to %s — triggered fv_calc recalculation", rs)
 
         elif action == "save_financial":
             s = cfg.settings
@@ -801,6 +812,7 @@ def onboard_step1():
         cookie += f";csrftoken={csrf_token}"
     # Save cookie globally
     from league_context import APP_CONFIG_PATH
+    APP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     app_cfg = _json.loads(APP_CONFIG_PATH.read_text()) if APP_CONFIG_PATH.exists() else {}
     app_cfg["statsplus_cookie"] = cookie
     APP_CONFIG_PATH.write_text(_json.dumps(app_cfg, indent=2) + "\n")
@@ -829,16 +841,8 @@ _onboard_refresh = {"running": False, "stage": "", "error": "", "done": False, "
 
 def _run_onboard_refresh(slug, ratings_poll_url=""):
     """Run refresh.py for onboarding, capturing stage progress."""
-    import logging
-    _log = logging.getLogger("emlb.onboard")
-    if not _log.handlers:
-        from pathlib import Path as _P
-        _ld = _P(__file__).resolve().parent.parent / "data" / "logs"
-        _ld.mkdir(parents=True, exist_ok=True)
-        _fh = logging.FileHandler(_ld / "onboard.log", encoding="utf-8")
-        _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-5s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-        _log.addHandler(_fh)
-        _log.setLevel(logging.DEBUG)
+    from log_config import get_logger as _gl
+    _log = _gl("onboard")
     _log.info("=== onboard refresh started (slug=%s) ===", slug)
     try:
         from league_context import get_statsplus_cookie
@@ -901,7 +905,7 @@ def onboard_start_refresh():
             "pos_map": {"1":"P","2":"C","3":"1B","4":"2B","5":"3B","6":"SS","7":"LF","8":"CF","9":"RF","10":"DH"},
             "level_map": {"1":"MLB","2":"AAA","3":"AA","4":"A","5":"A-Short","6":"Rookie","7":"Indy","8":"Intl"},
             "role_map": {"0":"position_player","11":"starter","12":"reliever","13":"closer"},
-            "minimum_salary": 825000,
+            "minimum_salary": DEFAULT_MINIMUM_SALARY,
             "pyth_exp": 1.83,
             "wild_cards_per_league": 3,
         }, indent=2) + "\n")
@@ -952,6 +956,11 @@ def onboard_step3():
         teams = sorted(
             [(r[0], api_teams.get(r[0], f"Team {r[0]}")) for r in mlb_ids if r[0] in api_teams],
             key=lambda x: x[1])
+        # Auto-detect ratings scale: if any rating exceeds 80, it's 1-100
+        has_100 = conn.execute(
+            "SELECT 1 FROM latest_ratings WHERE ovr > 80 OR pot > 80 LIMIT 1"
+        ).fetchone()
+        detected_scale = "1-100" if has_100 else "20-80"
         conn.close()
         # Load auto-detected structure for the editor
         settings_path = league_dir / "config" / "league_settings.json"
@@ -959,11 +968,6 @@ def onboard_step3():
         leagues = s.get("leagues", [])
         all_mlb_teams = {int(k): v for k, v in s.get("team_abbr", {}).items()}
         team_names_map = {int(k): v for k, v in s.get("team_names", {}).items()}
-        # Auto-detect ratings scale: if any rating exceeds 80, it's 1-100
-        has_100 = conn.execute(
-            "SELECT 1 FROM latest_ratings WHERE ovr > 80 OR pot > 80 LIMIT 1"
-        ).fetchone()
-        detected_scale = "1-100" if has_100 else "20-80"
         return render_template("onboard.html", step=3, slug=slug, teams=teams,
                                league_name=slug.upper(), leagues=leagues,
                                all_mlb_teams=all_mlb_teams,
@@ -1035,7 +1039,7 @@ def api_game_date():
         from statsplus import client
         from league_context import get_statsplus_cookie
         cfg = _get_cfg()
-        slug = cfg.settings.get("statsplus_slug", "emlb")
+        slug = cfg.settings.get("statsplus_slug", "")
         cookie = get_statsplus_cookie()
         if slug and cookie:
             client.configure(slug, cookie)
@@ -1049,7 +1053,7 @@ def api_game_date():
 def api_test_connection():
     """Test StatsPlus API connection with the provided or saved cookie."""
     cfg = _get_cfg()
-    slug = cfg.settings.get("statsplus_slug", "emlb")
+    slug = cfg.settings.get("statsplus_slug", "")
     data = request.get_json(silent=True) or {}
     cookie = data.get("cookie", "").strip()
     if not cookie:

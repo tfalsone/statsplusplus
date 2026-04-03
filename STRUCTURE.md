@@ -27,10 +27,14 @@ statsplusplus/
 │   ├── league_context.py       # Active league resolver (get_league_dir, get_active_league_slug)
 │   ├── league_config.py        # Single abstraction for league-specific settings
 │   ├── log_config.py           # Centralized logging (rotating file + console)
-│   ├── constants.py            # Shared constants (FV→WAR, aging curves, arb %, pitch fields)
+│   ├── constants.py            # Shared constants (sections: identifiers, prospect model, MLB model, WAR tables, aging curves)
+│   ├── ratings.py              # Rating normalization (norm, norm_floor, get_ratings_scale)
 │   ├── db.py                   # SQLite schema, migrations, connection management
 │   ├── data.py                 # Data access layer (typed query functions)
-│   ├── player_utils.py         # Shared evaluation (bucketing, FV calc, WAR curves, aging)
+│   ├── player_utils.py         # Shared utilities (bucketing, display helpers, league settings, PAP). Re-exports from ratings/fv_model/war_model.
+│   ├── fv_model.py             # Prospect FV grade calculation (calc_fv, dev_weight, defensive_score)
+│   ├── war_model.py            # WAR projection and stat history (peak_war_from_ovr, aging_mult, load_stat_history, stat_peak_war)
+│   ├── arb_model.py            # Arb salary and service time estimation (arb_salary, estimate_service_time, estimate_control)
 │   ├── refresh.py              # API → DB pipeline (full league refresh)
 │   ├── fv_calc.py              # Batch FV + surplus computation (prospect_fv, player_surplus)
 │   ├── calibrate.py            # League-specific model calibration (OVR_TO_WAR, FV, ARB, scarcity)

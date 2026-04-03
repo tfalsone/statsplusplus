@@ -3,16 +3,19 @@
 Team queries: web/team_queries.py
 Player queries: web/player_queries.py
 Percentiles: web/percentiles.py
+
+Note: many query functions set conn.row_factory = None to use tuple rows instead
+of sqlite3.Row. This is intentional — these functions use positional indexing (r[0],
+r[1], etc.) for performance. Do not change without updating all index references.
 """
 
 import os, sys, json
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(BASE, "scripts"))
-from player_utils import display_pos as _display_pos
+from player_utils import display_pos as _display_pos, norm as _norm, norm_floor as _norm_floor
 from web_league_context import get_db, get_cfg, team_abbr_map, team_names_map, pos_order, year, mlb_team_ids, level_map
-
-ROLE_MAP = {11: "SP", 12: "RP", 13: "CL"}
+from constants import ROLE_MAP
 
 # Legacy module-level aliases — used by app.py and re-export consumers.
 # These are properties that re-evaluate each access via get_cfg().
@@ -352,15 +355,9 @@ def get_prospect_summary(pid):
     return out
 
 
-def _n80(v):
-    if not v: return 20
-    from player_utils import norm
-    return norm(v)
-
-
 def _build_tools(rd, is_pitcher, out):
     """Populate out with tools, pitches, defense from a ratings dict."""
-    n80 = _n80
+    n80 = _norm
     if is_pitcher:
         ctrl_r, ctrl_l = rd.get("ctrl_r", 0) or 0, rd.get("ctrl_l", 0) or 0
         ctrl = rd.get("ctrl") or (round((ctrl_r + ctrl_l) / 2) if ctrl_r and ctrl_l else ctrl_r or ctrl_l)
@@ -388,7 +385,7 @@ def _build_tools(rd, is_pitcher, out):
         for col, label in pitch_map:
             cur, fut = rd.get(col), rd.get(f"pot_{col}")
             if cur or fut:
-                pitches.append({"name": label, "cur": n80(cur), "fut": n80(fut)})
+                pitches.append({"name": label, "cur": n80(cur), "pot": n80(fut)})
         pitches.sort(key=lambda x: -(x["cur"] or 0))
         out["pitches"] = pitches[:5]
     else:
@@ -443,12 +440,11 @@ def get_player_card(pid):
         bucket = {11: "SP", 12: "RP", 13: "RP"}.get(role, "SP")
     else:
         # Derive bucket from ratings for amateur/untracked players
-        from player_utils import assign_bucket, norm
         r_tmp = conn.execute("SELECT * FROM latest_ratings WHERE player_id=?", (pid,)).fetchone()
         if r_tmp:
             cols_tmp = [d[0] for d in conn.execute("SELECT * FROM latest_ratings LIMIT 0").description]
             rd_tmp = dict(zip(cols_tmp, r_tmp))
-            n = _n80
+            n = _norm
             p_dict = {"Age": age, "Pos": "P" if is_pitcher else str(role or ""),
                        "_role": {11:"starter",12:"reliever",13:"closer"}.get(role, "position_player"),
                        "_is_pitcher": is_pitcher, "Pot": rd_tmp.get("pot", 0)}
@@ -746,13 +742,14 @@ def get_draft_pool():
     _DRAFT_SQL = RATINGS_SQL.replace("r.league_id AS LeagueId",
         "r.league_id AS LeagueId, r.bats AS Bats, r.throws AS Throws")
 
-    n = _n80
+    n = _norm
     role_map = {str(k): v for k, v in get_cfg().role_map.items()}
     _LVL_KEY = {'11': 'intl', '10': 'a', '0': 'dsl'}
     _POS_LABEL = {1:'P',2:'C',3:'1B',4:'2B',5:'3B',6:'SS',7:'LF',8:'CF',9:'RF',10:'DH'}
 
     def _build_prospect(rat):
         p = dict(rat)
+        ng = _norm_floor
         role_str = role_map.get(str(p.get("role") or 0), "position_player")
         p["_role"] = role_str
         p["Pos"] = str(p.get("pos") or "")
@@ -787,16 +784,16 @@ def get_draft_pool():
             num_p = 0
             best_p = 20
             for pf in PITCH_FIELDS:
-                v = n(p.get("Pot" + pf) or 0)
+                v = ng(p.get("Pot" + pf) or 0)
                 if v and v >= 30:
                     pitch_data[_pitch_names.get(pf, pf)] = v
                     num_p += 1
                     if v > best_p: best_p = v
             entry["tools"] = {
-                "stf": [n(p.get("Stf") or 0), n(p.get("PotStf") or 0)],
-                "mov": [n(p.get("Mov") or 0), n(p.get("PotMov") or 0)],
-                "ctrl": [n(p.get("Ctrl") or 0), n(p.get("PotCtrl") or 0)],
-                "stm": n(p.get("Stm") or 0),
+                "stf": [ng(p.get("Stf") or 0), ng(p.get("PotStf") or 0)],
+                "mov": [ng(p.get("Mov") or 0), ng(p.get("PotMov") or 0)],
+                "ctrl": [ng(p.get("Ctrl") or 0), ng(p.get("PotCtrl") or 0)],
+                "stm": ng(p.get("Stm") or 0),
                 "vel": p.get("Vel"),
                 "num_pitches": num_p,
                 "best_pitch": best_p,
@@ -804,19 +801,18 @@ def get_draft_pool():
             }
         else:
             entry["tools"] = {
-                "con": [n(p.get("Cntct") or 0), n(p.get("PotCntct") or 0)],
-                "gap": [n(p.get("Gap") or 0), n(p.get("PotGap") or 0)],
-                "pow": [n(p.get("Pow") or 0), n(p.get("PotPow") or 0)],
-                "eye": [n(p.get("Eye") or 0), n(p.get("PotEye") or 0)],
-                "spd": n(p.get("Speed") or 0),
+                "con": [ng(p.get("Cntct") or 0), ng(p.get("PotCntct") or 0)],
+                "gap": [ng(p.get("Gap") or 0), ng(p.get("PotGap") or 0)],
+                "pow": [ng(p.get("Pow") or 0), ng(p.get("PotPow") or 0)],
+                "eye": [ng(p.get("Eye") or 0), ng(p.get("PotEye") or 0)],
+                "spd": ng(p.get("Speed") or 0),
             }
-            # Position defense columns
             _def_fields = [("C","PotC"),("1B","Pot1B"),("2B","Pot2B"),("3B","Pot3B"),
                            ("SS","PotSS"),("LF","PotLF"),("CF","PotCF"),("RF","PotRF")]
             defs = {}
             best_def = 20
             for pos_label, field in _def_fields:
-                v = n(p.get(field) or 0)
+                v = ng(p.get(field) or 0)
                 if v > 20:
                     defs[pos_label] = v
                     if v > best_def:
@@ -824,9 +820,9 @@ def get_draft_pool():
             entry["tools"]["def"] = best_def
             entry["defense"] = defs
             entry["field"] = {
-                "ifr": n(p.get("IFR") or 0), "ifa": n(p.get("IFA") or 0),
-                "ofr": n(p.get("OFR") or 0), "ofa": n(p.get("OFA") or 0),
-                "cblk": n(p.get("CBlk") or 0), "cfrm": n(p.get("CFrm") or 0),
+                "ifr": ng(p.get("IFR") or 0), "ifa": ng(p.get("IFA") or 0),
+                "ofr": ng(p.get("OFR") or 0), "ofa": ng(p.get("OFA") or 0),
+                "cblk": ng(p.get("CBlk") or 0), "cfrm": ng(p.get("CFrm") or 0),
             }
             # Position mismatch detection
             _thresholds = {"C":45,"SS":50,"2B":50,"CF":55,"3B":45,"LF":45,"RF":45,"1B":45}
@@ -886,7 +882,7 @@ def get_draft_pool():
         from statsplus import client as _dc
         from league_context import get_statsplus_cookie
         cfg = get_cfg()
-        slug = cfg.settings.get("statsplus_slug", "emlb")
+        slug = cfg.settings.get("statsplus_slug", "")
         cookie = get_statsplus_cookie()
         if slug and cookie:
             _dc.configure(slug, cookie)

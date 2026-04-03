@@ -25,7 +25,7 @@ def get_logger(name: str, level=logging.DEBUG) -> logging.Logger:
 
     _LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    logger = logging.getLogger(f"emlb.{name}")
+    logger = logging.getLogger(f"statspp.{name}")
     logger.setLevel(level)
     logger.propagate = False
 

@@ -25,14 +25,8 @@ from league_context import get_league_dir
 from league_config import config as _cfg
 from player_utils import assign_bucket
 from constants import (OVR_TO_WAR, FV_TO_PEAK_WAR, FV_TO_PEAK_WAR_RP,
-                        ARB_PCT, SCARCITY_MULT)
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-MIN_REGRESSION_N = 40  # minimum seasons for position-specific regression
-CALIBRATION_YEARS = 3  # use most recent N complete years
+                        ARB_PCT, SCARCITY_MULT, MIN_REGRESSION_N, CALIBRATION_YEARS,
+                        DEFAULT_DOLLARS_PER_WAR, DEFAULT_MINIMUM_SALARY)
 HITTER_BUCKETS = ("C", "SS", "2B", "3B", "CF", "COF", "1B")
 PITCHER_BUCKETS = ("SP", "RP")
 
@@ -270,7 +264,7 @@ def _calibrate_arb_pct(conn, game_year, dpw):
         FROM contracts c
         JOIN players p ON c.player_id = p.player_id
         JOIN latest_ratings r ON r.player_id = p.player_id
-        WHERE c.years = 1 AND c.salary_0 > 825000 AND c.salary_0 < 20000000
+        WHERE c.years = 1 AND c.salary_0 > {DEFAULT_MINIMUM_SALARY} AND c.salary_0 < 20000000
           AND p.age < 30 AND p.level = 1
     """).fetchall()
 
@@ -424,7 +418,7 @@ def calibrate(dry_run=False):
 
     with open(league_dir / "config" / "league_averages.json") as f:
         avgs = json.load(f)
-    dpw = avgs.get("dollar_per_war", 8_976_775)
+    dpw = avgs.get("dollar_per_war", DEFAULT_DOLLARS_PER_WAR)
 
     role_map = {str(k): v for k, v in _cfg.role_map.items()}
 

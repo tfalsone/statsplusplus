@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 *.pyo
+.venv/
 
 # Data (league DBs, configs, logs — user-specific)
 data/

@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(BASE, "scripts"))
 import db as _db
 from league_config import config as _cfg
 from league_context import get_league_dir
+from constants import DEFAULT_MINIMUM_SALARY
 
 
 def upcoming_fas(year, years_out=1, bucket=None, min_war=None, my_team_only=False):
@@ -42,7 +43,7 @@ def upcoming_fas(year, years_out=1, bucket=None, min_war=None, my_team_only=Fals
         WHERE c.years - c.current_year <= ?
           AND c.years > 0
           AND p.level IN ('1', 1)
-          AND NOT (c.years = 1 AND c.salary_0 <= 825000)
+          AND NOT (c.years = 1 AND c.salary_0 <= {DEFAULT_MINIMUM_SALARY})
     """
     params = [eval_date, years_out]
 

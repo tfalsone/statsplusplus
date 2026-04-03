@@ -4,11 +4,10 @@ import os, sys, json
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(BASE, "scripts"))
-from player_utils import norm as _norm, height_str as _height_str, display_pos as _display_pos, calc_pap
+from player_utils import norm as _norm, norm_floor as _norm_floor, height_str as _height_str, display_pos as _display_pos, calc_pap, dollars_per_war as _dollars_per_war
 from percentiles import get_hitter_percentiles, get_pitcher_percentiles, get_fielding_percentiles
 from web_league_context import get_db, get_cfg, team_abbr_map, team_names_map, level_map, pos_map
-
-ROLE_MAP = {11: "SP", 12: "RP", 13: "CL"}
+from constants import ROLE_MAP
 
 
 def get_player(pid):
@@ -535,8 +534,7 @@ def get_player(pid):
             _war += bat_stats[-1]["war"]
         if pit_stats and pit_stats[-1]["year"] == _pap_year:
             _war += pit_stats[-1]["war"]
-        from web_league_context import league_averages as _load_la
-        _dpw = _load_la().get("dollar_per_war", 8_976_775)
+        _dpw = _dollars_per_war()
         pap = calc_pap(_war, _pap_sal, _pap_tg, _dpw)
 
     return {
@@ -575,6 +573,7 @@ def get_player_popup(pid):
         "cntct, gap, pow, eye, ks, speed, "
         "stf, mov, ctrl, ctrl_r, ctrl_l, stm, vel, "
         "fst, snk, crv, sld, chg, splt, cutt, cir_chg, scr, frk, kncrv, knbl, "
+        "pot_fst, pot_snk, pot_crv, pot_sld, pot_chg, pot_splt, pot_cutt, pot_cir_chg, pot_scr, pot_frk, pot_kncrv, pot_knbl, "
         "pot_cntct, pot_gap, pot_pow, pot_eye, pot_ks, "
         "pot_stf, pot_mov, pot_ctrl, "
         "c, ss, second_b, third_b, first_b, lf, cf, rf "
@@ -636,8 +635,7 @@ def get_player_popup(pid):
         _tg = conn.execute(
             "SELECT COUNT(*) FROM games WHERE (home_team=? OR away_team=?) AND date>=? AND played=1",
             (org_id, org_id, f"{year}-01-01")).fetchone()[0]
-        from web_league_context import league_averages as _la_fn
-        _dpw = _la_fn().get("dollar_per_war", 8_976_775)
+        _dpw = _dollars_per_war()
         _sal = conn.execute("SELECT salary_0 FROM contracts WHERE player_id=?", (pid,)).fetchone()
         _pap = calc_pap(_war, _sal[0] if _sal else 0, _tg, _dpw)
 

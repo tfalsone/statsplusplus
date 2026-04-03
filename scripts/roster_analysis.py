@@ -8,7 +8,7 @@ Usage: python3 scripts/roster_analysis.py
 import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from constants import PITCH_FIELDS
-from player_utils import norm, height_str, fmt_table, PITCH_NAMES
+from player_utils import norm, norm_floor, height_str, fmt_table, PITCH_NAMES
 from league_config import config as _cfg
 from league_context import get_league_dir
 import db as _db
@@ -111,13 +111,13 @@ def batter_grade_table(p, bucket):
 
     # Defensive detail — Range/Error for notable values
     is_if = bucket in ("C", "SS", "2B", "3B", "1B")
-    rng = norm(p.get("IFR" if is_if else "OFR", 0) or 0)
-    err = norm(p.get("IFE" if is_if else "OFE", 0) or 0)
+    rng = norm_floor(p.get("IFR" if is_if else "OFR", 0))
+    err = norm_floor(p.get("IFE" if is_if else "OFE", 0))
     def_parts = []
     if rng >= 60 or rng <= 35: def_parts.append(f"Range {rng}")
     if err >= 60 or err <= 35: def_parts.append(f"Error {err}")
     if bucket in ("SS", "2B"):
-        tdp = norm(p.get("TDP", 0) or 0)
+        tdp = norm_floor(p.get("TDP", 0))
         if tdp >= 60 or tdp <= 35: def_parts.append(f"TDP {tdp}")
     if def_parts:
         callout.append(f"Defense detail: {', '.join(def_parts)}")

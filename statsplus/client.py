@@ -13,7 +13,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-log = logging.getLogger("emlb.client")
+log = logging.getLogger("statspp.client")
 
 # Deferred credential resolution — no module-level env reads.
 _league_url = None

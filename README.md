@@ -28,16 +28,18 @@ An assistant GM dashboard for [OOTP Baseball](https://www.ootpdevelopments.com/)
 ```bash
 git clone <repo-url> statsplusplus
 cd statsplusplus
-pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
 The only dependency is Flask. Everything else uses the Python standard library.
 
+> **Note for Ubuntu 24.04+ / Debian users:** The system Python is externally managed (PEP 668) and `pip install` will be blocked without a virtual environment. The `python3 -m venv` step above handles this. If `python3 -m venv` fails, install the venv package first: `sudo apt install python3-full`.
+
 ### 2. Launch the web UI
 
 ```bash
-cd web
-python3 app.py
+.venv/bin/python3 web/app.py
 ```
 
 The server starts on `http://localhost:5001`. You'll be redirected to the onboarding wizard on first visit.
@@ -169,7 +171,7 @@ Cookies expire periodically — if refreshes start failing with authentication e
 
 ## Troubleshooting
 
-**"No module named flask"** — Run `pip install -r requirements.txt` from the project root.
+**"No module named flask"** — Run `.venv/bin/pip install -r requirements.txt` from the project root.
 
 **Refresh fails or times out** — The StatsPlus API can be slow. Ratings exports in particular may take 45+ seconds. The refresh will retry automatically. If it consistently fails, check that your session cookie is still valid.
 

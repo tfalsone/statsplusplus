@@ -5,12 +5,15 @@ Usage:
   python3 scripts/contract_value.py <name search>
 """
 
-import json, math, os, sys
+import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db
 from player_utils import assign_bucket, dollars_per_war, league_minimum, \
     peak_war_from_ovr, aging_mult, load_stat_history, stat_peak_war
-from constants import ARB_PCT
+from arb_model import estimate_control, arb_salary as _arb_salary
+from constants import ARB_PCT, MLB_SCARCITY, \
+    PEAK_AGE_PITCHER, PEAK_AGE_HITTER, \
+    NO_TRACK_RECORD_DISCOUNT
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -69,82 +72,6 @@ def _resolve(conn, query):
     return pid, name, age, rat["ovr"], rat["pot"], bucket
 
 
-def _estimate_service_time(conn, player_id):
-    """Estimate fractional MLB service years from games played.
-
-    Uses role-adjusted denominators per year:
-      - Hitters: g / 162 (regulars play 140-162 games)
-      - SP (gs >= g/2): gs / 32 (full rotation = 30-34 starts)
-      - RP (gs < g/2): g / 65 (full bullpen = 55-80 appearances)
-    Takes max of hitter/pitcher fractions per year (two-way players),
-    caps each year at 1.0, sums across all years.
-    """
-    bat_by_year = {}
-    for row in conn.execute(
-        "SELECT year, SUM(g) FROM batting_stats"
-        " WHERE player_id=? AND split_id=1 GROUP BY year",
-        (player_id,),
-    ).fetchall():
-        bat_by_year[row[0]] = row[1]
-
-    pit_by_year = {}
-    for row in conn.execute(
-        "SELECT year, SUM(g), SUM(gs) FROM pitching_stats"
-        " WHERE player_id=? AND split_id=1 GROUP BY year",
-        (player_id,),
-    ).fetchall():
-        pit_by_year[row[0]] = (row[1], row[2])
-
-    total = 0.0
-    for yr in set(bat_by_year) | set(pit_by_year):
-        bat_frac = bat_by_year.get(yr, 0) / 162.0
-        pg, pgs = pit_by_year.get(yr, (0, 0))
-        pit_frac = (pgs / 32.0 if pgs >= pg * 0.5 else pg / 65.0) if pg else 0.0
-        total += min(1.0, max(bat_frac, pit_frac))
-    return total
-
-
-def _estimate_control(conn, player_id, age, salary, bucket=None):
-    """Estimate remaining team control years and salary schedule for 1yr contracts.
-
-    Returns (ctrl_years, salaries, pre_arb_left) or (None, None, None) for FA deals.
-
-    Uses games-based fractional service time for pre-arb players (partial seasons
-    accumulate proportionally instead of counting as full qualifying seasons).
-    For arb players, rounds up games-based service time since games played
-    underestimates roster time for bench/shuttle players.
-
-    Logic:
-      - salary == league_min → pre-arb. Use games-based service time.
-        Age gate: age >= 30, or (age >= 28 and svc >= 3) → veteran minor league deal.
-      - salary > league_min, age < 30 → arb-eligible. Floor service at 3.
-      - age >= 30 and salary > league_min → likely a 1yr FA deal. Return None.
-    """
-    min_sal = league_minimum()
-    svc = _estimate_service_time(conn, player_id)
-
-    if salary <= min_sal:
-        # Pre-arb: use games-based service time.
-        # Age gates for veterans on minor league deals:
-        if age >= 30 or (age >= 28 and svc >= 3) or svc >= 6:
-            return None, None, None
-        svc_years = int(svc)  # floor to whole years
-        remaining = max(1, 6 - svc_years)
-        pre_arb_left = max(0, 3 - svc_years)
-        return remaining, [None] * remaining, pre_arb_left
-
-    if age >= 30:
-        return None, None, None
-
-    # Arb-eligible: at least 3 service years by definition.
-    # Games-based svc underestimates for bench/shuttle players (can't see roster
-    # days without game appearances), so round up to nearest whole year.
-    # High salary (>$5.5M) indicates deep arb — at least 4 service years.
-    est_svc = max(math.ceil(svc), 4 if salary > 5_500_000 else 3)
-    remaining = max(1, 6 - est_svc)
-    return remaining, [None] * remaining, 0
-
-
 def contract_value(player_id, retention_pct=0.0, _conn=None, _hist=None):
     """
     Programmatic interface for trade_calculator. Returns surplus dict or None.
@@ -179,22 +106,13 @@ def contract_value(player_id, retention_pct=0.0, _conn=None, _hist=None):
     ratings_war = peak_war_from_ovr(ovr, bucket)
     no_track_record = stat_war is None
     if stat_war is None:
-        # No qualifying MLB seasons — discount ratings projection.
-        # Unproven players produce ~50% of ratings-based WAR on average.
-        pw = ratings_war * 0.5
-    elif ratings_war > stat_war and age < (27 if bucket in ("SP", "RP") else 28):
-        # Young players: blend stats with ratings when ratings project higher.
-        # Weight fades linearly from 0.5 at age 21 to 0 at peak age.
-        peak_age = 27 if bucket in ("SP", "RP") else 28
+        pw = ratings_war * NO_TRACK_RECORD_DISCOUNT
+    elif ratings_war > stat_war and age < (PEAK_AGE_PITCHER if bucket in ("SP", "RP") else PEAK_AGE_HITTER):
+        peak_age = PEAK_AGE_PITCHER if bucket in ("SP", "RP") else PEAK_AGE_HITTER
         rtg_w = min(0.5, max(0, (peak_age - age) / (peak_age - 21)))
         pw = rtg_w * ratings_war + (1 - rtg_w) * stat_war
-    elif ratings_war < stat_war and age > (30 if bucket in ("SP", "RP") else 31):
-        # Declining veterans: blend stats with ratings when ratings show decline
-        # that stat history hasn't fully captured (stale weighted average).
-        # Weight scales with both age past peak and the size of the gap.
-        # At age 32 with a small gap: mostly trust stats.
-        # At age 36 with a large gap: mostly trust ratings.
-        decline_start = 30 if bucket in ("SP", "RP") else 31
+    elif ratings_war < stat_war and age > (PEAK_AGE_PITCHER if bucket in ("SP", "RP") else PEAK_AGE_HITTER):
+        decline_start = PEAK_AGE_PITCHER if bucket in ("SP", "RP") else PEAK_AGE_HITTER
         age_w = min(1.0, (age - decline_start) / 5)
         gap_ratio = (stat_war - ratings_war) / stat_war if stat_war > 0 else 0
         rtg_w = min(0.75, age_w * gap_ratio)
@@ -227,13 +145,13 @@ def contract_value(player_id, retention_pct=0.0, _conn=None, _hist=None):
         remaining += ext["years"]
         ctrl_type = "extension"
     elif years_total == 1:
-        est_ctrl, est_sals, est_pre_arb = _estimate_control(conn, pid, age, c["salary_0"] or 0, bucket=bucket)
+        est_ctrl, est_sals, est_pre_arb = estimate_control(conn, pid, age, c["salary_0"] or 0, bucket=bucket)
         if est_ctrl and est_ctrl > 1:
             remaining = est_ctrl
             pre_arb_left = est_pre_arb or 0
             ctrl_type = "estimated"
 
-    peak_age        = 27 if bucket in ("SP", "RP") else 28
+    peak_age        = PEAK_AGE_PITCHER if bucket in ("SP", "RP") else PEAK_AGE_HITTER
     use_incremental = stat_war is not None and age > peak_age
     base_mult       = aging_mult(age, bucket) if use_incremental else 1.0
 
@@ -277,16 +195,10 @@ def contract_value(player_id, retention_pct=0.0, _conn=None, _hist=None):
             # 25% annual raises — calibrated from 35 RP arb contracts.
             if i < pre_arb_left:
                 sal_full = min_sal
-            elif bucket == "RP":
-                rp_base = 566254 * math.exp(0.0294 * ovr)
-                arb_yr = i - pre_arb_left  # 0-indexed arb year
-                sal_full = round(rp_base * (0.75 + 0.25 * arb_yr))
-            elif i == pre_arb_left and pre_arb_left > 0:
-                sal_full = round(318400 * math.exp(0.0495 * ovr))
             else:
-                arb_raise = max(1_000_000, round(-2_500_000 + 110_000 * ovr))
-                prior_sal = breakdown[-1]["salary_full"] if breakdown else min_sal
-                sal_full = prior_sal + arb_raise
+                arb_yr = i - pre_arb_left + 1  # 1-indexed
+                prior = breakdown[-1]["salary_full"] if breakdown else min_sal
+                sal_full = _arb_salary(ovr, bucket, arb_yr, prior, min_sal)
             # Non-tender gate: if projected arb salary far exceeds market value,
             # the team would non-tender — truncate control here.
             # Threshold at 2× to avoid premature truncation for borderline players.
@@ -374,7 +286,7 @@ def contract_breakdown(query):
     current_year = c["current_year"] or 0
     remaining    = years_total - current_year
 
-    peak_age        = 27 if bucket in ("SP", "RP") else 28
+    peak_age        = PEAK_AGE_PITCHER if bucket in ("SP", "RP") else PEAK_AGE_HITTER
     use_incremental = stat_war is not None and age > peak_age
     base_mult       = aging_mult(age, bucket) if use_incremental else 1.0
 

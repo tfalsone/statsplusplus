@@ -31,6 +31,10 @@ Only load when the task directly involves that area. Use the gate table below.
 |---|---|
 | Web UI (routes, templates, queries) | `docs/system_overview.md` §Web UI, `.kiro/specs/ui_spec.md` |
 | Valuation models (FV, surplus, WAR) | `docs/assistant_gm_requirements.md`, `docs/valuation_model.md`, `scripts/constants.py`, `scripts/calibrate.py` |
+| FV grade calculation | `scripts/fv_model.py` |
+| WAR projection / stat history | `scripts/war_model.py` |
+| Arb salary / service time | `scripts/arb_model.py` |
+| Rating normalization | `scripts/ratings.py` |
 | Trade/prospect features | `docs/trade_analysis_guide.md`, `docs/trade_target_workflow.md`, `.kiro/specs/phase4-trade-analysis.md`, `.kiro/specs/trade-review-tab.md` |
 | Farm system / prospect analysis | `docs/farm_analysis_guide.md`, `docs/prospect_query_guide.md` |
 | Roster analysis | `docs/roster_analysis_guide.md`, `docs/org_overview_guide.md` |

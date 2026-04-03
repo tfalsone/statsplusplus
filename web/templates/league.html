@@ -549,7 +549,7 @@ function renderPanel(d) {
       (d.velocity ? ` <span class="panel-vel">${d.velocity}</span>` : '') + '</div>';
     html += '<table class="grade-table panel-grade-table"><tbody>';
     d.pitches.forEach(p => {
-      html += `<tr><td>${p.name}</td><td>${gradeBar(p.cur, p.fut)}</td></tr>`;
+      html += `<tr><td>${p.name}</td><td>${gradeBar(p.cur, p.pot)}</td></tr>`;
     });
     html += '</tbody></table></div>';
   }

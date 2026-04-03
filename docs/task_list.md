@@ -4,6 +4,13 @@ Open work items. Completed items are in `docs/changelog.md`.
 
 ---
 
+## Code Quality
+
+- [x] **Full codebase review** — ~~Systematic review of all Python and template files for clean coding principles.~~ Completed Session 41: constants consolidated, `norm`/`norm_floor` standardized, `dollar_per_war`/`minimum_salary` centralized, `ROLE_MAP` deduplicated, file restructuring (ratings/fv_model/war_model/arb_model), arb formula consolidated, logger names fixed, hardcoded slug fallbacks removed. **Done Session 41.**
+- [ ] **Web layer integration tests** — Add tests for web query functions (`player_queries.py`, `team_queries.py`, `queries.py`) using a minimal SQLite fixture. Current unit tests only cover pure model functions; inline import errors and runtime failures in the web layer are invisible until a page is hit in the browser. Tests should verify each query function returns without error and produces the expected shape. **LOE: Medium.**
+
+---
+
 ## Multi-League Support — Post-Alpha Backlog
 
 - [ ] **3.6 Settings page hardening** — Confirmation dialogs, input validation, backup before edits, team ID mismatch handling, read-only derived settings, undo support. **Deferred.**

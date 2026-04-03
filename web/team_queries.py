@@ -1,16 +1,19 @@
-"""Team-level DB queries for the web dashboard."""
+"""Team-level DB queries for the web dashboard.
+
+Note: query functions use conn.row_factory = None (tuple rows) with positional
+indexing for performance. Do not change without updating all index references.
+"""
 
 import os, sys
 from collections import defaultdict
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(BASE, "scripts"))
-from player_utils import display_pos as _display_pos, calc_pap
+from player_utils import display_pos as _display_pos, calc_pap, dollars_per_war as _dollars_per_war, league_minimum
 from web_league_context import (get_db, get_cfg, team_abbr_map, team_names_map,
                                  level_map, pos_map, pos_order, pyth_exp, my_team_id,
                                  mlb_team_ids, league_averages as _load_la)
-
-ROLE_MAP = {11: "SP", 12: "RP", 13: "CL"}
+from constants import (ROLE_MAP, DEFAULT_MINIMUM_SALARY)
 
 
 def _pap_context(conn, tid, year):
@@ -18,7 +21,7 @@ def _pap_context(conn, tid, year):
     team_g = conn.execute(
         "SELECT COUNT(*) FROM games WHERE (home_team=? OR away_team=?) AND date>=? AND played=1",
         (tid, tid, f"{year}-01-01")).fetchone()[0]
-    dpw = _load_la().get("dollar_per_war", 8_976_775)
+    dpw = _dollars_per_war()
     sal_rows = conn.execute(
         "SELECT player_id, salary_0 FROM contracts WHERE player_id IN "
         "(SELECT player_id FROM players WHERE team_id=? AND level='1')", (tid,)).fetchall()
@@ -592,7 +595,7 @@ def get_contracts(team_id):
             "is_major": is_major,
         })
 
-    display = [c for c in out if c["is_major"] and (c["salary"] > 825000 or c["years_left"] > 1)]
+    display = [c for c in out if c["is_major"] and (c["salary"] > DEFAULT_MINIMUM_SALARY or c["years_left"] > 1)]
     display.sort(key=lambda x: -x["salary"])
     total_payroll = sum(c["salary"] for c in out if c["is_major"])
     return display, total_payroll
@@ -616,7 +619,8 @@ def get_payroll_summary(team_id):
     """, (team_id,)).fetchall()
 
     # Project salaries for 1yr contract players using arb model (no non-tender gate)
-    from contract_value import _estimate_control, _resolve
+    from contract_value import _resolve
+    from arb_model import estimate_control as _estimate_control
     from player_utils import league_minimum, aging_mult
     import db as _scripts_db, math
     cv_conn = _scripts_db.get_conn()
@@ -635,17 +639,15 @@ def get_payroll_summary(team_id):
             ctrl, _, pre_arb = est
             if not ctrl or ctrl <= 1:
                 continue
-            rp_mult = 0.80 if bucket == "RP" else 1.0
+            from arb_model import arb_salary as _arb_salary
             proj = []
             prev_sal = sal
             for i in range(1, ctrl):
                 if i < pre_arb:
                     s = lmin
-                elif i == pre_arb and pre_arb > 0:
-                    s = round(318400 * math.exp(0.0495 * ovr) * rp_mult)
                 else:
-                    arb_raise = max(1_000_000, round((-2_500_000 + 110_000 * ovr) * rp_mult))
-                    s = prev_sal + arb_raise
+                    arb_yr = i - pre_arb + 1  # 1-indexed
+                    s = _arb_salary(ovr, bucket, arb_yr, prev_sal, lmin)
                 proj.append((i, s))
                 prev_sal = s
             projections[pid] = proj
@@ -1165,7 +1167,8 @@ def get_depth_chart(team_id):
         roster_availability, LEVEL_DISCOUNT, DEFAULT_TEAM_PA, DEFAULT_TEAM_IP,
     )
     from player_utils import stat_peak_war, load_stat_history
-    from contract_value import _estimate_control, contract_value as _cv
+    from contract_value import contract_value as _cv
+    from arb_model import estimate_control as _estimate_control
     from prospect_value import prospect_surplus as _pv
 
     state = _get_state()
@@ -1723,7 +1726,7 @@ def get_org_overview(team_id):
         payroll_shape.append({"year": yr, "total": payroll_data["totals"][i]})
 
     # ── Retention priorities: positive surplus, ≤2 years estimated control ──
-    from contract_value import _estimate_control
+    from arb_model import estimate_control as _estimate_control
     retention = []
     ctrl_rows = conn.execute("""
         SELECT c.player_id, p.name, p.age, c.years, c.current_year,

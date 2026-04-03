@@ -4,6 +4,78 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 41 (2026-04-03)
+
+### Fresh Install Testing & Bug Fixes
+- Fixed `data/` directory not created on first run — `onboard_step1` now calls `APP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)` before writing.
+- Fixed closed DB connection in `onboard_step3` — `has_100` ratings scale detection query moved before `conn.close()`.
+- Fixed pitch potential ratings not showing in player hover panel — `player_queries.py` `get_player_popup` was missing `pot_fst`, `pot_snk`, etc. from its SELECT; added all 12 pitch potential columns.
+- Fixed pitch potential ratings not showing in league prospect side panel — `league.html` was using `p.fut` but `queries.py` builds pitches with `"pot"` key; updated template to use `p.pot`.
+- Fixed `norm(0)` returning `None` causing `TypeError` in `_build_prospect` — introduced `norm_floor()` for call sites requiring a numeric result; replaced all `norm(x or 0)` patterns.
+- Fixed `DEFAULT_DOLLARS_PER_WAR` `NameError` in `player_queries.py` hover popup — stale inline `league_averages` imports cleaned up; all dpw lookups now use `_dollars_per_war()`.
+- Fixed `_estimate_control` `ImportError` in `team_queries.py` — three inline imports updated to use `arb_model.estimate_control` after Phase C extraction.
+- Fixed circular import `player_utils` ↔ `fv_model` — extracted `norm`, `norm_floor`, `get_ratings_scale` into `scripts/ratings.py`.
+- Fixed `_n80` `NameError` in `queries.py` `get_draft_pool` — two remaining `n = _n80` references updated to `n = _norm`.
+- Fixed duplicate `from contract_value import contract_value` in `fv_calc.py`.
+- Fixed `emlb.web`, `emlb.onboard`, `emlb.client` hardcoded logger names — updated to `statspp.*` via `get_logger()`.
+- Fixed `"emlb"` hardcoded slug fallbacks in `app.py` and `queries.py` — changed to `""`.
+- Removed unused `math` import from `contract_value.py`.
+
+### README & Setup Improvements
+- Fixed `pip` not available on Ubuntu 24.04 — README now uses `python3 -m venv .venv` + `.venv/bin/pip install`.
+- Fixed PEP 668 externally-managed environment error — README documents venv requirement with Ubuntu callout.
+- Updated launch command to `.venv/bin/python3 web/app.py` (no activation needed).
+- Added `.venv/` to `.gitignore`.
+- Added `pytest>=8.0` to `requirements.txt`.
+
+### Web Logging
+- Added `get_logger("web")` to `web/app.py` — all unhandled exceptions now logged to `data/logs/web.log` with full traceback.
+- `_teardown_request` logs teardown exceptions.
+- `_handle_exception` error handler logs and re-raises (Flask debugger still works in dev mode).
+
+### Settings: Auto-recalculate on Ratings Scale Change
+- Changing `ratings_scale` in Settings now triggers `fv_calc.run()` in a background thread automatically.
+
+### Code Quality Refactor (Phases A–E)
+
+**Phase A — Constants consolidation**
+- `constants.py` rewritten with 6 clearly labeled sections.
+- All magic numbers named: `ROLE_MAP`, `DEFAULT_DOLLARS_PER_WAR`, `DEFAULT_MINIMUM_SALARY`, `PEAK_AGE_PITCHER/HITTER`, `SERVICE_GAMES_*`, `ARB_*` coefficients, `NO_TRACK_RECORD_DISCOUNT`, `RP_POT_DISCOUNT`, `LEVEL_AGE_DISCOUNT_RATE`, `PROSPECT_WAR_RAMP`, `MIN_REGRESSION_N`, `CALIBRATION_YEARS`.
+- All 8 consuming files updated to import named constants.
+
+**Phase B — Single source of truth**
+- `_n80()` removed from `queries.py`; replaced with `_norm` from `player_utils`.
+- `norm_floor()` added to `ratings.py` — explicit named function for "normalize with numeric floor".
+- `DEFAULT_MINIMUM_SALARY` replaces all `825000` literals (5 files).
+- `dollars_per_war()` fallback unified to `DEFAULT_DOLLARS_PER_WAR` (was `9_500_000` in function, `8_976_775` elsewhere). Default updated to `9_000_000` (round number).
+- Web layer `player_queries.py` and `team_queries.py` now call `dollars_per_war()` instead of duplicating `_load_la().get(...)`.
+- Local `ROLE_MAP` definitions removed from `queries.py`, `player_queries.py`, `team_queries.py` — all import from `constants.py`.
+
+**Phase C — File restructuring**
+- `scripts/ratings.py` — new: `norm`, `norm_floor`, `get_ratings_scale`, `init_ratings_scale`.
+- `scripts/fv_model.py` — new: `calc_fv`, `dev_weight`, `effective_pot`, `versatility_bonus`, `defensive_score`, `DEFENSIVE_WEIGHTS`, `LEVEL_NORM_AGE`.
+- `scripts/war_model.py` — new: `peak_war_from_ovr`, `aging_mult`, `load_stat_history`, `stat_peak_war`.
+- `scripts/arb_model.py` — new: `estimate_service_time`, `estimate_control` (extracted from `contract_value.py`).
+- `player_utils.py` reduced to bucketing, display helpers, league settings, PAP; re-exports new modules for backward compat.
+
+**Phase D — Arb formula consolidation**
+- `arb_salary(ovr, bucket, arb_year, prior_salary, min_sal)` added to `arb_model.py` — single canonical implementation using RP-specific exponential model for RPs.
+- `contract_value.py`, `team_queries.py`, `projections.py` all updated to call `arb_salary()`. `team_queries.py` previously used a `rp_mult=0.80` approximation; now uses the correct RP model.
+
+**Phase E — Docs**
+- `STRUCTURE.md` updated with new script files.
+- `docs/tools_reference.md` rewritten to match actual interfaces.
+- `.kiro/steering/dev-agent.md` gate table updated with `fv_model`, `war_model`, `arb_model`, `ratings` entries.
+- `docs/code_cleanup.md` updated with completed items.
+
+### Test Suite
+- `tests/test_player_utils.py` — 21 tests: `norm`, `calc_fv`, `peak_war_from_ovr`, `aging_mult` (including monotonicity invariants).
+- `tests/test_prospect_value.py` — 12 tests: `prospect_surplus`, `prospect_surplus_with_option` (known values + structural invariants).
+- `tests/test_arb_model.py` — 11 tests: `arb_salary` known values and invariants.
+- 63 tests total, all passing.
+
+---
+
 ## Session 40 (2026-03-24)
 
 ### Global Player Search
