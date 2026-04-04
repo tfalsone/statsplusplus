@@ -707,7 +707,7 @@ from team_queries import (get_summary, get_standings, get_division_standings,
                           get_power_rankings, get_recent_games, get_payroll_summary,
                           get_record_breakdown, get_depth_chart,
                           get_roster_hitters, get_roster_pitchers,
-                          get_org_overview)
+                          get_org_overview, get_draft_org_depth)
 from player_queries import get_player
 from percentiles import get_hitter_percentiles, get_pitcher_percentiles
 
@@ -860,8 +860,12 @@ def get_draft_pool():
                     "thresholds": oc.get("thresholds", {}),
                     "likely": oc.get("likely_range", [0, 0]),
                 }
+            surplus_val = _pv.prospect_surplus_with_option(
+                fv_base, p["Age"], _oc_level, bucket,
+                ovr=p["Ovr"], pot=p["Pot"])
+            entry["surplus"] = round(surplus_val / 1e6, 1) if surplus_val else 0
         except Exception:
-            pass
+            entry["surplus"] = 0
 
         return entry
 
@@ -918,15 +922,15 @@ def get_draft_pool():
         state = "pre_draft"
 
     if state == "uploaded":
-        # Use exact uploaded pool
+        # Use exact uploaded pool. Discard API picks — they're from the prior draft.
         placeholders = ",".join("?" * len(uploaded_pids))
         sql = _DRAFT_SQL + f" AND r.player_id IN ({placeholders})"
         rows = conn.execute(sql, uploaded_pids).fetchall()
         results = [_build_prospect(r) for r in rows]
-        results.sort(key=lambda x: (x['fv'] + (0.5 if '+' in x['fv_str'] else 0), x['pot']), reverse=True)
+        results.sort(key=lambda x: (x['surplus'], x['fv'] + (0.5 if '+' in x['fv_str'] else 0)), reverse=True)
         for i, r in enumerate(results):
             r['rank'] = i + 1
-        return {"state": state, "players": results, "picks": picks}
+        return {"state": state, "players": results, "picks": []}
 
     elif state == "active":
         # Use draft API player IDs as the definitive pool
@@ -940,13 +944,13 @@ def get_draft_pool():
         results = []
         for r in rows:
             results.append(_build_prospect(r))
-        results.sort(key=lambda x: (x['fv'] + (0.5 if '+' in x['fv_str'] else 0), x['pot']), reverse=True)
+        results.sort(key=lambda x: (x['surplus'], x['fv'] + (0.5 if '+' in x['fv_str'] else 0)), reverse=True)
         for i, r in enumerate(results):
             r['rank'] = i + 1
         return {"state": state, "players": results, "picks": picks}
 
     elif state == "pre_draft" and amateur_levels:
-        # Scouting approximation: top 800 amateurs by Pot
+        # Scouting approximation: top 800 amateurs by Pot. Discard API picks — stale from prior draft.
         clauses = []
         for lvl in amateur_levels:
             min_age = 19 if lvl == '10' else 18
@@ -955,10 +959,10 @@ def get_draft_pool():
         sql = _DRAFT_SQL + f" AND ({where}) ORDER BY r.pot DESC LIMIT 800"
         rows = conn.execute(sql).fetchall()
         results = [_build_prospect(r) for r in rows]
-        results.sort(key=lambda x: (x['fv'] + (0.5 if '+' in x['fv_str'] else 0), x['pot']), reverse=True)
+        results.sort(key=lambda x: (x['surplus'], x['fv'] + (0.5 if '+' in x['fv_str'] else 0)), reverse=True)
         for i, r in enumerate(results):
             r['rank'] = i + 1
-        return {"state": state, "players": results, "picks": picks}
+        return {"state": state, "players": results, "picks": []}
 
     return {"state": "no_data", "players": [], "picks": []}
 

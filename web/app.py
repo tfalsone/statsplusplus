@@ -329,6 +329,7 @@ def league():
 
     # Draft pool
     draft_pool = queries.get_draft_pool()
+    draft_depth = queries.get_draft_org_depth(my_team_id()) if draft_pool else {}
 
     return render_template("league.html", league_groups=league_groups,
                            prospects=prospects, all_prospects=all_prospects,
@@ -337,7 +338,7 @@ def league():
                            summary=summary, my_abbr=my_abbr, lg_avg=lg_avg,
                            trade_orgs=trade_orgs, my_team_id=my_team_id(),
                            season_remaining=round(season_remaining, 3),
-                           draft_pool=draft_pool)
+                           draft_pool=draft_pool, draft_depth=draft_depth)
 
 
 @app.route("/player/<int:pid>")

@@ -221,50 +221,67 @@
 {% if draft_pool.players %}
   {% set dp_state = draft_pool.state %}
 
-  <div class="draft-top-panels">
-    <div class="panel draft-detail-panel" id="draft-detail-panel">
-      <div class="dd-panel-header"><span class="panel-section-title">Prospect Detail</span><button class="btn btn-sm" id="dd-clear-btn" onclick="clearCompare()" style="display:none">Clear</button></div>
-      <p class="text-dim" id="draft-detail-placeholder">Select a prospect to view ratings. Check two to compare.</p>
-      <div id="draft-detail-content" style="display:none"></div>
+  <div class="draft-layout">
+    <div class="draft-main">
+      <div class="draft-board-controls">
+        <div class="draft-needs-bar">
+          <button class="draft-pos-btn active" data-pos="" onclick="setDraftPosFilter(this, '')">All</button>
+          <button class="draft-pos-btn" data-pos="hit" onclick="setDraftPosFilter(this, 'hit')">Hitters</button>
+          <button class="draft-pos-btn" data-pos="pit" onclick="setDraftPosFilter(this, 'pit')">Pitchers</button>
+          <span class="draft-needs-sep">|</span>
+          {% for pos, d in draft_depth.items() %}
+          {% set total = d.total %}
+          {% set cls = 'needs-ok' if total >= 30 else ('needs-thin' if total >= 10 else 'needs-gap') %}
+          <button class="draft-pos-btn draft-needs-btn {{ cls }}" data-pos="{{ pos }}"
+            onclick="setDraftPosFilter(this, '{{ pos }}')"
+            title="{{ pos }}: MLB ${{ d.mlb }}M · Farm ${{ d.farm }}M · Total ${{ d.total }}M">{{ pos }}</button>
+          {% endfor %}
+          <button class="split-btn" id="draft-hide-picked-btn" onclick="toggleHideDrafted()" style="margin-left:8px">Hide Drafted</button>
+        </div>
+        <div class="draft-filters-row">
+          <input type="text" id="draft-search" placeholder="Search name…" oninput="applyDraftFilters()" class="draft-search-input">
+          <select id="draft-level-filter" onchange="applyDraftFilters()" class="draft-search-input" style="width:auto">
+            <option value="">All Levels</option>
+            <option value="college">College</option>
+            <option value="hs">HS</option>
+          </select>
+          <div class="draft-controls-right">
+            <span class="draft-status" id="draft-status">
+              {% if dp_state == 'uploaded' %}{{ draft_pool.players|length }} prospects
+              {% elif dp_state == 'active' %}{{ draft_pool.picks|length }} picks
+              {% elif dp_state == 'pre_draft' %}Approximate{% endif %}
+            </span>
+            {% if dp_state in ('uploaded', 'active') %}
+            <button class="btn" onclick="updateDraftPicks()">⟳ Update Picks</button>
+            {% endif %}
+            <label class="btn" style="cursor:pointer">📁 Upload Pool
+              <input type="file" accept=".csv" style="display:none" onchange="uploadDraftPool(this)">
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="draft-board-panel">
+        <table id="draft-table" class="sortable">
+          <thead id="draft-thead"></thead>
+          <tbody id="draft-tbody"></tbody>
+        </table>
+      </div>
     </div>
-    <div class="panel draft-my-picks-panel" id="draft-my-picks">
-      <div class="panel-section-title">My Picks</div>
-      <div id="my-picks-list"><p class="text-dim">No picks yet</p></div>
-    </div>
-  </div>
 
-  <div class="draft-board-controls">
-    <div class="draft-filters">
-      <button class="split-btn active" onclick="renderDraftBoard('all')">All</button>
-      <button class="split-btn" onclick="renderDraftBoard('hit')">Hitters</button>
-      <button class="split-btn" onclick="renderDraftBoard('pit')">Pitchers</button>
-      <button class="split-btn" id="draft-hide-picked-btn" onclick="toggleHideDrafted()">Hide Drafted</button>
+    <div class="draft-sidebar">
+      <div class="panel draft-detail-panel" id="draft-detail-panel">
+        <div class="dd-panel-header">
+          <span class="panel-section-title">Prospect Detail</span>
+          <button class="btn btn-sm" id="dd-clear-btn" onclick="clearCompare()" style="display:none">Clear</button>
+        </div>
+        <p class="text-dim" id="draft-detail-placeholder">Select a prospect to view ratings.<br>Check two to compare.</p>
+        <div id="draft-detail-content" style="display:none"></div>
+      </div>
+      <div class="panel draft-my-picks-panel" id="draft-my-picks">
+        <div class="panel-section-title">My Picks</div>
+        <div id="my-picks-list"><p class="text-dim">No picks yet</p></div>
+      </div>
     </div>
-    <input type="text" id="draft-search" placeholder="Search name…" oninput="applyDraftFilters()" class="draft-search-input">
-    <select id="draft-level-filter" onchange="applyDraftFilters()" class="draft-search-input" style="width:auto">
-      <option value="">All Levels</option>
-      <option value="college">College</option>
-      <option value="hs">HS</option>
-    </select>
-    <div class="draft-controls-right">
-      <span class="draft-status" id="draft-status">
-        {% if dp_state == 'uploaded' %}{{ draft_pool.players|length }} prospects
-        {% elif dp_state == 'active' %}{{ draft_pool.picks|length }} picks
-        {% elif dp_state == 'pre_draft' %}Approximate{% endif %}
-      </span>
-      {% if dp_state in ('uploaded', 'active') %}
-      <button class="btn" onclick="updateDraftPicks()">⟳ Update Picks</button>
-      {% endif %}
-      <label class="btn" style="cursor:pointer">📁 Upload Pool
-        <input type="file" accept=".csv" style="display:none" onchange="uploadDraftPool(this)">
-      </label>
-    </div>
-  </div>
-  <div class="draft-board-panel">
-    <table id="draft-table" class="sortable">
-      <thead id="draft-thead"></thead>
-      <tbody id="draft-tbody"></tbody>
-    </table>
   </div>
 {% else %}
   <div class="panel">
@@ -499,7 +516,7 @@ document.getElementById('prospect-tbody').addEventListener('click', (e) => {
   panel.style.display = '';
   fetch(`/api/prospect/${pid}`)
     .then(r => r.json())
-    .then(d => { if (d.pid === activePid) renderPanel(d); })
+    .then(d => { if (d.pid === activePid) panelContent.innerHTML = renderPanel(d); })
     .catch(() => { panelContent.innerHTML = '<div class="panel-loading">Error loading data</div>'; });
 });
 
@@ -533,7 +550,6 @@ function renderPanel(d) {
     </div>
   </div>`;
 
-  // Tools with grade bars
   if (d.tools && d.tools.length) {
     html += '<div class="panel-tools"><div class="panel-section-title">Tools</div>';
     html += '<table class="grade-table panel-grade-table"><tbody>';
@@ -543,7 +559,6 @@ function renderPanel(d) {
     html += '</tbody></table></div>';
   }
 
-  // Pitches (pitchers only)
   if (d.pitches && d.pitches.length) {
     html += '<div class="panel-tools"><div class="panel-section-title">Pitches' +
       (d.velocity ? ` <span class="panel-vel">${d.velocity}</span>` : '') + '</div>';
@@ -554,7 +569,6 @@ function renderPanel(d) {
     html += '</tbody></table></div>';
   }
 
-  // Defense (hitters only)
   if (d.defense && d.defense.length) {
     html += '<div class="panel-tools"><div class="panel-section-title">Defense</div>';
     html += '<table class="grade-table panel-grade-table"><tbody>';
@@ -569,7 +583,7 @@ function renderPanel(d) {
       <p>${d.summary}</p></div>`;
   }
 
-  panelContent.innerHTML = html;
+  return html;
 }
 
 /* ── Trade Tab ── */
@@ -955,18 +969,36 @@ function toggleHideDrafted() {
   applyDraftFilters();
 }
 
+// Position bucket mapping for needs panel filter
+var BUCKET_POS = {
+  'C': ['C'], '1B': ['1B'], '2B': ['2B'], '3B': ['3B'], 'SS': ['SS'],
+  'LF/RF': ['LF', 'RF', 'COF', 'OF'], 'CF': ['CF'],
+  'SP': ['SP'], 'RP': ['RP', 'CL'],
+};
+var currentPosFilter = '';  // '' = All, 'hit' = Hitters, 'pit' = Pitchers, or specific pos key
+
+function setDraftPosFilter(btn, pos) {
+  document.querySelectorAll('.draft-pos-btn').forEach(function(b) { b.classList.remove('active'); });
+  btn.classList.add('active');
+  currentPosFilter = pos;
+  // Sync view for column headers: hit/pit/specific pos
+  var view = 'all';
+  if (pos === 'hit') view = 'hit';
+  else if (pos === 'pit' || pos === 'SP' || pos === 'RP') view = 'pit';
+  else if (pos && BUCKET_POS[pos] && !['SP','RP'].includes(pos)) view = 'hit';
+  renderDraftBoard(view);
+}
+
 function renderDraftBoard(view) {
   currentDraftView = view;
-  document.querySelectorAll('.draft-board-controls .draft-filters .split-btn:not(#draft-hide-picked-btn)').forEach(function(b) { b.classList.remove('active'); });
-  if (event && event.target) event.target.classList.add('active');
-  else document.querySelector('.draft-filters .split-btn').classList.add('active');
+  document.querySelectorAll('.draft-board-controls .draft-needs-bar .draft-pos-btn:not(.draft-needs-btn):not(#draft-hide-picked-btn)').forEach(function(b) { b.classList.remove('active'); });
 
   var thead = document.getElementById('draft-thead');
   var base = '<th class="dd-cmp-th" title="Compare">⚖</th><th data-sort="num">Rk</th><th data-sort="str">Pos</th><th data-sort="str" class="left">Name</th>' +
-    '<th data-sort="num">Age</th><th data-sort="str">Lvl</th><th data-sort="num">Ovr</th><th data-sort="num">Pot</th><th data-sort="str">FV</th>';
+    '<th data-sort="num">Age</th><th data-sort="str">Lvl</th><th data-sort="num">Ovr</th><th data-sort="num">Pot</th><th data-sort="str">FV</th><th data-sort="num">$Val</th>';
   if (view === 'hit') {
     thead.innerHTML = '<tr>' + base +
-      '<th data-sort="str">B/T</th>' +
+      '<th data-sort="str">Bat</th><th data-sort="str">Thr</th>' +
       '<th data-sort="num" class="col-sep">Con</th><th data-sort="num">Gap</th><th data-sort="num">Pow</th>' +
       '<th data-sort="num">Eye</th><th data-sort="num">Spd</th>' +
       '<th data-sort="num" class="col-sep">C</th><th data-sort="num">1B</th><th data-sort="num">2B</th><th data-sort="num">3B</th>' +
@@ -976,15 +1008,16 @@ function renderDraftBoard(view) {
       '<th data-sort="str" class="col-sep">Acc</th><th data-sort="str">W/E</th><th data-sort="str">Lead</th><th data-sort="str">Int</th></tr>';
   } else if (view === 'pit') {
     thead.innerHTML = '<tr>' + base +
-      '<th data-sort="str">T</th>' +
+      '<th data-sort="str">Thr</th>' +
       '<th data-sort="num" class="col-sep">Stf</th><th data-sort="num">Mov</th><th data-sort="num">Ctrl</th>' +
       '<th data-sort="str">Vel</th><th data-sort="num">Stm</th>' +
       '<th data-sort="num" class="col-sep">FB</th><th data-sort="num">SI</th><th data-sort="num">CB</th>' +
       '<th data-sort="num">SL</th><th data-sort="num">CH</th><th data-sort="num">CUT</th>' +
-      '<th data-sort="num">SPL</th><th data-sort="num">#P</th>' +
+      '<th data-sort="num">SPL</th><th data-sort="num">FRK</th><th data-sort="num">CC</th>' +
+      '<th data-sort="num">SCR</th><th data-sort="num">KC</th><th data-sort="num">KN</th><th data-sort="num">#P</th>' +
       '<th data-sort="str" class="col-sep">Acc</th><th data-sort="str">W/E</th><th data-sort="str">Lead</th><th data-sort="str">Int</th></tr>';
   } else {
-    thead.innerHTML = '<tr>' + base + '<th data-sort="str">B/T</th><th data-sort="num" class="col-sep" title="P(Contributor)">C%</th><th data-sort="num" title="P(Regular)">R%</th><th data-sort="num" title="P(All-Star)">AS%</th><th data-sort="num" title="Bust probability (1 - P(Contributor))">Bust%</th><th data-sort="str">Profile</th></tr>';
+    thead.innerHTML = '<tr>' + base + '<th data-sort="str">Bat</th><th data-sort="str">Thr</th><th data-sort="num" class="col-sep" title="P(Contributor)">C%</th><th data-sort="num" title="P(Regular)">R%</th><th data-sort="num" title="P(All-Star)">AS%</th><th data-sort="num" title="Bust probability (1 - P(Contributor))">Bust%</th><th data-sort="str">Profile</th></tr>';
   }
   applyDraftFilters();
   if (typeof initSort === 'function') initSort(document.getElementById('draft-table'));
@@ -995,6 +1028,7 @@ function applyDraftFilters() {
   var hidePicked = document.getElementById('draft-hide-picked-btn').classList.contains('active');
   var levelFilter = document.getElementById('draft-level-filter').value;
   var view = currentDraftView;
+  var posFilter = currentPosFilter;
 
   var filtered = DRAFT_POOL.filter(function(p) {
     var isPit = p.pos === 'SP' || p.pos === 'RP' || p.pos === 'CL';
@@ -1003,6 +1037,10 @@ function applyDraftFilters() {
     if (search && p.name.toLowerCase().indexOf(search) < 0) return false;
     if (hidePicked && draftPicks[p.pid]) return false;
     if (levelFilter && p.type.toLowerCase() !== levelFilter) return false;
+    // Specific position filter from needs panel — use bucket (projected position)
+    if (posFilter && BUCKET_POS[posFilter]) {
+      if (BUCKET_POS[posFilter].indexOf(p.bucket) < 0) return false;
+    }
     return true;
   });
 
@@ -1023,11 +1061,12 @@ function applyDraftFilters() {
     tr += '<td class="left"><a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a></td>';
     tr += '<td>' + p.age + '</td><td>' + lvlPill(p.type) + '</td>';
     tr += gtd(p.ovr) + gtd(p.pot) + '<td>' + fvPill(p.fv_str) + '</td>';
+    tr += '<td class="text-dim" style="font-size:12px">' + (p.surplus > 0 ? '$' + p.surplus + 'M' : '—') + '</td>';
     if (view === 'hit' && !isPit) {
       var t = p.tools;
       var d = p.defense || {};
       var fl = p.field || {};
-      tr += '<td>' + (p.bats||'') + '/' + (p.throws||'') + '</td>';
+      tr += '<td>' + (p.bats||'') + '</td><td>' + (p.throws||'') + '</td>';
       tr += '<td class="col-sep ' + gradeClr(t.con[1]) + '">' + t.con[1] + '</td>';
       tr += gtd(t.gap[1]) + gtd(t.pow[1]) + gtd(t.eye[1]) + gtd(t.spd);
       ['C','1B','2B','3B','SS','LF','CF','RF'].forEach(function(pos) {
@@ -1048,7 +1087,7 @@ function applyDraftFilters() {
       tr += '<td class="col-sep ' + gradeClr(t.stf[1]) + '">' + t.stf[1] + '</td>';
       tr += gtd(t.mov[1]) + gtd(t.ctrl[1]);
       tr += '<td>' + (t.vel || '-') + '</td>' + gtd(t.stm);
-      ['FB','SI','CB','SL','CH','CUT','SPL'].forEach(function(pn) {
+      ['FB','SI','CB','SL','CH','CUT','SPL','FRK','CC','SCR','KC','KN'].forEach(function(pn) {
         var v = pt[pn];
         tr += v ? '<td class="' + (pn==='FB' ? 'col-sep ' : '') + gradeClr(v) + '">' + v + '</td>' : '<td' + (pn==='FB' ? ' class="col-sep"' : '') + '>-</td>';
       });
@@ -1057,7 +1096,7 @@ function applyDraftFilters() {
       tr += '<td>' + charPill(p.we) + '</td><td>' + charPill(p.lead) + '</td><td>' + charPill(p.int) + '</td>';
     } else {
       // All view - B/T + outcome probabilities
-      tr += '<td>' + (p.bats||'') + '/' + (p.throws||'') + '</td>';
+      tr += '<td>' + (p.bats||'') + '</td><td>' + (p.throws||'') + '</td>';
       var oc = p.outcome && p.outcome.thresholds || {};
       tr += '<td class="col-sep">' + (oc.Contributor ? Math.round(oc.Contributor*100) + '%' : '-') + '</td>';
       tr += '<td>' + (oc.Regular ? Math.round(oc.Regular*100) + '%' : '-') + '</td>';
@@ -1232,11 +1271,124 @@ function showCompare(pidA, pidB) {
   }
 
   Promise.all([fetchDetail(pidA), fetchDetail(pidB)]).then(function(results) {
-    var h = '<div class="dd-compare">';
-    h += '<div class="dd-cmp-side">' + renderOne(results[0]) + '</div>';
-    h += '<div class="dd-cmp-divider"></div>';
-    h += '<div class="dd-cmp-side">' + renderOne(results[1]) + '</div>';
-    h += '</div>';
+    var dA = results[0], dB = results[1];
+
+    // Bar fills 20-80 scale → 0-100% width
+    function barPct(v) { return v ? Math.min(100, Math.max(0, (v - 20) / 60 * 100)) : 0; }
+
+    function barRow(label, a, b) {
+      var pA = barPct(a), pB = barPct(b);
+      var cA = a ? gradeClr(a) : '', cB = b ? gradeClr(b) : '';
+      var winA = a && b && a > b, winB = a && b && b > a;
+      var dimA = winB ? ' dd-bar-dim' : '', dimB = winA ? ' dd-bar-dim' : '';
+      var delta = (a && b && a !== b) ? Math.abs(a - b) : 0;
+      var numA = a || '—';
+      var numB = b || '—';
+      var delta = (a && b && a !== b) ? Math.abs(a - b) : 0;
+      var dBadgeA = (winA && delta) ? '<span class="dd-bar-delta-tip">+' + delta + '</span>' : '';
+      var dBadgeB = (winB && delta) ? '<span class="dd-bar-delta-tip dd-bar-delta-r">+' + delta + '</span>' : '';
+      return '<tr class="dd-bar-row">' +
+        '<td class="dd-bar-left">' +
+          '<div class="dd-bar-wrap dd-bar-wrap-l">' +
+            '<span class="dd-bar-num ' + cA + (winA ? ' dd-bar-win' : '') + '">' + (a||'—') + '</span>' +
+            '<div class="dd-bar-track">' +
+              '<div class="dd-bar-fill dd-bar-fill-l ' + cA + dimA + '" style="width:' + pA + '%"></div>' +
+              dBadgeA +
+            '</div>' +
+          '</div>' +
+        '</td>' +
+        '<td class="dd-bar-label">' + label + '</td>' +
+        '<td class="dd-bar-right">' +
+          '<div class="dd-bar-wrap dd-bar-wrap-r">' +
+            '<span class="dd-bar-num ' + cB + (winB ? ' dd-bar-win' : '') + '">' + (b||'—') + '</span>' +
+            '<div class="dd-bar-track">' +
+              '<div class="dd-bar-fill dd-bar-fill-r ' + cB + dimB + '" style="width:' + pB + '%"></div>' +
+              dBadgeB +
+            '</div>' +
+          '</div>' +
+        '</td>' +
+      '</tr>';
+    }
+
+    function charRow(label, a, b, isGreed) {
+      var cA = isGreed ? charClrGreed(a) : charClr(a);
+      var cB = isGreed ? charClrGreed(b) : charClr(b);
+      return '<tr class="dd-bar-row">' +
+        '<td class="dd-bar-left" style="text-align:right"><span class="dd-bar-char ' + cA + '">' + (a||'—') + '</span></td>' +
+        '<td class="dd-bar-label">' + label + '</td>' +
+        '<td class="dd-bar-right" style="text-align:left"><span class="dd-bar-char ' + cB + '">' + (b||'—') + '</span></td>' +
+      '</tr>';
+    }
+
+    function section(title, rows) {
+      if (!rows.length) return '';
+      return '<tr class="dd-bar-section"><td colspan="3">' + title + '</td></tr>' + rows.join('');
+    }
+
+    var h = '<div class="dd-compare-bars">';
+    h += '<table class="dd-bar-table">';
+
+    // Header row with player names
+    h += '<thead><tr>' +
+      '<th class="dd-bar-left dd-bar-name"><a href="/player/' + dA.pid + '" class="player-link">' + dA.pos + ' ' + dA.name + '</a> <span class="text-dim">(' + dA.age + ')</span></th>' +
+      '<th class="dd-bar-label"></th>' +
+      '<th class="dd-bar-right dd-bar-name"><a href="/player/' + dB.pid + '" class="player-link">' + dB.pos + ' ' + dB.name + '</a> <span class="text-dim">(' + dB.age + ')</span></th>' +
+      '</tr></thead>';
+
+    h += '<tbody>';
+
+    // Ovr / Pot summary
+    h += section('Overview', [
+      barRow('Ovr', dA.ovr, dB.ovr),
+      barRow('Pot', dA.pot, dB.pot),
+    ]);
+
+    // Tools (Pot)
+    var tA = dA.tools, tB = dB.tools;
+    var toolRows = tA.labels.map(function(label, i) {
+      return barRow(label, tA.pot[i], tB.pot[i]);
+    });
+    h += section('Tools (Pot)', toolRows);
+
+    // Pitches
+    if (dA.is_pitcher && dB.is_pitcher) {
+      var pitchMap = {};
+      (dA.pitches || []).forEach(function(p) { pitchMap[p.name] = [p.pot, null]; });
+      (dB.pitches || []).forEach(function(p) {
+        if (pitchMap[p.name]) pitchMap[p.name][1] = p.pot;
+        else pitchMap[p.name] = [null, p.pot];
+      });
+      var pitchRowsArr = Object.keys(pitchMap).map(function(name) {
+        return barRow(name, pitchMap[name][0], pitchMap[name][1]);
+      });
+      h += section('Pitches (Pot)', pitchRowsArr);
+    }
+
+    // Defense positions (hitters)
+    if (!dA.is_pitcher && !dB.is_pitcher) {
+      var allPos = {};
+      [dA.positions, dB.positions].forEach(function(pos, si) {
+        Object.keys(pos || {}).forEach(function(p) {
+          if (!allPos[p]) allPos[p] = [null, null];
+          allPos[p][si] = pos[p][1];
+        });
+      });
+      var posRowsArr = Object.keys(allPos).map(function(p) {
+        return barRow(p, allPos[p][0], allPos[p][1]);
+      });
+      h += section('Defense (Pot)', posRowsArr);
+    }
+
+    // Character
+    h += section('Character', [
+      charRow('W/E', dA.we, dB.we, false),
+      charRow('Leader', dA.lead, dB.lead, false),
+      charRow('Greed', dA.greed, dB.greed, true),
+      charRow('Intel', dA.int, dB.int, false),
+      charRow('Acc', dA.acc, dB.acc, false),
+    ]);
+
+    h += '</tbody></table></div>';
     placeholder.style.display = 'none';
     content.style.display = 'block';
     content.innerHTML = h;
@@ -1252,103 +1404,33 @@ function showDraftDetail(pid) {
     placeholder.style.display = 'none'; content.style.display = 'block';
     content.innerHTML = draftDetailCache[pid]; return;
   }
-  fetch('/api/draft-detail/' + pid).then(function(resp) { return resp.json(); }).then(function(d) {
-    function gc(v) { return v ? gradeClr(v) : ''; }
-    function cv(v) { return v ? '<td class="' + gc(v) + '">' + v + '</td>' : '<td>-</td>'; }
-
-    // Header
-    var h = '<div class="dd-header">' + d.pos + ' <strong>' + d.name + '</strong> (' + d.age + ') ' +
-      'B/T ' + (d.bats||'?') + '/' + (d.throws||'?') +
-      ' Ovr <span class="' + gc(d.ovr) + '">' + d.ovr + '</span>' +
-      ' Pot <span class="' + gc(d.pot) + '">' + d.pot + '</span>' +
-      ' Acc <span class= + charClr(d.acc) + >' + (d.acc||'?') + '</span>' +
-      (d.inj && d.inj !== 'Normal' ? ' Inj ' + d.inj : '') +
-      ' <a href="/player/' + pid + '" class="ext-link">↗</a></div>';
-
-    h += '<div class="dd-grids">';
-
-    // Tools grid (shared for hitter/pitcher)
-    var t = d.tools;
-    h += '<table class="dd-grid"><thead><tr><td></td>';
-    t.labels.forEach(function(l) { h += '<th>' + l + '</th>'; });
-    h += '</tr></thead><tbody><tr><td class="dd-rl">Pot</td>';
-    t.pot.forEach(function(v) { h += cv(v); });
-    h += '</tr><tr><td class="dd-rl">Cur</td>';
-    t.cur.forEach(function(v) { h += cv(v); });
-    h += '</tr></tbody></table>';
-
-    if (d.is_pitcher) {
-      // Pitches
-      if (d.pitches && d.pitches.length) {
-        h += '<table class="dd-grid"><thead><tr><td>Pitches</td><th>Cur</th><th>Pot</th></tr></thead><tbody>';
-        d.pitches.forEach(function(p) {
-          h += '<tr><td class="dd-rl">' + p.name + '</td>' + cv(p.cur) + cv(p.pot) + '</tr>';
+  fetch('/api/prospect/' + pid).then(function(resp) {
+    if (resp.ok) return resp.json();
+    // Amateur draft prospects aren't in prospect_fv — fall back to draft-detail
+    return fetch('/api/draft-detail/' + pid).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || d.error) return null;
+      // Adapt draft-detail shape to renderPanel shape
+      var t = d.tools;
+      d.tools = t.labels.map(function(name, i) { return {name: name, cur: t.cur[i], fut: t.pot[i]}; });
+      if (d.positions) {
+        d.defense = Object.keys(d.positions).map(function(pos) {
+          return {pos: pos, cur: d.positions[pos][0], fut: d.positions[pos][1]};
         });
-        h += '</tbody></table>';
       }
-      // Misc
-      h += '<table class="dd-grid"><thead><tr><th colspan="2">Misc</th></tr></thead><tbody>';
-      if (d.misc.vel) h += '<tr><td class="dd-rl">Velo</td><td>' + d.misc.vel + '</td></tr>';
-      h += '<tr><td class="dd-rl">Stam</td>' + cv(d.misc.stm) + '</tr>';
-      h += '<tr><td class="dd-rl">Hold</td>' + cv(d.misc.hold) + '</tr>';
-      h += '</tbody></table>';
-      // Character (vertical)
-      h += '<table class="dd-grid"><thead><tr><th colspan="2">Character</th></tr></thead><tbody>';
-      h += '<tr><td class="dd-rl">W/E</td>' + ctd(d.we) + '</tr>';
-      h += '<tr><td class="dd-rl">Leader</td>' + ctd(d.lead) + '</tr>';
-      h += '<tr><td class="dd-rl">Loyalty</td>' + ctd(d.loy) + '</tr>';
-      h += '<tr><td class="dd-rl">Greed</td>' + ctd(d.greed, true) + '</tr>';
-      h += '<tr><td class="dd-rl">Intel</td>' + ctd(d.int) + '</tr>';
-      h += '</tbody></table>';
-    } else {
-      // Running (vertical)
-      var rn = d.running;
-      h += '<table class="dd-grid"><thead><tr><th colspan="2">Run/Bunt</th></tr></thead><tbody>';
-      for (var i = 0; i < rn.labels.length; i++) {
-        h += '<tr><td class="dd-rl">' + rn.labels[i] + '</td>' + cv(rn.vals[i]) + '</tr>';
-      }
-      h += '</tbody></table>';
-
-      // Fielding + Positions side by side
-      var fl = d.fielding;
-      h += '<table class="dd-grid"><thead><tr><td>Field</td>';
-      fl.cols.forEach(function(c) { h += '<th>' + c + '</th>'; });
-      h += '</tr></thead><tbody>';
-      h += '<tr><td class="dd-rl">Range</td>'; fl.range.forEach(function(v) { h += cv(v); }); h += '</tr>';
-      h += '<tr><td class="dd-rl">Error</td>'; fl.error.forEach(function(v) { h += cv(v); }); h += '</tr>';
-      h += '<tr><td class="dd-rl">Arm</td>'; fl.arm.forEach(function(v) { h += cv(v); }); h += '</tr>';
-      if (fl.tdp) h += '<tr><td class="dd-rl">TDP</td><td></td>' + cv(fl.tdp) + '<td></td></tr>';
-      if (fl.c_blk) h += '<tr><td class="dd-rl">C Blk</td>' + cv(fl.c_blk) + '<td></td><td></td></tr>';
-      if (fl.c_frm) h += '<tr><td class="dd-rl">C Frm</td>' + cv(fl.c_frm) + '<td></td><td></td></tr>';
-      h += '</tbody></table>';
-
-      // Positions
-      var pos = d.positions;
-      if (pos && Object.keys(pos).length) {
-        var pk = Object.keys(pos);
-        h += '<table class="dd-grid"><thead><tr><td>Pos</td>';
-        pk.forEach(function(p) { h += '<th>' + p + '</th>'; });
-        h += '</tr></thead><tbody><tr><td class="dd-rl">Cur</td>';
-        pk.forEach(function(p) { h += cv(pos[p][0]); });
-        h += '</tr><tr><td class="dd-rl">Pot</td>';
-        pk.forEach(function(p) { h += cv(pos[p][1]); });
-        h += '</tr></tbody></table>';
-      }
-
-      // Character (vertical, rightmost)
-      h += '<table class="dd-grid"><thead><tr><th colspan="2">Character</th></tr></thead><tbody>';
-      h += '<tr><td class="dd-rl">W/E</td>' + ctd(d.we) + '</tr>';
-      h += '<tr><td class="dd-rl">Leader</td>' + ctd(d.lead) + '</tr>';
-      h += '<tr><td class="dd-rl">Loyalty</td>' + ctd(d.loy) + '</tr>';
-      h += '<tr><td class="dd-rl">Greed</td>' + ctd(d.greed, true) + '</tr>';
-      h += '<tr><td class="dd-rl">Intel</td>' + ctd(d.int) + '</tr>';
-      h += '</tbody></table>';
-    }
-
-    h += '</div>';
-    draftDetailCache[pid] = h;
+      d.bucket = d.pos;
+      d.team = '—'; d.team_name = ''; d.level = 'Amateur';
+      d.fv = null; d.fv_str = '—'; d.eta = '—'; d.surplus = 0;
+      // Fill FV from DRAFT_POOL if available
+      var pp = DRAFT_POOL.find(function(p) { return p.pid === pid; });
+      if (pp) { d.fv = pp.fv; d.fv_str = pp.fv_str; d.surplus = pp.surplus; }
+      return d;
+    });
+  }).then(function(d) {
+    if (!d) { placeholder.style.display = ''; content.style.display = 'none'; return; }
+    var rendered = renderPanel(d);
+    draftDetailCache[pid] = rendered;
     placeholder.style.display = 'none'; content.style.display = 'block';
-    content.innerHTML = h;
+    content.innerHTML = rendered;
   });
 }
 

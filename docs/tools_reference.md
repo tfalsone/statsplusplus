@@ -277,7 +277,7 @@ Import with `sys.path.insert(0, 'web')`. All are read-only against the DB.
 | `search_players(query)` | Up to 15 matching players (MLB + prospects) across all orgs |
 | `get_prospect_comps(pid)` | 3-tier MLB comps for a prospect (Upside/Likely/Floor) |
 | `get_player_card(pid)` | Side-panel-style data for any player (tools, pitches, defense, stats) |
-| `get_draft_pool()` | Draft board: state detection, FV-ranked pool, outcome probabilities |
+| `get_draft_pool()` | Draft board: state detection, surplus-ranked pool (via `prospect_surplus_with_option`), outcome probabilities, `$Val` per player |
 
 ### Team-Level (`team_queries.py`)
 
@@ -301,6 +301,7 @@ Import with `sys.path.insert(0, 'web')`. All are read-only against the DB.
 | `get_recent_games(team_id, n)` | Last N games with scores, pitchers, opponents |
 | `get_stat_leaders(team_id)` | Team-internal stat leaders by category |
 | `get_depth_chart(team_id)` | Positional depth with WAR projections |
+| `get_draft_org_depth(team_id)` | Per-position positive surplus totals (MLB + farm split) for draft needs panel. Returns `{pos: {mlb, farm, total}}` in $M. |
 | `get_org_overview(team_id)` | Cross-level org summary: position depth, surplus leaders, retention priorities, payroll shape |
 | `get_farm_depth(team_id)` | Farm system depth by positional bucket |
 

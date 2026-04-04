@@ -107,11 +107,11 @@ def assign_bucket(p, use_pot=None):
         # regardless of ratings that might suggest SP viability.
         if not use_pot and role_str in ("reliever", "closer"):
             return "RP"
-        stm    = p.get("Stm", 0)
+        stm    = p.get("Stm") or 0
         # Knuckleball/knuckle-curve alone qualifies as SP if stamina is sufficient
-        if stm >= 40 and (p.get("PotKnbl", 0) >= 45 or p.get("PotKncrv", 0) >= 45):
+        if stm >= 40 and ((p.get("PotKnbl") or 0) >= 45 or (p.get("PotKncrv") or 0) >= 45):
             return "SP"
-        viable = sum(1 for f in PITCH_FIELDS if p.get("Pot" + f, 0) >= 45)
+        viable = sum(1 for f in PITCH_FIELDS if (p.get("Pot" + f) or 0) >= 45)
         return "RP" if (viable < 3 or stm < 40) else "SP"
 
     if pgrade("C")  >= 45:                          return "C"

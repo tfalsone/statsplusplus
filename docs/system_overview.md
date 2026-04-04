@@ -268,15 +268,15 @@ MLB players use a three-tab layout (Overview / Stats / Contract). Prospects disp
 | File | Purpose |
 |---|---|
 | `web/app.py` | Flask routes |
-| `web/queries.py` | State helpers, league queries (prospects, leaders, player search), re-exports from extracted modules |
-| `web/team_queries.py` | Team-level queries — standings, roster, farm, contracts, surplus, age distribution, farm depth (494 lines) |
-| `web/player_queries.py` | Player detail query — ratings, stats, splits, contract, surplus, personality, scouting summary (329 lines) |
+| `web/queries.py` | State helpers, league queries (prospects, leaders, player search, draft pool), re-exports from extracted modules |
+| `web/team_queries.py` | Team-level queries — standings, roster, farm, contracts, surplus, age distribution, farm depth, depth chart, draft org depth |
+| `web/player_queries.py` | Player detail query — ratings, stats, splits, contract, surplus, personality, scouting summary |
 | `web/trade_queries.py` | Trade tab queries — org roster (MLB + farm), trade valuation adapter |
-| `web/percentiles.py` | Percentile rankings — hitter + pitcher, with expected range markers and performance tags (264 lines) |
+| `web/percentiles.py` | Percentile rankings — hitter + pitcher, with expected range markers and performance tags |
 | `web/templates/team.html` | Team page — standings, stats, roster, contracts, farm |
 | `web/templates/player.html` | Player detail template with macros (`grade`, `pctile_grid`) and `toggleSplits()` JS |
-| `web/templates/league.html` | League page — vitals KPIs, 2×3 standings grid, power rankings, hero leader cards, prospects tab |
-| `web/static/style.css` | Dark theme, grade bar tiers, percentile styling, rank coloring, split toggle styles |
+| `web/templates/league.html` | League page — vitals KPIs, standings, power rankings, prospects tab, trade tab, draft tab (side-by-side layout: board left, detail/picks sidebar right) |
+| `web/static/style.css` | Dark theme, grade bar tiers, percentile styling, rank coloring, draft bar chart styles |
 | `web/static/sort.js` | Client-side table sorting (numeric, string, positional spectrum) with smart rank renumbering |
 
 ---

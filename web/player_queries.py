@@ -138,7 +138,7 @@ def get_player(pid):
                 ("LF", lf, pot_lf), ("CF", cf_def, pot_cf), ("RF", rf, pot_rf),
             ]
             ratings["defense"] = [{"pos": lbl, "cur": _norm(c), "fut": _norm(f)}
-                                  for lbl, c, f in def_grades if c and c >= 20]
+                                  for lbl, c, f in def_grades if (c and c >= 20) or (f and f >= 20)]
             is_of = pos in (7, 8, 9)
             is_c = pos == 2
             if is_c:

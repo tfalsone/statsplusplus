@@ -1150,6 +1150,104 @@ def _league_pos_rankings(conn, year):
     return rankings
 
 
+def get_draft_org_depth(team_id):
+    """Per-position positive surplus totals (MLB + farm) for the draft needs panel.
+
+    Returns dict keyed by display position: {pos: {mlb: $M, farm: $M, total: $M}}
+    Only counts positive surplus to avoid noise from bad contracts/low-ceiling prospects.
+    """
+    conn = get_db()
+    ed_s = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
+    ed_f = conn.execute("SELECT MAX(eval_date) FROM prospect_fv").fetchone()[0]
+
+    POS_ORDER = ["C", "1B", "2B", "3B", "SS", "LF/RF", "CF", "SP", "RP"]
+    result = {p: {"mlb": 0.0, "farm": 0.0} for p in POS_ORDER}
+
+    # MLB: positive surplus by bucket
+    for r in conn.execute("""
+        SELECT bucket, SUM(surplus) FROM player_surplus
+        WHERE eval_date=? AND team_id=? AND surplus > 0
+        GROUP BY bucket
+    """, (ed_s, team_id)).fetchall():
+        pos = _display_pos(r[0]) if r[0] else None
+        if not pos:
+            continue
+        # Collapse LF/RF/COF into LF/RF
+        key = "LF/RF" if pos in ("LF", "RF", "COF") else pos
+        if key in result:
+            result[key]["mlb"] += (r[1] or 0) / 1e6
+
+    # Farm: positive prospect_surplus by bucket
+    for r in conn.execute("""
+        SELECT pf.bucket, SUM(pf.prospect_surplus)
+        FROM prospect_fv pf JOIN players p ON pf.player_id = p.player_id
+        WHERE pf.eval_date=? AND p.parent_team_id=? AND p.level != '1'
+          AND pf.prospect_surplus > 0
+        GROUP BY pf.bucket
+    """, (ed_f, team_id)).fetchall():
+        pos = _display_pos(r[0]) if r[0] else None
+        if not pos:
+            continue
+        key = "LF/RF" if pos in ("LF", "RF", "COF") else pos
+        if key in result:
+            result[key]["farm"] += (r[1] or 0) / 1e6
+
+    # Round and add total
+    out = {}
+    for pos in POS_ORDER:
+        mlb = round(result[pos]["mlb"], 1)
+        farm = round(result[pos]["farm"], 1)
+        out[pos] = {"mlb": mlb, "farm": farm, "total": round(mlb + farm, 1)}
+    return out
+    """Rank all 34 MLB teams by WAR at each position. Returns {pos: [(team_id, war), ...]}."""
+    from projections import project_war
+    from collections import defaultdict
+
+    team_pos = defaultdict(lambda: defaultdict(list))
+
+    # Position players — primary position = most fielding games
+    seen = set()
+    for r in conn.execute("""
+        SELECT f.player_id, f.team_id, f.position, f.g, r.ovr, r.pot, p.age
+        FROM fielding_stats f
+        JOIN players p ON f.player_id = p.player_id
+        JOIN latest_ratings r ON f.player_id = r.player_id
+        WHERE p.level = 1 AND f.year = ? AND f.position != 1 AND r.league_id > 0
+        ORDER BY f.player_id, f.g DESC
+    """, (year,)).fetchall():
+        if r['player_id'] in seen:
+            continue
+        seen.add(r['player_id'])
+        pos = pos_map().get(r['position'])
+        if pos:
+            team_pos[r['team_id']][pos].append(
+                project_war(r['ovr'], r['pot'], r['age'], 'CF', 0))
+
+    # Pitchers
+    for r in conn.execute("""
+        SELECT p.team_id, p.role, r.ovr, r.pot, p.age
+        FROM pitching_stats ps
+        JOIN players p ON ps.player_id = p.player_id
+        JOIN latest_ratings r ON ps.player_id = r.player_id
+        WHERE p.level = 1 AND ps.year = ? AND ps.split_id = 1 AND r.league_id > 0
+        GROUP BY ps.player_id
+    """, (year,)).fetchall():
+        bucket = 'SP' if r['role'] == 11 else 'RP'
+        team_pos[r['team_id']][bucket].append(
+            project_war(r['ovr'], r['pot'], r['age'], bucket, 0))
+
+    TOP_N = {'C':1,'1B':1,'2B':1,'3B':1,'SS':1,'LF':1,'CF':1,'RF':1,'DH':1,'SP':5,'RP':5}
+    rankings = {}
+    for pos in ['C','1B','2B','3B','SS','LF','CF','RF','SP','RP']:
+        tw = []
+        for tid, pdict in team_pos.items():
+            wars = sorted(pdict.get(pos, []), reverse=True)[:TOP_N[pos]]
+            tw.append((tid, round(sum(wars), 1)))
+        tw.sort(key=lambda x: -x[1])
+        rankings[pos] = tw
+    return rankings
+
+
 def get_depth_chart(team_id):
     """Build 3-year depth chart for a team.
 
@@ -1253,7 +1351,7 @@ def get_depth_chart(team_id):
         from projections import POS_THRESHOLDS
         for pos, (field, thresh) in POS_THRESHOLDS.items():
             val = row[field] if field in row.keys() else 0
-            if val >= thresh + 15:  # solidly above threshold
+            if val and val >= thresh + 15:  # solidly above threshold
                 yr1_positions.add(pos)
 
         all_players.append({
