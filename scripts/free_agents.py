@@ -43,9 +43,9 @@ def upcoming_fas(year, years_out=1, bucket=None, min_war=None, my_team_only=Fals
         WHERE c.years - c.current_year <= ?
           AND c.years > 0
           AND p.level IN ('1', 1)
-          AND NOT (c.years = 1 AND c.salary_0 <= {DEFAULT_MINIMUM_SALARY})
+          AND NOT (c.years = 1 AND c.salary_0 <= ?)
     """
-    params = [eval_date, years_out]
+    params = [eval_date, years_out, _cfg.minimum_salary]
 
     if my_team_only:
         query += f" AND c.contract_team_id = {_cfg.my_team_id}"

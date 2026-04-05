@@ -70,6 +70,21 @@ Output: Surplus value in dollars with option value model breakdown.
 
 ### `scripts/trade_calculator.py`
 
+Trade surplus balance calculator. Accepts player names or IDs.
+
+```bash
+# Simple interface
+python3 scripts/trade_calculator.py --offer "Jeff Hudson,Pat Showalter" --receive "Greg Brewer"
+python3 scripts/trade_calculator.py --offer 62201,201 --receive 59877
+
+# Full JSON (for salary retention or prospect overrides)
+python3 scripts/trade_calculator.py --trade '{"my_team_send": [...], "my_team_receive": [...]}'
+```
+
+Output: Per-player surplus breakdown (pessimistic/base/optimistic), net surplus for each side,
+verdict. Team name derived from `config/state.json`. Legacy `angels_send`/`angels_receive` keys
+still accepted.
+
 Trade package surplus balance evaluator.
 
 ```bash
@@ -78,7 +93,39 @@ python3 scripts/trade_calculator.py --trade '{"side_a": [{"type":"mlb","id":232}
 
 Output: Surplus balance between two trade packages with sensitivity ranges.
 
-### `scripts/free_agents.py`
+### `scripts/trade_assets.py`
+
+Tradeable assets viewer — shows what a team can offer in a trade (MLB surplus players + farm prospects).
+
+```bash
+python3 scripts/trade_assets.py                    # My team's assets
+python3 scripts/trade_assets.py --team MIN         # Another team's assets
+python3 scripts/trade_assets.py --bucket SP        # Filter by position
+python3 scripts/trade_assets.py --min-surplus 10   # Min surplus value ($M)
+python3 scripts/trade_assets.py --prospects-only
+python3 scripts/trade_assets.py --mlb-only
+```
+
+Output: MLB players ranked by surplus (with contract status, salary, stats) and farm prospects
+ranked by surplus (with FV, level, Ovr/Pot). Complements `trade_targets.py` for package construction.
+
+### `scripts/trade_targets.py`
+
+Trade target finder — MLB players by position with contract status and seller classification.
+
+```bash
+python3 scripts/trade_targets.py --bucket COF           # All OF trade targets (rentals/options)
+python3 scripts/trade_targets.py --bucket SP --min-ovr 58
+python3 scripts/trade_targets.py --bucket 3B --sellers-only
+python3 scripts/trade_targets.py --bucket COF --include-controlled  # Include multi-year players
+python3 scripts/trade_targets.py --bucket SS --max-salary 10        # Max pro-rated salary ($M)
+```
+
+Output: Ranked target list grouped by contract status (RENTAL / OPTION / CONTROLLED). Shows
+OVR/Pot, team, pro-rated and full salary, surplus value, production stats, CF grade for OF.
+Seller teams (>8 GB from last playoff spot) flagged with `SELL`.
+
+
 
 Upcoming free agent class analysis.
 

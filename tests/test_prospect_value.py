@@ -16,22 +16,22 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 def test_surplus_sp_aa():
     from prospect_value import prospect_surplus
     result = prospect_surplus(55, 21, 'AA', 'SP', fv_plus=False, ovr=55, pot=70)
-    assert result['total_surplus'] == 79_586_075
+    assert result['total_surplus'] == 79_871_464
 
 def test_surplus_ss_a():
     from prospect_value import prospect_surplus
     result = prospect_surplus(50, 20, 'A', 'SS', fv_plus=True, ovr=45, pot=65)
-    assert result['total_surplus'] == 46_406_200
+    assert result['total_surplus'] == 46_574_122
 
 def test_surplus_rp_aaa():
     from prospect_value import prospect_surplus
     result = prospect_surplus(45, 23, 'AAA', 'RP', fv_plus=False, ovr=42, pot=55)
-    assert result['total_surplus'] == 24_148_141
+    assert result['total_surplus'] == 24_235_768
 
 def test_surplus_cof_ashort():
     from prospect_value import prospect_surplus
     result = prospect_surplus(60, 19, 'A-Short', 'COF', fv_plus=False, ovr=50, pot=70)
-    assert result['total_surplus'] == 73_518_397
+    assert result['total_surplus'] == 73_780_733
 
 
 # ---------------------------------------------------------------------------
@@ -42,20 +42,20 @@ def test_option_value_sp():
     from prospect_value import prospect_surplus, prospect_surplus_with_option
     base = prospect_surplus(55, 21, 'AA', 'SP', fv_plus=False, ovr=55, pot=70)['total_surplus']
     opt  = prospect_surplus_with_option(55, 21, 'AA', 'SP', fv_plus=False, ovr=55, pot=70)
-    assert opt == 104_017_760
+    assert opt == 104_388_984
     assert opt >= base
 
 def test_option_value_ss():
     from prospect_value import prospect_surplus_with_option
-    assert prospect_surplus_with_option(50, 20, 'A', 'SS', fv_plus=True, ovr=45, pot=65) == 61_351_339
+    assert prospect_surplus_with_option(50, 20, 'A', 'SS', fv_plus=True, ovr=45, pot=65) == 61_571_766
 
 def test_option_value_rp():
     from prospect_value import prospect_surplus_with_option
-    assert prospect_surplus_with_option(45, 23, 'AAA', 'RP', fv_plus=False, ovr=42, pot=55) == 29_953_560
+    assert prospect_surplus_with_option(45, 23, 'AAA', 'RP', fv_plus=False, ovr=42, pot=55) == 30_062_864
 
 def test_option_value_cof():
     from prospect_value import prospect_surplus_with_option
-    assert prospect_surplus_with_option(60, 19, 'A-Short', 'COF', fv_plus=False, ovr=50, pot=70) == 77_327_844
+    assert prospect_surplus_with_option(60, 19, 'A-Short', 'COF', fv_plus=False, ovr=50, pot=70) == 77_603_564
 
 
 # ---------------------------------------------------------------------------

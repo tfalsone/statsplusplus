@@ -1,24 +1,25 @@
 """
 trade_calculator.py — Trade surplus balance calculator.
-Usage:
+
+Usage (simple):
+  python3 scripts/trade_calculator.py --offer 62201,201 --receive 59877
+  python3 scripts/trade_calculator.py --offer "Jeff Hudson" --receive "Greg Brewer"
+
+Usage (full JSON, for salary retention or manual prospect overrides):
   python3 scripts/trade_calculator.py --trade '<json>'
 
 Trade JSON format:
   {
-    "angels_send": [
-      {"player_id": 35149, "retention": 0.15},
-      {"player_id": 48517}
+    "my_team_send": [
+      {"player_id": 62201, "retention": 0.15},
+      {"player_id": 201, "is_prospect": true, "fv": 50, "age": 23, "level": "AAA", "bucket": "2B"}
     ],
-    "angels_receive": [
-      {"player_id": 99999}
+    "my_team_receive": [
+      {"player_id": 59877}
     ]
   }
 
-  For prospects (minor league contracts), add "is_prospect": true and supply
-  fv/age/level/bucket if not in prospect_history.json:
-      {"player_id": 99999, "is_prospect": true, "fv": 45, "age": 22, "level": "AA", "bucket": "SP"}
-
-Implements Step 4 of docs/trade_analysis_guide.md.
+  Legacy keys "angels_send"/"angels_receive" are also accepted.
 """
 
 import argparse, json, os, sys
@@ -26,12 +27,44 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from player_utils import dollars_per_war
 from contract_value import contract_value, get_player_info
 from prospect_value import prospect_surplus_with_option, find_player
+import db as _db
+from league_config import config as _cfg
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ---------------------------------------------------------------------------
-# Player valuation dispatcher
+# Name / ID resolution
 # ---------------------------------------------------------------------------
+
+def resolve_player(token):
+    """Accept player_id (int or str) or player name. Returns {"player_id": int}."""
+    token = str(token).strip()
+    if token.isdigit():
+        return {"player_id": int(token)}
+    # Name lookup
+    conn = _db.get_conn()
+    rows = conn.execute(
+        "SELECT player_id, name FROM players WHERE name LIKE ? ORDER BY level LIMIT 5",
+        (f"%{token}%",)
+    ).fetchall()
+    conn.close()
+    if not rows:
+        raise ValueError(f"Player not found: '{token}'")
+    if len(rows) > 1:
+        matches = ", ".join(f"{r['name']} (id:{r['player_id']})" for r in rows)
+        raise ValueError(f"Ambiguous name '{token}': {matches}")
+    return {"player_id": rows[0]["player_id"]}
+
+
+def parse_player_list(arg):
+    """Parse comma-separated player IDs or names into spec list."""
+    specs = []
+    for token in arg.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        specs.append(resolve_player(token))
+    return specs
 
 def value_player(spec):
     """
@@ -93,11 +126,12 @@ def value_player(spec):
 # ---------------------------------------------------------------------------
 
 def evaluate_trade(trade_spec):
-    angels_send    = trade_spec.get("angels_send", [])
-    angels_receive = trade_spec.get("angels_receive", [])
+    # Support both new keys and legacy "angels_send"/"angels_receive"
+    my_send    = trade_spec.get("my_team_send") or trade_spec.get("angels_send", [])
+    my_receive = trade_spec.get("my_team_receive") or trade_spec.get("angels_receive", [])
 
-    send_valuations    = [value_player(s) for s in angels_send]
-    receive_valuations = [value_player(s) for s in angels_receive]
+    send_valuations    = [value_player(s) for s in my_send]
+    receive_valuations = [value_player(s) for s in my_receive]
 
     def net_surplus(valuations):
         total = {"pessimistic": 0, "base": 0, "optimistic": 0}
@@ -108,18 +142,17 @@ def evaluate_trade(trade_spec):
                     total[s] += t.get(s, t.get("base", 0))
         return total
 
-    angels_receive_surplus = net_surplus(receive_valuations)
-    angels_send_surplus    = net_surplus(send_valuations)
+    my_receive_surplus = net_surplus(receive_valuations)
+    my_send_surplus    = net_surplus(send_valuations)
 
-    angels_net = {s: angels_receive_surplus[s] - angels_send_surplus[s]
-                  for s in ("pessimistic", "base", "optimistic")}
-    other_net  = {s: -angels_net[s] for s in angels_net}
+    my_net    = {s: my_receive_surplus[s] - my_send_surplus[s] for s in ("pessimistic", "base", "optimistic")}
+    other_net = {s: -my_net[s] for s in my_net}
 
     return {
-        "angels_send":         send_valuations,
-        "angels_receive":      receive_valuations,
-        "angels_net":          angels_net,
-        "other_team_net":      other_net,
+        "my_team_send":    send_valuations,
+        "my_team_receive": receive_valuations,
+        "my_net":          my_net,
+        "other_team_net":  other_net,
     }
 
 # ---------------------------------------------------------------------------
@@ -129,7 +162,7 @@ def evaluate_trade(trade_spec):
 def fmt_millions(n):
     return f"${n/1_000_000:.1f}M" if abs(n) >= 1_000_000 else f"${n:,}"
 
-def player_summary_line(v, sent=False):
+def player_summary_line(v):
     if v["type"] == "contract":
         d = v["data"]
         t = d["total_surplus"]
@@ -146,38 +179,39 @@ def player_summary_line(v, sent=False):
     else:
         return f"  [ERROR] Player {v['player_id']}: {v.get('error', 'unknown error')}"
 
-def verdict(angels_net):
-    b = angels_net["base"]
-    p = angels_net["pessimistic"]
-    o = angels_net["optimistic"]
+def verdict(my_net, my_team):
+    b = my_net["base"]
+    p = my_net["pessimistic"]
+    o = my_net["optimistic"]
     if b > 0 and p > 0:
-        return f"Angels win in all scenarios (base: {fmt_millions(b)})"
+        return f"{my_team} win in all scenarios (base: {fmt_millions(b)})"
     elif b > 0 and p < 0:
-        return f"Angels win in base/optimistic, lose in pessimistic (base: {fmt_millions(b)})"
+        return f"{my_team} win in base/optimistic, lose in pessimistic (base: {fmt_millions(b)})"
     elif b < 0 and o > 0:
-        return f"Angels lose in base/pessimistic, win only in optimistic (base: {fmt_millions(b)})"
+        return f"{my_team} lose in base/pessimistic, win only in optimistic (base: {fmt_millions(b)})"
     else:
-        return f"Angels lose in all scenarios (base: {fmt_millions(b)})"
+        return f"{my_team} lose in all scenarios (base: {fmt_millions(b)})"
 
 def print_trade(result):
+    my_team = _cfg.team_names_map.get(_cfg.my_team_id, "My Team")
     print("\n" + "="*60)
     print("TRADE SUMMARY")
     print("="*60)
 
-    print("\nANGELS SEND:")
-    for v in result["angels_send"]:
-        print(player_summary_line(v, sent=True))
-
-    print("\nANGELS RECEIVE:")
-    for v in result["angels_receive"]:
+    print(f"\n{my_team.upper()} SEND:")
+    for v in result["my_team_send"]:
         print(player_summary_line(v))
 
-    an = result["angels_net"]
+    print(f"\n{my_team.upper()} RECEIVE:")
+    for v in result["my_team_receive"]:
+        print(player_summary_line(v))
+
+    mn = result["my_net"]
     on = result["other_team_net"]
-    print(f"\nANGELS NET:      pessimistic {fmt_millions(an['pessimistic'])} | base {fmt_millions(an['base'])} | optimistic {fmt_millions(an['optimistic'])}")
+    print(f"\n{my_team.upper()} NET:  pessimistic {fmt_millions(mn['pessimistic'])} | base {fmt_millions(mn['base'])} | optimistic {fmt_millions(mn['optimistic'])}")
     print(f"OTHER TEAM NET:  pessimistic {fmt_millions(on['pessimistic'])} | base {fmt_millions(on['base'])} | optimistic {fmt_millions(on['optimistic'])}")
 
-    print(f"\nVERDICT: {verdict(an)}")
+    print(f"\nVERDICT: {verdict(mn, my_team)}")
     print("="*60)
 
 # ---------------------------------------------------------------------------
@@ -186,15 +220,30 @@ def print_trade(result):
 
 def main():
     parser = argparse.ArgumentParser(description="Trade surplus balance calculator")
-    parser.add_argument("--trade", required=True,
-                        help='JSON trade definition. See script docstring for format.')
+    parser.add_argument("--offer", default=None,
+                        help="Players my team sends: comma-separated IDs or names. "
+                             "E.g. --offer 'Jeff Hudson,Pat Showalter'")
+    parser.add_argument("--receive", default=None,
+                        help="Players my team receives: comma-separated IDs or names.")
+    parser.add_argument("--trade", default=None,
+                        help="Full JSON trade spec (for salary retention or prospect overrides).")
     args = parser.parse_args()
 
-    try:
-        trade_spec = json.loads(args.trade)
-    except json.JSONDecodeError as e:
-        print(f"Invalid trade JSON: {e}")
-        sys.exit(1)
+    if args.trade:
+        try:
+            trade_spec = json.loads(args.trade)
+        except json.JSONDecodeError as e:
+            print(f"Invalid trade JSON: {e}"); sys.exit(1)
+    elif args.offer or args.receive:
+        try:
+            trade_spec = {
+                "my_team_send":    parse_player_list(args.offer or ""),
+                "my_team_receive": parse_player_list(args.receive or ""),
+            }
+        except ValueError as e:
+            print(f"Error: {e}"); sys.exit(1)
+    else:
+        parser.print_help(); sys.exit(1)
 
     result = evaluate_trade(trade_spec)
     print_trade(result)
