@@ -56,7 +56,15 @@ Run these and present a structured brief. Adapt interpretation to the league:
   - Pyth >> actual: likely bullpen/luck drag — team is better than record
   - Pyth << actual: overperforming — regression risk
 
-**3. Farm system** — `python3 scripts/prospect_query.py team <abbr> --n 20`
+**3. Positional needs** — `python3 scripts/team_needs.py [--team <abbr>]`
+- Per-position OPS vs league average, flagged SEVERE/WEAK/OK/STRONG
+- Rotation and bullpen ERA vs league average
+- Ranked upgrade priority list
+- Cross-reference with ratings: if a player is flagged SEVERE but has strong
+  ratings (Ovr 55+), they may be underperforming and likely to regress upward —
+  note this distinction before recommending an upgrade
+
+**4. Farm system** — `python3 scripts/prospect_query.py team <abbr> --n 20`
 - Top prospects by FV and surplus
 - Flag positions with MLB-ready depth (tradeable) vs thin (need)
 
@@ -220,6 +228,7 @@ Before recommending a deal:
 | Data | Source |
 |---|---|
 | League structure, financial settings | `config/league_settings.json` |
+| Positional needs vs league average | `team_needs.py [--team <abbr>]` |
 | Standings + pythagorean | `standings.py` |
 | Division standings | `get_division_standings(team_id)` |
 | Roster with ratings + contracts | `get_roster(team_id)`, `get_contracts(team_id)` |

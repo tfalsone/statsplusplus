@@ -93,6 +93,19 @@ python3 scripts/trade_calculator.py --trade '{"side_a": [{"type":"mlb","id":232}
 
 Output: Surplus balance between two trade packages with sensitivity ranges.
 
+### `scripts/team_needs.py`
+
+Positional needs analysis — production vs league average, upgrade priorities.
+
+```bash
+python3 scripts/team_needs.py                  # My team
+python3 scripts/team_needs.py --team MIN       # Any team
+```
+
+Output: Per-position OPS vs league average (flagged SEVERE/WEAK/OK/STRONG), rotation and
+bullpen ERA vs league average, ranked upgrade priority list. Designed for trade analyst
+session initialization.
+
 ### `scripts/trade_assets.py`
 
 Tradeable assets viewer — shows what a team can offer in a trade (MLB surplus players + farm prospects).
