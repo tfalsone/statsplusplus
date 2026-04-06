@@ -617,7 +617,8 @@ def get_payroll_summary(team_id):
         FROM contracts c
         JOIN players p ON c.player_id = p.player_id
         WHERE c.contract_team_id = ? AND c.is_major = 1
-    """, (team_id,)).fetchall()
+          AND (p.parent_team_id = ? OR (p.parent_team_id = 0 AND p.team_id = ?))
+    """, (team_id, team_id, team_id)).fetchall()
 
     # Project salaries for 1yr contract players using arb model (no non-tender gate)
     from contract_value import _resolve
@@ -725,7 +726,8 @@ def get_upcoming_fa(team_id):
         JOIN players p ON c.player_id = p.player_id
         LEFT JOIN player_surplus ps ON c.player_id = ps.player_id AND ps.eval_date = ?
         WHERE c.contract_team_id = ? AND c.is_major = 1
-    """, (ed, team_id)).fetchall()
+          AND (p.parent_team_id = ? OR (p.parent_team_id = 0 AND p.team_id = ?))
+    """, (ed, team_id, team_id, team_id)).fetchall()
 
     out = []
     for pid, name, age, years, cur_yr, sal, surplus, ovr, bucket in rows:
@@ -1834,7 +1836,8 @@ def get_org_overview(team_id):
         JOIN players p ON c.player_id = p.player_id
         LEFT JOIN player_surplus ps ON c.player_id = ps.player_id AND ps.eval_date = ?
         WHERE c.contract_team_id = ? AND c.is_major = 1
-    """, (ed_s, team_id)).fetchall()
+          AND (p.parent_team_id = ? OR (p.parent_team_id = 0 AND p.team_id = ?))
+    """, (ed_s, team_id, team_id, team_id)).fetchall()
     for r in ctrl_rows:
         surplus = r["surplus"]
         if not surplus or surplus <= 0:
