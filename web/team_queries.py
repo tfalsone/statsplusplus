@@ -569,14 +569,14 @@ def get_contracts(team_id):
                c.salary_5, c.salary_6, c.salary_7, c.salary_8, c.salary_9,
                c.salary_10, c.salary_11, c.salary_12, c.salary_13, c.salary_14,
                c.no_trade, c.last_year_team_option, c.last_year_player_option,
-               ps.surplus, c.is_major,
-               p.team_id, p.parent_team_id
+               ps.surplus, c.is_major
         FROM contracts c
         JOIN players p ON c.player_id = p.player_id
         LEFT JOIN player_surplus ps ON c.player_id = ps.player_id AND ps.eval_date = ?
         WHERE c.contract_team_id = ?
+          AND (p.parent_team_id = ? OR (p.parent_team_id = 0 AND p.team_id = ?))
         ORDER BY c.salary_0 DESC
-    """, (ed, team_id)).fetchall()
+    """, (ed, team_id, team_id, team_id)).fetchall()
 
     out = []
     for r in rows:
@@ -585,20 +585,15 @@ def get_contracts(team_id):
         salaries = [r[4 + i] for i in range(15)]
         ntc, to, po = r[19], r[20], r[21]
         surplus, is_major = r[22], r[23]
-        p_team_id, p_parent_id = r[24], r[25]
         cur_sal = salaries[cur_yr] if cur_yr < len(salaries) else salaries[0]
         yrs_left = max(years - cur_yr, 1)
         total_left = sum(salaries[cur_yr:years]) if cur_yr < years else cur_sal
-        # Player is on another org's roster (e.g. Rule 5 draft)
-        on_loan = (p_parent_id != 0 and p_parent_id != team_id) or \
-                  (p_parent_id == 0 and p_team_id != team_id)
         out.append({
             "pid": pid, "name": name,
             "salary": cur_sal, "years_left": yrs_left, "total_left": total_left,
             "ntc": ntc, "to": to, "po": po,
             "surplus": round(surplus / 1e6, 1) if surplus else 0,
             "is_major": is_major,
-            "on_loan": on_loan,
         })
 
     display = [c for c in out if c["is_major"] and (c["salary"] > DEFAULT_MINIMUM_SALARY or c["years_left"] > 1)]
