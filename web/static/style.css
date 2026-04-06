@@ -748,7 +748,10 @@ h2.league-header { color: #aaa; font-size: 0.95rem; text-transform: uppercase; l
 .tag-unlucky{ background: rgba(155,89,182,0.2); color: #9b59b6; }
 
 /* Contract option badges */
-.opt-badge {
+.totals-row { font-weight: 600; }
+.stint-row td { font-size: 11px; color: var(--text-dim); padding-top: 1px; padding-bottom: 1px; }
+.stint-team { padding-left: 16px !important; color: var(--text-dim); }
+.stint-count { font-size: 10px; font-weight: 400; color: var(--text-dim); }
   font-size: 9px;
   font-weight: 700;
   padding: 1px 4px;

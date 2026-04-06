@@ -588,13 +588,24 @@
 <div class="tab-content" id="tab-stats">
 
 {% macro bat_row(s, show_year=true) %}
-<tr>
-  {% if show_year %}<td>{{ s.year }}</td>{% endif %}<td>{{ s.g }}</td><td>{{ s.pa }}</td>
+<tr{% if s.stints is defined %} class="totals-row"{% endif %}>
+  {% if show_year %}<td>{{ s.year }}{% if s.stints is defined %} <span class="stint-count">({{ s.stints|length }} teams)</span>{% endif %}</td>{% endif %}<td>{{ s.g }}</td><td>{{ s.pa }}</td>
   <td>{{ "%.3f"|format(s.avg) }}</td><td>{{ "%.3f"|format(s.obp) }}</td><td>{{ "%.3f"|format(s.slg) }}</td><td>{{ "%.3f"|format(s.ops) }}</td><td>{{ "%.3f"|format(s.iso) }}</td>
   <td>{{ "%.1f"|format(s.bb_pct) }}</td><td>{{ "%.1f"|format(s.so_pct) }}</td><td>{{ "%.3f"|format(s.babip) }}</td>
   <td>{{ s.hr }}</td><td>{{ s.rbi }}</td><td>{{ s.sb }}/{{ s.cs }}</td>
   <td>{{ s.ops_plus }}</td><td>{{ s.war }}</td>
 </tr>
+{% if s.stints is defined %}
+{% for st in s.stints %}
+<tr class="stint-row">
+  <td class="stint-team">↳ {{ st.team }}</td><td>{{ st.g }}</td><td>{{ st.pa }}</td>
+  <td>{{ "%.3f"|format(st.avg) }}</td><td>{{ "%.3f"|format(st.obp) }}</td><td>{{ "%.3f"|format(st.slg) }}</td><td>{{ "%.3f"|format(st.ops) }}</td><td>{{ "%.3f"|format(st.iso) }}</td>
+  <td>{{ "%.1f"|format(st.bb_pct) }}</td><td>{{ "%.1f"|format(st.so_pct) }}</td><td>{{ "%.3f"|format(st.babip) }}</td>
+  <td>{{ st.hr }}</td><td>{{ st.rbi }}</td><td>{{ st.sb }}/{{ st.cs }}</td>
+  <td>-</td><td>{{ st.war }}</td>
+</tr>
+{% endfor %}
+{% endif %}
 {% endmacro %}
 
 {% if p.bat_stats %}
@@ -659,8 +670,8 @@
     </thead>
     <tbody>
       {% for s in p.pit_stats %}
-      <tr>
-        <td>{{ s.year }}</td><td>{{ s.g }}</td><td>{{ s.gs }}</td><td>{{ s.ip|fmt_ip }}</td>
+      <tr{% if s.stints is defined %} class="totals-row"{% endif %}>
+        <td>{{ s.year }}{% if s.stints is defined %} <span class="stint-count">({{ s.stints|length }} teams)</span>{% endif %}</td><td>{{ s.g }}</td><td>{{ s.gs }}</td><td>{{ s.ip|fmt_ip }}</td>
         <td>{{ "%.2f"|format(s.era) if s.era is not none else "-" }}</td><td>{{ s.era_plus }}</td>
         <td>{{ "%.2f"|format(s.fip) }}</td><td>{{ "%.2f"|format(s.siera) }}</td>
         <td>{{ "%.1f"|format(s.k_pct) }}</td><td>{{ "%.1f"|format(s.bb_pct) }}</td><td>{{ "%.1f"|format(s.k_bb_pct) }}</td><td>{{ "%.1f"|format(s.gb_pct) }}</td>
@@ -668,6 +679,19 @@
         <td>{{ s.w }}</td><td>{{ s.l }}</td><td>{{ s.sv }}</td><td>{{ s.hld }}</td>
         <td>{{ s.war }}</td>
       </tr>
+      {% if s.stints is defined %}
+      {% for st in s.stints %}
+      <tr class="stint-row">
+        <td class="stint-team">↳ {{ st.team }}</td><td>{{ st.g }}</td><td>{{ st.gs }}</td><td>{{ st.ip|fmt_ip }}</td>
+        <td>{{ "%.2f"|format(st.era) if st.era is not none else "-" }}</td><td>-</td>
+        <td>{{ "%.2f"|format(st.fip) }}</td><td>-</td>
+        <td>{{ "%.1f"|format(st.k_pct) }}</td><td>{{ "%.1f"|format(st.bb_pct) }}</td><td>{{ "%.1f"|format(st.k_bb_pct) }}</td><td>{{ "%.1f"|format(st.gb_pct) }}</td>
+        <td>{{ "%.3f"|format(st.babip) }}</td>
+        <td>{{ st.w }}</td><td>{{ st.l }}</td><td>{{ st.sv }}</td><td>{{ st.hld }}</td>
+        <td>{{ st.war }}</td>
+      </tr>
+      {% endfor %}
+      {% endif %}
       {% endfor %}
     </tbody>
   </table>

@@ -303,7 +303,69 @@ def get_player(pid):
 
     _bat_sql = "SELECT year, ab, h, d, t, hr, rbi, bb, k, sb, pa, war, hbp, sf, g, cs FROM batting_stats WHERE player_id=? AND split_id=? ORDER BY year"
 
-    bat_stats = [_bat_row(r) for r in conn.execute(_bat_sql, (pid, 1)).fetchall()]
+    def _aggregate_bat_stints(rows):
+        """Aggregate multi-team stints into one row per year, preserving per-team breakdown."""
+        from collections import defaultdict
+        by_year = defaultdict(list)
+        for r in rows:
+            by_year[r["year"]].append(r)
+        result = []
+        for yr in sorted(by_year):
+            stints = by_year[yr]
+            if len(stints) == 1:
+                result.append(stints[0])
+                continue
+            # Aggregate counting stats
+            ab  = sum(s["ab"]  for s in stints)
+            h   = sum(s["h"]   for s in stints)
+            hr  = sum(s["hr"]  for s in stints)
+            rbi = sum(s["rbi"] for s in stints)
+            bb  = sum(s["bb"]  for s in stints)
+            k   = sum(s["k"]   for s in stints)
+            sb  = sum(s["sb"]  for s in stints)
+            cs  = sum(s["cs"]  for s in stints)
+            pa  = sum(s["pa"]  for s in stints)
+            war = sum(s["war"] for s in stints)
+            g   = sum(s["g"]   for s in stints)
+            d   = sum(s.get("d", 0) for s in stints)
+            t   = sum(s.get("t", 0) for s in stints)
+            avg = h / ab if ab else 0
+            obp_num = h + bb
+            obp_den = ab + bb
+            obp = obp_num / obp_den if obp_den else 0
+            slg = (h + d + 2*t + 3*hr) / ab if ab else 0
+            ops = obp + slg
+            iso = slg - avg
+            babip_denom = ab - k - hr
+            babip = (h - hr) / babip_denom if babip_denom > 0 else 0
+            bb_pct = bb / pa * 100 if pa else 0
+            so_pct = k / pa * 100 if pa else 0
+            ops_plus = round(ops / lg_ops * 100) if lg_ops and ops else 0
+            agg = {
+                "year": yr, "g": g, "pa": pa, "ab": ab, "h": h, "hr": hr, "rbi": rbi,
+                "bb": bb, "k": k, "sb": sb, "cs": cs,
+                "war": round(war, 1),
+                "avg": avg, "obp": obp, "slg": slg, "iso": iso,
+                "ops": ops, "ops_plus": ops_plus, "babip": babip,
+                "bb_pct": bb_pct, "so_pct": so_pct,
+                "stints": stints,
+            }
+            result.append(agg)
+        return result
+
+    bat_stats_raw = [_bat_row(r) for r in conn.execute(_bat_sql, (pid, 1)).fetchall()]
+    # Attach team info to each stint row
+    _team_rows = conn.execute(
+        "SELECT year, team_id, pa, ab, h, d, t, hr, rbi, bb, k, sb, pa, war, hbp, sf, g, cs "
+        "FROM batting_stats WHERE player_id=? AND split_id=1 ORDER BY year, stint",
+        (pid,)).fetchall()
+    _bat_with_teams = []
+    for r in _team_rows:
+        row_dict = _bat_row((r[0], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11], r[2], r[13], r[14], r[15], r[16], r[17]))
+        row_dict["team_id"] = r[1]
+        row_dict["team"] = team_abbr_map().get(r[1], str(r[1]))
+        _bat_with_teams.append(row_dict)
+    bat_stats = _aggregate_bat_stints(_bat_with_teams)
     bat_splits = {
         "vl": [_bat_row(r) for r in conn.execute(_bat_sql, (pid, 2)).fetchall()],
         "vr": [_bat_row(r) for r in conn.execute(_bat_sql, (pid, 3)).fetchall()],
@@ -348,7 +410,76 @@ def get_player(pid):
 
     _pit_sql = "SELECT year, ip, era, k, bb, w, l, sv, war, gs, g, hra, bf, hp, ha, hld, bs, qs, gb, fb, r, er FROM pitching_stats WHERE player_id=? AND split_id=? ORDER BY year"
 
-    pit_stats = [_pit_row(r) for r in conn.execute(_pit_sql, (pid, 1)).fetchall()]
+    def _aggregate_pit_stints(rows):
+        from collections import defaultdict
+        by_year = defaultdict(list)
+        for r in rows:
+            by_year[r["year"]].append(r)
+        result = []
+        for yr in sorted(by_year):
+            stints = by_year[yr]
+            if len(stints) == 1:
+                result.append(stints[0])
+                continue
+            ip   = sum(s["ip"]  for s in stints)
+            k    = sum(s["k"]   for s in stints)
+            bb   = sum(s["bb"]  for s in stints)
+            w    = sum(s["w"]   for s in stints)
+            l    = sum(s["l"]   for s in stints)
+            sv   = sum(s["sv"]  for s in stints)
+            war  = sum(s["war"] for s in stints)
+            gs   = sum(s["gs"]  for s in stints)
+            g    = sum(s["g"]   for s in stints)
+            hld  = sum(s["hld"] for s in stints)
+            bs   = sum(s["bs"]  for s in stints)
+            qs   = sum(s["qs"]  for s in stints)
+            er   = sum(s.get("er", 0) for s in stints)
+            hra  = sum(s.get("hra", 0) for s in stints)
+            bf   = sum(s.get("bf", 0) for s in stints)
+            hp   = sum(s.get("hp", 0) for s in stints)
+            ha   = sum(s.get("ha", 0) for s in stints)
+            gb   = sum(s.get("gb", 0) for s in stints)
+            fb   = sum(s.get("fb", 0) for s in stints)
+            era  = er * 27 / (ip * 3) if ip else 0
+            k9   = k * 9 / ip if ip else 0
+            bb9  = bb * 9 / ip if ip else 0
+            hr9  = hra * 9 / ip if ip else 0
+            fip  = ((13 * hra + 3 * (bb + hp) - 2 * k) / ip + fip_const) if ip else 0
+            era_plus = round(lg_era / era * 100) if era else 0
+            babip_denom = bf - k - hra - bb - hp
+            p_babip = (ha - hra) / babip_denom if babip_denom > 0 else 0
+            k_pct = k / bf * 100 if bf else 0
+            bb_pct_p = bb / bf * 100 if bf else 0
+            k_bb_pct = k_pct - bb_pct_p
+            gb_pct = gb / (gb + fb) * 100 if (gb + fb) else 0
+            siera_k = k / bf if bf else 0
+            siera_bb = bb / bf if bf else 0
+            siera = (6.145 - 16.986*siera_k + 11.434*siera_bb
+                     + 7.653*siera_k**2 + 6.664*siera_bb**2 + 0.9) if bf else 0
+            agg = {
+                "year": yr, "ip": ip, "era": era, "w": w, "l": l, "sv": sv,
+                "k": k, "bb": bb, "war": round(war, 1),
+                "gs": gs, "g": g, "hld": hld, "bs": bs, "qs": qs,
+                "fip": fip, "siera": siera, "babip": p_babip,
+                "hr9": hr9, "bb9": bb9, "k9": k9, "era_plus": era_plus,
+                "k_pct": k_pct, "bb_pct": bb_pct_p, "k_bb_pct": k_bb_pct,
+                "gb_pct": gb_pct,
+                "stints": stints,
+            }
+            result.append(agg)
+        return result
+
+    _pit_team_rows = conn.execute(
+        "SELECT year, team_id, ip, era, k, bb, w, l, sv, war, gs, g, hra, bf, hp, ha, hld, bs, qs, gb, fb, r, er "
+        "FROM pitching_stats WHERE player_id=? AND split_id=1 ORDER BY year, stint",
+        (pid,)).fetchall()
+    _pit_with_teams = []
+    for r in _pit_team_rows:
+        row_dict = _pit_row((r[0], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11], r[12], r[13], r[14], r[15], r[16], r[17], r[18], r[19], r[20], r[21], r[22]))
+        row_dict["team_id"] = r[1]
+        row_dict["team"] = team_abbr_map().get(r[1], str(r[1]))
+        _pit_with_teams.append(row_dict)
+    pit_stats = _aggregate_pit_stints(_pit_with_teams)
     pit_splits = {
         "vl": [_pit_row(r) for r in conn.execute(_pit_sql, (pid, 2)).fetchall()],
         "vr": [_pit_row(r) for r in conn.execute(_pit_sql, (pid, 3)).fetchall()],
@@ -586,33 +717,42 @@ def get_player_popup(pid):
     bat_stats = None
     if is_pitcher:
         s = conn.execute(
-            "SELECT ip, era, k, bb, war, sv, hld, g, gs FROM pitching_stats WHERE player_id=? AND year=? AND split_id=1",
+            "SELECT SUM(ip), SUM(era*ip)/NULLIF(SUM(ip),0), SUM(k), SUM(bb), SUM(war), SUM(sv), SUM(hld), SUM(g), SUM(gs) "
+            "FROM pitching_stats WHERE player_id=? AND year=? AND split_id=1",
             (pid, year)
         ).fetchone()
-        if s:
-            stats = {"ip": s["ip"], "era": round(s["era"], 2) if s["era"] else None,
-                     "k": s["k"], "bb": s["bb"], "war": round(s["war"], 1) if s["war"] else 0,
-                     "sv": s["sv"], "hld": s["hld"], "g": s["g"], "gs": s["gs"]}
+        if s and s[0]:
+            stats = {"ip": s[0], "era": round(s[1], 2) if s[1] else None,
+                     "k": s[2], "bb": s[3], "war": round(s[4], 1) if s[4] else 0,
+                     "sv": s[5], "hld": s[6], "g": s[7], "gs": s[8]}
         # Two-way: also fetch batting stats
         bs = conn.execute(
-            "SELECT pa, avg, obp, slg, hr, war, sb FROM batting_stats WHERE player_id=? AND year=? AND split_id=1",
+            "SELECT SUM(pa), SUM(h)/NULLIF(SUM(ab),0), "
+            "(SUM(h)+SUM(bb)+SUM(hbp))/NULLIF(SUM(ab)+SUM(bb)+SUM(hbp)+SUM(sf),0), "
+            "(SUM(h)+SUM(d)+2*SUM(t)+3*SUM(hr))/NULLIF(SUM(ab),0), "
+            "SUM(hr), SUM(war), SUM(sb) "
+            "FROM batting_stats WHERE player_id=? AND year=? AND split_id=1",
             (pid, year)
         ).fetchone()
-        if bs and (bs["pa"] or 0) >= 30:
-            bat_stats = {"pa": bs["pa"], "avg": round(bs["avg"], 3) if bs["avg"] else None,
-                         "obp": round(bs["obp"], 3) if bs["obp"] else None,
-                         "slg": round(bs["slg"], 3) if bs["slg"] else None,
-                         "hr": bs["hr"], "war": round(bs["war"], 1) if bs["war"] else 0, "sb": bs["sb"]}
+        if bs and (bs[0] or 0) >= 30:
+            bat_stats = {"pa": bs[0], "avg": round(bs[1], 3) if bs[1] else None,
+                         "obp": round(bs[2], 3) if bs[2] else None,
+                         "slg": round(bs[3], 3) if bs[3] else None,
+                         "hr": bs[4], "war": round(bs[5], 1) if bs[5] else 0, "sb": bs[6]}
     else:
         s = conn.execute(
-            "SELECT pa, avg, obp, slg, hr, war, sb FROM batting_stats WHERE player_id=? AND year=? AND split_id=1",
+            "SELECT SUM(pa), SUM(h)/NULLIF(SUM(ab),0), "
+            "(SUM(h)+SUM(bb)+SUM(hbp))/NULLIF(SUM(ab)+SUM(bb)+SUM(hbp)+SUM(sf),0), "
+            "(SUM(h)+SUM(d)+2*SUM(t)+3*SUM(hr))/NULLIF(SUM(ab),0), "
+            "SUM(hr), SUM(war), SUM(sb) "
+            "FROM batting_stats WHERE player_id=? AND year=? AND split_id=1",
             (pid, year)
         ).fetchone()
-        if s:
-            stats = {"pa": s["pa"], "avg": round(s["avg"], 3) if s["avg"] else None,
-                     "obp": round(s["obp"], 3) if s["obp"] else None,
-                     "slg": round(s["slg"], 3) if s["slg"] else None,
-                     "hr": s["hr"], "war": round(s["war"], 1) if s["war"] else 0, "sb": s["sb"]}
+        if s and s[0]:
+            stats = {"pa": s[0], "avg": round(s[1], 3) if s[1] else None,
+                     "obp": round(s[2], 3) if s[2] else None,
+                     "slg": round(s[3], 3) if s[3] else None,
+                     "hr": s[4], "war": round(s[5], 1) if s[5] else 0, "sb": s[6]}
 
     # Surplus
     ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]

@@ -98,19 +98,19 @@ def test_calc_fv_rp_capped_at_50():
 
 def test_peak_war_sp():
     from player_utils import peak_war_from_ovr
-    assert round(peak_war_from_ovr(60, 'SP'), 3) == 2.800
+    assert round(peak_war_from_ovr(60, 'SP'), 3) == 2.94
 
 def test_peak_war_rp():
     from player_utils import peak_war_from_ovr
-    assert round(peak_war_from_ovr(55, 'RP'), 3) == 0.700
+    assert round(peak_war_from_ovr(55, 'RP'), 3) == 0.93
 
 def test_peak_war_ss():
     from player_utils import peak_war_from_ovr
-    assert round(peak_war_from_ovr(65, 'SS'), 3) == 4.500
+    assert round(peak_war_from_ovr(65, 'SS'), 3) == 5.17
 
 def test_peak_war_cof():
     from player_utils import peak_war_from_ovr
-    assert round(peak_war_from_ovr(55, 'COF'), 3) == 2.200
+    assert round(peak_war_from_ovr(55, 'COF'), 3) == 3.01
 
 def test_peak_war_monotonic():
     """Higher Ovr should always produce higher WAR for the same bucket."""

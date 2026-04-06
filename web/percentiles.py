@@ -141,17 +141,20 @@ def get_hitter_percentiles(pid, split_id=1):
     else:
         rcols = "r.cntct, r.pow, r.eye, r.ks"
 
-    q = ("SELECT b.player_id, b.ab, b.h, b.d, b.t, b.hr, b.bb, b.k, b.pa, b.war, b.hbp, b.sf, "
+    q = ("SELECT b.player_id, SUM(b.ab), SUM(b.h), SUM(b.d), SUM(b.t), SUM(b.hr), "
+         "SUM(b.bb), SUM(b.k), SUM(b.pa), SUM(b.war), SUM(b.hbp), SUM(b.sf), "
          f"{rcols}, r.speed "
          "FROM batting_stats b JOIN latest_ratings r ON b.player_id=r.player_id "
-         "WHERE b.year=? AND b.split_id=? AND b.pa>=?")
+         "WHERE b.year=? AND b.split_id=? "
+         "GROUP BY b.player_id "
+         "HAVING SUM(b.pa)>=?")
     rows = conn.execute(q, (year, split_id, min_pa)).fetchall()
 
     qualified = True
     player_row = None
     if pid not in {r[0] for r in rows}:
         player_row = conn.execute(
-            q.replace("b.pa>=?", "b.player_id=?"), (year, split_id, pid)
+            q.replace("HAVING SUM(b.pa)>=?", "HAVING b.player_id=?"), (year, split_id, pid)
         ).fetchone()
         qualified = False
 
@@ -278,15 +281,18 @@ def get_pitcher_percentiles(pid, split_id=1):
     else:
         rcols = "r.stf, r.mov, r.ctrl, r.ctrl" + (", r.hra, r.pbabip" if _ext else ", NULL, NULL")
 
-    q = ("SELECT ps.player_id, ps.ip, ps.era, ps.k, ps.bb, ps.ha, ps.war, ps.hra, ps.bf, ps.hp, "
-         f"{rcols}, ps.gs, ps.g "
+    q = ("SELECT ps.player_id, SUM(ps.ip), SUM(ps.era*ps.ip)/NULLIF(SUM(ps.ip),0), "
+         "SUM(ps.k), SUM(ps.bb), SUM(ps.ha), SUM(ps.war), SUM(ps.hra), SUM(ps.bf), SUM(ps.hp), "
+         f"{rcols}, SUM(ps.gs), SUM(ps.g) "
          "FROM pitching_stats ps JOIN latest_ratings r ON ps.player_id=r.player_id "
-         "WHERE ps.year=? AND ps.split_id=? AND ps.ip>=?")
+         "WHERE ps.year=? AND ps.split_id=? "
+         "GROUP BY ps.player_id "
+         "HAVING SUM(ps.ip)>=?")
     rows = conn.execute(q, (year, split_id, rp_min_ip)).fetchall()
 
     # Detect if this player is an RP (few or no starts)
     player_gs_row = conn.execute(
-        "SELECT gs, g FROM pitching_stats WHERE player_id=? AND year=? AND split_id=?",
+        "SELECT SUM(gs), SUM(g) FROM pitching_stats WHERE player_id=? AND year=? AND split_id=?",
         (pid, year, split_id)).fetchone()
     is_rp = player_gs_row and player_gs_row[1] and player_gs_row[0] / player_gs_row[1] < 0.25
 
@@ -295,7 +301,7 @@ def get_pitcher_percentiles(pid, split_id=1):
     is_in_pool = pid in {r[0] for r in rows}
     if not is_in_pool:
         player_row = conn.execute(
-            q.replace("ps.ip>=?", "ps.player_id=?"), (year, split_id, pid)
+            q.replace("HAVING SUM(ps.ip)>=?", "HAVING ps.player_id=?"), (year, split_id, pid)
         ).fetchone()
         qualified = False
     elif not is_rp:
