@@ -52,7 +52,15 @@ Run these and present a structured brief. Adapt interpretation to the league:
 **2. Standings** — `python3 scripts/standings.py`
 - Identify the user's team: pythagorean W-L, GB from division leader
 - Classify team role (see Team Role Classification below)
-- Note pythagorean vs actual W-L delta if user provides actual record
+- Pull actual W-L from the games table:
+  ```sql
+  SELECT
+    SUM(CASE WHEN (home_team=<tid> AND runs0>runs1) OR (away_team=<tid> AND runs1>runs0) THEN 1 ELSE 0 END) as w,
+    SUM(CASE WHEN (home_team=<tid> AND runs0<runs1) OR (away_team=<tid> AND runs1<runs0) THEN 1 ELSE 0 END) as l
+  FROM games WHERE played=1 AND date >= '<year>-01-01'
+    AND (home_team=<tid> OR away_team=<tid>)
+  ```
+- Compare actual W-L to pythagorean W-L:
   - Pyth >> actual: likely bullpen/luck drag — team is better than record
   - Pyth << actual: overperforming — regression risk
 
@@ -78,7 +86,6 @@ Present the Phase 1 brief, then ask only for what's missing:
 
 | Question | Ask if... |
 |---|---|
-| Actual W-L and playoff position | User hasn't stated it |
 | Payroll/cash flexibility | Always — cannot be derived from data |
 | Recent transactions | Always — DFAs, callups, trades since last refresh are NOT in the DB. Ask: "Any recent moves I should know about? DFAs, callups, trades completed?" |
 | Untouchable players | Always — organizational priority |
@@ -248,7 +255,6 @@ Before recommending a deal:
 | DFA/roster move candidates | Intent not in data |
 | Injury status | Not tracked in StatsPlus API |
 | Team availability | Relationship context |
-| Actual W-L record | Pythagorean only in DB |
 | Extension willingness | Negotiation intent |
 | Risk tolerance | Owner preference |
 | Playoff format details | May differ from standard |
