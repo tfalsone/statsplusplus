@@ -274,6 +274,7 @@ via `arb_model.estimate_service_time` — use when the distinction matters.
 
 - **No injury data** — always confirm availability before recommending
 - **No transaction log** — DFAs, callups, trades, and waivers are not reflected until the next refresh. A DFA'd player will still appear on the roster. Always ask the user about recent moves before analyzing the roster — do not treat the DB roster as ground truth for current team construction.
+- **Contract data may be stale** — if the user says a player has multi-year control but the DB shows a 1-year deal, the data needs a refresh. Flag this discrepancy rather than trusting the DB blindly.
 - **Ratings are scouted** — `Acc=L` players have unreliable grades
 - **No minor league stats** — farm analysis relies on ratings + age/level only
 - **Standings are pythagorean** — actual W-L may differ; confirm with user
