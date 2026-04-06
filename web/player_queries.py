@@ -299,6 +299,8 @@ def get_player(pid):
             "avg": avg, "obp": obp, "slg": slg, "iso": iso,
             "ops": ops, "ops_plus": ops_plus, "babip": babip,
             "bb_pct": bb_pct, "so_pct": so_pct,
+            # raw counts preserved for multi-stint aggregation
+            "_d": d, "_t": t, "_hbp": hbp, "_sf": sf,
         }
 
     _bat_sql = "SELECT year, ab, h, d, t, hr, rbi, bb, k, sb, pa, war, hbp, sf, g, cs FROM batting_stats WHERE player_id=? AND split_id=? ORDER BY year"
@@ -327,11 +329,11 @@ def get_player(pid):
             pa  = sum(s["pa"]  for s in stints)
             war = sum(s["war"] for s in stints)
             g   = sum(s["g"]   for s in stints)
-            d   = sum(s.get("d", 0) for s in stints)
-            t   = sum(s.get("t", 0) for s in stints)
+            d   = sum(s.get("_d", 0) for s in stints)
+            t   = sum(s.get("_t", 0) for s in stints)
             avg = h / ab if ab else 0
-            obp_num = h + bb
-            obp_den = ab + bb
+            obp_num = h + bb + sum(s.get("_hbp", 0) for s in stints)
+            obp_den = ab + bb + sum(s.get("_hbp", 0) for s in stints) + sum(s.get("_sf", 0) for s in stints)
             obp = obp_num / obp_den if obp_den else 0
             slg = (h + d + 2*t + 3*hr) / ab if ab else 0
             ops = obp + slg
@@ -406,6 +408,9 @@ def get_player(pid):
             "hr9": hr9, "bb9": bb9, "k9": k9, "era_plus": era_plus,
             "k_pct": k_pct, "bb_pct": bb_pct_p, "k_bb_pct": k_bb_pct,
             "gb_pct": gb_pct,
+            # raw counts preserved for multi-stint aggregation
+            "_er": er, "_hra": hra, "_bf": bf, "_hp": hp, "_ha": ha,
+            "_gb": gb, "_fb": fb,
         }
 
     _pit_sql = "SELECT year, ip, era, k, bb, w, l, sv, war, gs, g, hra, bf, hp, ha, hld, bs, qs, gb, fb, r, er FROM pitching_stats WHERE player_id=? AND split_id=? ORDER BY year"
@@ -433,13 +438,13 @@ def get_player(pid):
             hld  = sum(s["hld"] for s in stints)
             bs   = sum(s["bs"]  for s in stints)
             qs   = sum(s["qs"]  for s in stints)
-            er   = sum(s.get("er", 0) for s in stints)
-            hra  = sum(s.get("hra", 0) for s in stints)
-            bf   = sum(s.get("bf", 0) for s in stints)
-            hp   = sum(s.get("hp", 0) for s in stints)
-            ha   = sum(s.get("ha", 0) for s in stints)
-            gb   = sum(s.get("gb", 0) for s in stints)
-            fb   = sum(s.get("fb", 0) for s in stints)
+            er   = sum(s.get("_er", 0) for s in stints)
+            hra  = sum(s.get("_hra", 0) for s in stints)
+            bf   = sum(s.get("_bf", 0) for s in stints)
+            hp   = sum(s.get("_hp", 0) for s in stints)
+            ha   = sum(s.get("_ha", 0) for s in stints)
+            gb   = sum(s.get("_gb", 0) for s in stints)
+            fb   = sum(s.get("_fb", 0) for s in stints)
             era  = er * 27 / (ip * 3) if ip else 0
             k9   = k * 9 / ip if ip else 0
             bb9  = bb * 9 / ip if ip else 0
