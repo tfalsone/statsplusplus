@@ -49,18 +49,10 @@ Run these and present a structured brief. Adapt interpretation to the league:
 - Do not assume 30 teams, 2 leagues, 6 playoff spots, or MLB financial scale
 - Note the league's $/WAR — surplus values scale with this
 
-**2. Standings** — `python3 scripts/standings.py`
-- Identify the user's team: pythagorean W-L, GB from division leader
+**2. Standings** — `python3 scripts/standings.py --actual`
+- Identify the user's team: pythagorean W-L, actual W-L, GB from division leader
 - Classify team role (see Team Role Classification below)
-- Pull actual W-L from the games table:
-  ```sql
-  SELECT
-    SUM(CASE WHEN (home_team=<tid> AND runs0>runs1) OR (away_team=<tid> AND runs1>runs0) THEN 1 ELSE 0 END) as w,
-    SUM(CASE WHEN (home_team=<tid> AND runs0<runs1) OR (away_team=<tid> AND runs1<runs0) THEN 1 ELSE 0 END) as l
-  FROM games WHERE played=1 AND date >= '<year>-01-01'
-    AND (home_team=<tid> OR away_team=<tid>)
-  ```
-- Compare actual W-L to pythagorean W-L:
+- `--actual` flag shows actual W-L from games table alongside pythagorean and the delta:
   - Pyth >> actual: likely bullpen/luck drag — team is better than record
   - Pyth << actual: overperforming — regression risk
 

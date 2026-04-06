@@ -75,6 +75,22 @@ def _build_rows(rs_map, ra_map):
     return rows
 
 
+def actual_record(team_id, year):
+    """Return actual W-L from games table for a team in a given season."""
+    conn = _db.get_conn()
+    conn.row_factory = None
+    row = conn.execute("""
+        SELECT
+            SUM(CASE WHEN (home_team=? AND runs0>runs1) OR (away_team=? AND runs1>runs0) THEN 1 ELSE 0 END) as w,
+            SUM(CASE WHEN (home_team=? AND runs0<runs1) OR (away_team=? AND runs1<runs0) THEN 1 ELSE 0 END) as l
+        FROM games
+        WHERE played=1 AND date >= ? AND (home_team=? OR away_team=?)
+    """, (team_id, team_id, team_id, team_id, f"{year}-01-01", team_id, team_id)).fetchone()
+    conn.close()
+    w, l = (row[0] or 0), (row[1] or 0)
+    return w, l
+
+
 def print_standings(rows, my_tid=None):
     if my_tid is None:
         my_tid = _cfg.my_team_id
@@ -97,6 +113,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--year", type=int, default=None)
     ap.add_argument("--refresh", action="store_true", help="Pull fresh from API")
+    ap.add_argument("--actual", action="store_true",
+                    help="Show actual W-L for my team alongside pythagorean")
     args = ap.parse_args()
 
     if args.year is None:
@@ -115,3 +133,15 @@ if __name__ == "__main__":
     print(f"\n{args.year} Standings — Pythagorean ({len(rows)} teams)\n")
     print_standings(rows)
     print()
+
+    if args.actual:
+        w, l = actual_record(_cfg.my_team_id, args.year)
+        pyth = next((r for r in rows if r["tid"] == _cfg.my_team_id), None)
+        if pyth:
+            delta_w = w - pyth["w"]
+            print(f"Actual record: {w}-{l}  |  Pythagorean: {pyth['w']}-{pyth['l']}  |  Delta: {delta_w:+.1f}W")
+            if delta_w < -2:
+                print("  → Underperforming pythagorean — likely bullpen/luck drag")
+            elif delta_w > 2:
+                print("  → Overperforming pythagorean — regression risk")
+        print()
