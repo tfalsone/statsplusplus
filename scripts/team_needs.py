@@ -5,11 +5,13 @@ team_needs.py — Positional production vs league average. Identifies upgrade pr
 Usage:
   python3 scripts/team_needs.py                  # My team
   python3 scripts/team_needs.py --team MIN       # Any team
+  python3 scripts/team_needs.py --aaa-roster     # Full AAA roster (all players, not just top prospects)
 
 Output:
   - Hitting: each position's OPS vs league average, WAR, PA, flagged by severity
   - Pitching: rotation and bullpen ERA/WAR vs league average
   - Summary: ranked upgrade priorities
+  - AAA roster (with --aaa-roster): all AAA players sorted by Ovr, including vets below FV threshold
 """
 
 import argparse, json, os, sys
@@ -57,7 +59,8 @@ def analyze(team_id=None, year=None):
     rows = conn.execute("""
         SELECT p.player_id, p.name, p.pos, r.ovr, r.pot,
                b.avg, b.obp, b.slg, (b.obp + b.slg) as ops,
-               b.war, b.pa, b.hr, b.bb, b.k
+               b.war, b.pa, b.hr, b.bb, b.k,
+               r.cntct_l, r.cntct_r, r.pow_l, r.pow_r, r.gap_l, r.gap_r, r.bats
         FROM players p
         JOIN latest_ratings r ON p.player_id = r.player_id
         JOIN batting_stats b ON p.player_id = b.player_id
@@ -77,12 +80,29 @@ def analyze(team_id=None, year=None):
         if pos and pos not in pos_slots:
             pos_slots[pos] = r
 
+    def _platoon_note(r):
+        """Flag only when a player has a strong split lean (combined 20+ point gap)."""
+        cnt = (r["cntct_l"] or 0) - (r["cntct_r"] or 0)
+        pow_ = (r["pow_l"] or 0) - (r["pow_r"] or 0)
+        gap = (r["gap_l"] or 0) - (r["gap_r"] or 0)
+        score = cnt + pow_ + gap  # positive = better vs LHP, negative = better vs RHP
+        bats = r["bats"] or "R"
+        if bats == "R" and score <= -20:
+            return "R-platoon"   # RHB unusually better vs RHP
+        if bats == "L" and score >= 20:
+            return "L-platoon"   # LHB unusually better vs LHP
+        if bats == "S":
+            if score >= 20: return "L-lean"
+            if score <= -20: return "R-lean"
+        return ""
+
     hitting = []
     for pos in POS_ORDER:
         r = pos_slots.get(pos)
         if r is None:
             hitting.append({"pos": pos, "name": "—", "ovr": 0, "ops": None,
-                            "delta": None, "war": 0, "pa": 0, "hr": 0, "flag": "EMPTY"})
+                            "delta": None, "war": 0, "pa": 0, "hr": 0, "flag": "EMPTY",
+                            "platoon": ""})
             continue
         ops   = r["ops"] or 0
         delta = ops - lg_ops
@@ -92,6 +112,7 @@ def analyze(team_id=None, year=None):
             "pos": pos, "name": r["name"], "ovr": r["ovr"], "pot": r["pot"],
             "ops": ops, "delta": delta, "war": r["war"] or 0,
             "pa": r["pa"] or 0, "hr": r["hr"] or 0, "flag": flag,
+            "platoon": _platoon_note(r),
         })
 
     # ── Pitching: rotation (role=11) and bullpen (role=12/13) ────────────────
@@ -178,7 +199,8 @@ def print_report(data):
         ops_str  = f"{h['ops']:.3f}" if h["ops"] is not None else "  ---"
         delta_str = f"{h['delta']:+.3f}" if h["delta"] is not None else "     "
         war_str  = f"{h['war']:.1f}" if h["war"] else "  -"
-        print(f"{h['pos']:<5} {h['name']:<22} {h.get('ovr',0):>3}  {ops_str}  {delta_str}  {war_str:>5}  {h['pa']:>4}  {h['hr']:>3}  {icon} {h['flag']}")
+        platoon  = f" [{h['platoon']}]" if h.get("platoon") else ""
+        print(f"{h['pos']:<5} {h['name']:<22} {h.get('ovr',0):>3}  {ops_str}  {delta_str}  {war_str:>5}  {h['pa']:>4}  {h['hr']:>3}  {icon} {h['flag']}{platoon}")
 
     # ── Pitching ─────────────────────────────────────────────────────────────
     sp = data["pitching"]["sp"]
@@ -205,10 +227,11 @@ def print_report(data):
     print(f"\n── Upgrade Priorities ──")
     priorities = []
     for h in data["hitting"]:
+        platoon_note = f" (platoon: {h['platoon']})" if h.get("platoon") else ""
         if h["flag"] == "SEVERE":
-            priorities.append(f"🔴 {h['pos']} — {h['name']} ({h['ops']:.3f} OPS, {h['delta']:+.3f} vs lg)")
+            priorities.append(f"🔴 {h['pos']} — {h['name']} ({h['ops']:.3f} OPS, {h['delta']:+.3f} vs lg){platoon_note}")
         elif h["flag"] == "WEAK":
-            priorities.append(f"🟡 {h['pos']} — {h['name']} ({h['ops']:.3f} OPS, {h['delta']:+.3f} vs lg)")
+            priorities.append(f"🟡 {h['pos']} — {h['name']} ({h['ops']:.3f} OPS, {h['delta']:+.3f} vs lg){platoon_note}")
         elif h["flag"] == "EMPTY":
             priorities.append(f"⬜ {h['pos']} — no starter")
     if sp["flag"] in ("SEVERE", "WEAK"):
@@ -224,10 +247,37 @@ def print_report(data):
     print()
 
 
+def aaa_roster(team_id=None):
+    team_id = team_id or _cfg.my_team_id
+    # Find AAA level key from level_map (value == 'AAA')
+    aaa_level = next((k for k, v in _cfg.level_map.items() if v == "AAA"), "2")
+    conn = _db.get_conn()
+    pos_map = {2:"C", 3:"1B", 4:"2B", 5:"3B", 6:"SS", 7:"LF", 8:"CF", 9:"RF", 10:"DH", 1:"P"}
+    rows = conn.execute("""
+        SELECT p.player_id, p.name, p.age, p.pos, r.ovr, r.pot, r.cf, t.name as team_name
+        FROM players p
+        JOIN latest_ratings r ON p.player_id = r.player_id
+        JOIN teams t ON p.team_id = t.team_id
+        WHERE p.parent_team_id = ? AND p.level = ?
+        ORDER BY r.ovr DESC
+    """, (team_id, aaa_level)).fetchall()
+    conn.close()
+    team_name = _cfg.team_names_map.get(team_id, str(team_id))
+    print(f"\n{team_name} — Full AAA Roster\n")
+    print(f"{'Name':<25} {'Age':>3}  {'Pos':<4} {'Ovr':>3}  {'Pot':>3}  {'CF':>4}")
+    print("-" * 50)
+    for r in rows:
+        pos = pos_map.get(r["pos"], "?")
+        cf  = f"{r['cf']:>4}" if r["cf"] else "   -"
+        print(f"{r['name']:<25} {r['age']:>3}  {pos:<4} {r['ovr']:>3}  {r['pot']:>3}  {cf}")
+    print()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Team positional needs vs league average")
     parser.add_argument("--team", default=None, help="Team abbreviation (default: my team)")
     parser.add_argument("--year", type=int, default=None)
+    parser.add_argument("--aaa-roster", action="store_true", help="Print full AAA roster sorted by Ovr")
     args = parser.parse_args()
 
     try:
@@ -235,5 +285,10 @@ if __name__ == "__main__":
     except ValueError as e:
         print(e); sys.exit(1)
 
-    data = analyze(team_id=team_id, year=args.year)
-    print_report(data)
+    if args.aaa_roster:
+        data = analyze(team_id=team_id, year=args.year)
+        print_report(data)
+        aaa_roster(team_id=team_id)
+    else:
+        data = analyze(team_id=team_id, year=args.year)
+        print_report(data)

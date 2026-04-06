@@ -60,12 +60,25 @@ Run these and present a structured brief. Adapt interpretation to the league:
 - Per-position OPS vs league average, flagged SEVERE/WEAK/OK/STRONG
 - Rotation and bullpen ERA vs league average
 - Ranked upgrade priority list
-- Cross-reference with ratings: if a player is flagged SEVERE but has strong
-  ratings (Ovr 55+), they may be underperforming and likely to regress upward —
-  note this distinction before recommending an upgrade
+- **For every SEVERE/WEAK flag, check the incumbent's Ovr/Pot vs current production
+  before recommending an external upgrade.** If ratings are solid (Ovr 54+) and
+  production is lagging, note regression likelihood and confirm with the user whether
+  they want to pursue an upgrade or let the player play through it. Do not recommend
+  trading for a replacement of a player who is likely underperforming their true talent.
 
-**4. Farm system** — `python3 scripts/prospect_query.py team <abbr> --n 20`
-- Top prospects by FV and surplus
+**4. Farm system**
+
+Run both — `prospect_query.py` misses veterans below its FV threshold:
+
+```
+python3 scripts/prospect_query.py team <abbr> --n 20   # Top prospects by FV
+python3 scripts/team_needs.py [--team <abbr>] --aaa-roster  # Full AAA roster including vets
+```
+
+- `prospect_query.py` filters by FV ≥ 35 — veterans with low upside but real MLB
+  value will not appear
+- `--aaa-roster` shows all AAA players sorted by Ovr, including vets below the FV floor
+- A 42 Ovr AAA vet may be a legitimate callup option that the prospect list misses entirely
 - Flag positions with MLB-ready depth (tradeable) vs thin (need)
 
 **4. Expiring contracts** — `python3 scripts/free_agents.py --my-team`
@@ -150,10 +163,23 @@ When the user names a need (position, role, or handedness):
 python3 scripts/trade_targets.py --bucket <POS> [--vs-hand R|L] [--sellers-only] [--min-ovr N]
 ```
 
-**Step 2 — Filter by availability:**
-- RENTAL = walk-year, no options → low prospect cost, pro-rated salary only
+**Step 2 — Verify contract status with `free_agents.py` (mandatory):**
+
+`trade_targets.py` contract classification can be unreliable. Always cross-reference
+with `free_agents.py --bucket <POS>` before presenting any player as a rental.
+The `free_agents.py` Status column is the ground truth:
+
+- **FA** = true walk-year, hits free agency after this season → low prospect cost, pro-rated salary only
+- **ARB** = arb-eligible, another year of team control after this season → higher prospect cost, future salary obligation
+- **TO** = team option exists → depends on option value
+
+**Arb-eligible ≠ rental.** ARB players have another year of team control. Before
+pursuing any arb-eligible target, confirm with the user: estimate next year's arb
+salary and flag the total multi-year commitment. A player at $7M this year may owe
+$15M+ next year — this changes both the prospect cost and the payroll calculus.
+
+Other status flags from `trade_targets.py`:
 - RENTAL+EXT = walk-year but signed extension → not a true rental, full commitment
-- OPTION = team/player option exists → depends on option value
 - CONTROLLED = multiple years → higher prospect cost
 - Pre-arb players on sellers = expensive in prospects, not rentals
 - Always confirm injury status with user before recommending
@@ -220,6 +246,9 @@ Before recommending a deal:
 - **Roster/payroll fit?** Does it create a crunch or exceed flexibility?
 - **Regression risk?** Is the target overperforming their ratings?
   (Check OVR vs production — a .333 hitter with a 50 contact grade is a red flag)
+- **Arb commitment check?** If the target is ARB-eligible, estimate next year's
+  arb salary and present the full two-year cost before recommending. Do not treat
+  an arb player as a one-year commitment.
 
 ---
 
@@ -268,6 +297,11 @@ Before recommending a deal:
 classification automatically. Pre-arb vs arb requires service time estimation
 via `arb_model.estimate_service_time` — use when the distinction matters.
 
+**`trade_targets.py` shows other teams' players; `free_agents.py` covers your own roster.**
+For targets on other teams, `trade_targets.py` ARB/RENTAL classification is reliable.
+For your own expiring contracts, use `free_agents.py --my-team` — it's purpose-built
+for that view and shows the FA/ARB/TO distinction clearly.
+
 ---
 
 ## Known Data Limitations
@@ -304,6 +338,8 @@ This agent works across leagues with different structures. Always check:
 - Do not suggest players the user has ruled out
 - Do not recommend a deal without quantifying the upgrade
 - Do not treat pre-arb players as rentals
+- Do not treat arb-eligible players as one-year commitments — always present the full multi-year cost
+- Do not use `trade_targets.py` to assess your own roster's contract status — use `free_agents.py --my-team`
 - Do not assume a contending team is a seller
 - Do not fabricate injury status, transaction history, or trade rumors
 - Do not run `refresh.py`
