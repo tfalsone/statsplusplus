@@ -73,9 +73,17 @@ def upcoming_fas(year, years_out=1, bucket=None, min_war=None, my_team_only=Fals
                 continue
 
         yrs_left = r["years"] - r["current_year"]
-        cur_sal = r[f"salary_0"] or 0
-        # Get current year salary
-        sal_key = f"salary_{r['current_year']}" if r["current_year"] else "salary_0"
+        cur_sal = r["salary_0"] or 0
+
+        # Detect arb-eligible: salary above minimum, 1yr deal, service time < 6 years
+        is_arb = False
+        if yrs_left <= 1 and cur_sal > _cfg.minimum_salary:
+            from arb_model import estimate_service_time as _est_svc
+            conn2 = _db.get_conn()
+            svc = _est_svc(conn2, r["player_id"])
+            conn2.close()
+            if svc is not None and svc < 6.0:
+                is_arb = True
 
         results.append({
             "pid": r["player_id"],
@@ -89,26 +97,23 @@ def upcoming_fas(year, years_out=1, bucket=None, min_war=None, my_team_only=Fals
             "surplus": surplus,
             "to": r["last_year_team_option"],
             "po": r["last_year_player_option"],
+            "is_arb": is_arb,
         })
 
-    results.sort(key=lambda x: x["ovr"], reverse=True)
+    results.sort(key=lambda x: (x.get("is_arb", False), -x["ovr"]))
     return results
 
 
 def print_fas(results, title="Upcoming Free Agents"):
     print(f"\n{title} ({len(results)} players)\n")
-    hdr = f"{'Name':<25} {'Age':>3} {'Pos':<4} {'Ovr':>3} {'Team':<20} {'Salary':>10} {'Surplus':>10} {'Opt':>3}"
+    hdr = f"{'Name':<25} {'Age':>3} {'Pos':<4} {'Ovr':>3} {'Team':<20} {'Salary':>10} {'Surplus':>10} {'Status':>8}"
     print(hdr)
     print("-" * len(hdr))
     for r in results:
         sal_str = f"${r['salary']:,.0f}" if r["salary"] else "min"
         sur_str = f"${r['surplus']/1e6:+.1f}M" if r["surplus"] else "n/a"
-        opt = ""
-        if r["to"]:
-            opt = "TO"
-        elif r["po"]:
-            opt = "PO"
-        print(f"{r['name']:<25} {r['age']:>3} {r['bucket']:<4} {r['ovr']:>3} {r['team']:<20} {sal_str:>10} {sur_str:>10} {opt:>3}")
+        status = "ARB" if r.get("is_arb") else ("TO" if r.get("to") else ("PO" if r.get("po") else "FA"))
+        print(f"{r['name']:<25} {r['age']:>3} {r['bucket']:<4} {r['ovr']:>3} {r['team']:<20} {sal_str:>10} {sur_str:>10} {status:>8}")
 
 
 if __name__ == "__main__":
