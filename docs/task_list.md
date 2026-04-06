@@ -21,7 +21,7 @@ Open work items. Completed items are in `docs/changelog.md`.
 ## Web UI — Team Page
 
 - [ ] **Playing time model edge cases** — current model is 77% within 100 PA, 92% within 200 PA across 4 test teams. Known gaps: (1) utility players with <3 games at every position get sprayed across the diamond via ratings fallback; (2) DH-primary detection uses 50% batting-fielding gap threshold — teams that rotate DH duties without a primary DH leave the slot empty; (3) bench players squeezed below realistic PA when starter is a multi-position player claiming the slot; (4) **global position optimization** — model assigns positions per-player, not globally. Would require a constraint-satisfaction or linear-programming approach to maximize total team WAR across all positions simultaneously. **LOE: Low-Medium per item, High for #4.**
-- [ ] **Positional strength/weakness map** — starter Ovr + surplus vs league average at each position. **LOE: Medium.**
+- [ ] **Positional strength/weakness map** — starter Ovr + surplus vs league average at each position. CLI version done (`team_needs.py`). Web UI version (visual map on team page) still pending. **LOE: Medium.**
 - [ ] **Pipeline view** — MLB starter → AAA depth → top prospect chain per position bucket. **LOE: Medium.**
 - [ ] **Division rival comparison** — side-by-side surplus/farm/record for division teams. **LOE: Medium.**
 - [ ] **Roster projection** — project next year's roster from contracts, arb estimates, FA departures. **LOE: High.**
@@ -68,7 +68,7 @@ Open work items. Completed items are in `docs/changelog.md`.
 
 ## Long-term
 
-- [ ] **Phase 2 — Interactive tools** — trade workbench, prospect explorer, free agent planner.
+- [ ] **Phase 2 — Interactive tools** — trade workbench, prospect explorer, free agent planner. Trade analysis CLI toolset complete (Session 44): `trade_targets.py`, `trade_assets.py`, `team_needs.py`, `trade_calculator.py` improvements, `trade-analyst.md` agent. Remaining: web-based trade workbench UI, prospect explorer UI, FA planner UI.
 - [ ] **Phase 3 — AI assistant** — chat interface with league/team context.
 - [ ] **Code architecture cleanup** — connection context manager, consistent row_factory, route-level error handling. Ongoing incremental work.
 - [ ] **Stat/ratings divergence flag** — surface confidence signal when `stat_peak_war` and `peak_war_from_ovr` differ by >1.5 WAR in trade calculator output. Player page already shows over/underperformance; this extends it to trade evaluation context.

@@ -4,6 +4,48 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 44 (2026-04-05)
+
+### Trade Analyst Agent
+- Created `.kiro/steering/trade-analyst.md` — full agent definition for trade analysis:
+  - Multi-league aware (derives playoff spots from division config, scales GB thresholds)
+  - Two-phase session init: auto-pull standings/needs/farm/expiring contracts, then ask user for payroll/untouchables/recent transactions
+  - Explicit "skip Phase 1 if user already provided context" instruction
+  - Other team's needs workflow for package construction
+  - Contract status classification table (PRE-ARB / ARB / RENTAL / RENTAL+EXT / OPTION / CONTROLLED)
+  - Known data limitations prominently flagged, especially transaction log gap
+
+### New CLI Tools
+- `scripts/trade_targets.py` — find trade targets by position with full contract classification:
+  - RENTAL / ARB-ELIGIBLE / RENTAL+EXT / OPTION / CONTROLLED status detection
+  - Arb detection via `arb_model.estimate_service_time` (service time < 6 years = ARB, not rental)
+  - Signed extension detection from `contract_extensions` table (RENTAL+EXT)
+  - Seller classification derived from league config divisions (~40% playoff rate per sub-league)
+  - `--vs-hand R|L` flag: shows split ratings (and stats if available), sorts by split power
+  - `--max-salary` filters on pro-rated cost derived from game date
+  - Pro-rated salary calculated from actual game date vs season start/end
+- `scripts/trade_assets.py` — tradeable assets for any team:
+  - MLB surplus players ranked by value with contract status and stats
+  - Farm prospects ranked by surplus with FV, level, Ovr/Pot
+  - `--team <abbr>` works for any team in the league
+- `scripts/team_needs.py` — positional needs vs league average:
+  - Per-position OPS vs league avg flagged SEVERE/WEAK/OK/STRONG
+  - Rotation and bullpen ERA vs league avg
+  - Ranked upgrade priority list
+  - Works for any team via `--team` flag
+
+### Improved CLI Tools
+- `scripts/trade_calculator.py` — team-agnostic rewrite:
+  - Hardcoded "Angels" references replaced with team name from config
+  - `--offer`/`--receive` flags accept player names or IDs (name lookup with ambiguity detection)
+  - Legacy `angels_send`/`angels_receive` JSON keys still accepted
+- `scripts/free_agents.py` — fixed minimum salary filter using `config.minimum_salary` instead of hardcoded `DEFAULT_MINIMUM_SALARY` constant (was returning empty results in vMLB)
+
+### Tests
+- Updated `test_prospect_value.py` expected values (league_averages.json drift from refresh)
+
+---
+
 ## Session 43 (2026-04-03 – 2026-04-04)
 
 ### Draft Tab — Bug Fixes

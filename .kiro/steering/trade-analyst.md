@@ -80,6 +80,7 @@ Present the Phase 1 brief, then ask only for what's missing:
 |---|---|
 | Actual W-L and playoff position | User hasn't stated it |
 | Payroll/cash flexibility | Always — cannot be derived from data |
+| Recent transactions | Always — DFAs, callups, trades since last refresh are NOT in the DB. Ask: "Any recent moves I should know about? DFAs, callups, trades completed?" |
 | Untouchable players | Always — organizational priority |
 | DFA/roster move candidates | Always — intent not in data |
 | Known injuries or unavailable targets | Always — not in DB |
@@ -230,20 +231,13 @@ Before recommending a deal:
 | League structure, financial settings | `config/league_settings.json` |
 | Positional needs vs league average | `team_needs.py [--team <abbr>]` |
 | Standings + pythagorean | `standings.py` |
-| Division standings | `get_division_standings(team_id)` |
-| Roster with ratings + contracts | `get_roster(team_id)`, `get_contracts(team_id)` |
-| Surplus leaders (MLB + farm) | `get_surplus_leaders(team_id)` |
 | Farm system ranked | `prospect_query.py team <abbr>` |
-| Positional depth gaps | `get_farm_depth(team_id)` |
+| Tradeable assets (MLB + farm) | `trade_assets.py [--team <abbr>]` |
 | Trade targets by position | `trade_targets.py --bucket <POS>` |
-| My team's tradeable assets | `trade_assets.py` |
-| Other team's tradeable assets | `trade_assets.py --team <abbr>` |
 | Player contract value + surplus | `contract_value.py <player_id>` |
 | Prospect surplus | `prospect_value.py --player <id>` |
-| Trade package balance | `trade_calculator.py --trade <json>` |
-| Other team's farm | `prospect_query.py team <abbr>` |
-| Pending FA classification | `free_agents.py`, contract data |
-| Batting/pitching stats | `get_roster_hitters`, `get_roster_pitchers` |
+| Trade package balance | `trade_calculator.py --offer X --receive Y` |
+| Pending FAs (my team or league-wide) | `free_agents.py [--my-team] [--bucket POS]` |
 
 ## What Must Come From the User
 
@@ -281,7 +275,7 @@ via `arb_model.estimate_service_time` — use when the distinction matters.
 ## Known Data Limitations
 
 - **No injury data** — always confirm availability before recommending
-- **No transaction log** — recent DFAs, callups, trades not reflected until refresh
+- **No transaction log** — DFAs, callups, trades, and waivers are not reflected until the next refresh. A DFA'd player will still appear on the roster. Always ask the user about recent moves before analyzing the roster — do not treat the DB roster as ground truth for current team construction.
 - **Ratings are scouted** — `Acc=L` players have unreliable grades
 - **No minor league stats** — farm analysis relies on ratings + age/level only
 - **Standings are pythagorean** — actual W-L may differ; confirm with user

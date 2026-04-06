@@ -30,6 +30,9 @@ fv_calc.py ───────────────────────
      ├──► contract_value.py        (players, ratings, contracts — read-only)    │
      ├──► prospect_value.py        (prospect_fv, players — read-only)           │
      ├──► trade_calculator.py      (contract_value + prospect_value)            │
+     ├──► trade_targets.py         (players, contracts, contract_extensions, player_surplus) │
+     ├──► trade_assets.py          (player_surplus, prospect_fv, contracts)     │
+     ├──► team_needs.py            (players, ratings, batting_stats, pitching_stats) │
      ├──► standings.py             (pitching_stats, team_*_stats — read-only)   │
      └──► free_agents.py           (contracts, player_surplus — read-only)      │
 
@@ -56,9 +59,12 @@ All other analysis scripts are read-only against the DB.
 | `prospect_query.py` | 220 | League-wide prospect rankings and farm system comparisons. |
 | `contract_value.py` | 344 | MLB contract surplus/deficit with year-by-year projection. CLI + library. |
 | `prospect_value.py` | 290 | Prospect trade surplus with option value model + career outcome probabilities. CLI + library. |
-| `trade_calculator.py` | 200 | Trade package evaluation — surplus balance with sensitivity ranges. |
+| `trade_calculator.py` | 200 | Trade package evaluation — surplus balance with sensitivity ranges. Accepts player names or IDs via `--offer`/`--receive`. Team-agnostic. |
+| `trade_targets.py` | 350 | Trade target finder — MLB players by position with contract status (RENTAL/ARB/RENTAL+EXT/OPTION/CONTROLLED), seller classification, split ratings, pro-rated salary. |
+| `trade_assets.py` | 150 | Tradeable assets for any team — MLB surplus players + farm prospects ranked by value. |
+| `team_needs.py` | 160 | Positional needs vs league average — OPS/ERA gaps flagged by severity, upgrade priority list. Works for any team. |
 | `standings.py` | 115 | League-wide standings — W/L, run differential, pythagorean expected record. |
-| `free_agents.py` | 105 | Upcoming free agent class — expiring contracts with surplus data. |
+| `free_agents.py` | 105 | Upcoming free agent class — expiring contracts with surplus data. Fixed to use league minimum salary from config. |
 | `player_utils.py` | 324 | Shared evaluation logic — bucketing, FV calc, WAR/aging curves, normalization. |
 | `league_config.py` | 120 | Single abstraction for league-specific settings. Loads from `league_settings.json` + `state.json`. |
 | `constants.py` | 82 | Valuation tables — FV→WAR, OVR→WAR, aging curves, arb %, discount rates. |
