@@ -200,7 +200,7 @@ def _seed(conn):
     _r(conn, "players", player_id=PITCHER_ID, name="Sam Pitcher", age=25,
        team_id=TEAM_ID, parent_team_id=0, level="1", pos=1, role=11)
     _r(conn, "players", player_id=PROSPECT_ID, name="Bob Prospect", age=21,
-       team_id=TEAM_ID, parent_team_id=TEAM_ID, level="AA", pos=6, role=0)
+       team_id=TEAM_ID, parent_team_id=TEAM_ID, level="3", pos=6, role=0)
 
     conn.execute("INSERT INTO ratings ({}) VALUES ({})".format(
         ", ".join(_ratings(HITTER_ID).keys()),

@@ -120,7 +120,7 @@ def run():
         def_rating = p.get(_DEF_KEY.get(bucket)) or 0
 
         # Skip foreign/independent league players (not in MLB pipeline)
-        if int(level) == 7:
+        if str(level) in ("7", "8"):
             continue
 
         if int(level) == 1:
