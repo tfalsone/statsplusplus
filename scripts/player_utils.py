@@ -95,7 +95,13 @@ def assign_bucket(p, use_pot=None):
 
     def pgrade(field):
         key = ("Pot" + field) if use_pot else field
-        return p.get(key, 0)
+        v = p.get(key, 0)
+        if isinstance(v, (int, float)):
+            return v
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return 0
 
     pos_str  = str(p.get("Pos", ""))
     role_str = str(p.get("_role", ""))

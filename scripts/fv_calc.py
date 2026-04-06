@@ -100,6 +100,14 @@ def run():
         age   = p["Age"]
         level = p["level"]
 
+        # Skip rows with malformed ratings data (empty strings from API)
+        ovr_raw = p.get("Ovr", 0)
+        if not isinstance(ovr_raw, (int, float)):
+            try:
+                p["Ovr"] = int(ovr_raw)
+            except (ValueError, TypeError):
+                continue  # skip this player entirely
+
         role_str = role_map.get(str(p.get("role") or 0), "position_player")
         p["_role"] = role_str
         p["Pos"]   = str(p.get("pos") or "")

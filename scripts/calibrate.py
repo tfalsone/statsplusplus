@@ -76,7 +76,8 @@ def _bucket_player(row, role_map):
     p["Age"] = p["age"]
     for db_key, api_key in _KEY_MAP.items():
         if db_key in p:
-            p[api_key] = p[db_key]
+            v = p[db_key]
+            p[api_key] = v if isinstance(v, (int, float)) else (int(v) if str(v).lstrip('-').isdigit() else 0)
     return assign_bucket(p, use_pot=False)
 
 
@@ -264,9 +265,9 @@ def _calibrate_arb_pct(conn, game_year, dpw):
         FROM contracts c
         JOIN players p ON c.player_id = p.player_id
         JOIN latest_ratings r ON r.player_id = p.player_id
-        WHERE c.years = 1 AND c.salary_0 > {DEFAULT_MINIMUM_SALARY} AND c.salary_0 < 20000000
+        WHERE c.years = 1 AND c.salary_0 > ? AND c.salary_0 < 20000000
           AND p.age < 30 AND p.level = 1
-    """).fetchall()
+    """, (_cfg.minimum_salary,)).fetchall()
 
     arb_data = defaultdict(list)
     for r in rows:
