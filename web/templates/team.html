@@ -740,7 +740,7 @@
         <tbody>
           {% for c in contracts %}
           <tr>
-            <td><a class="player-link" href="/player/{{ c.pid }}">{{ c.name }}</a></td>
+            <td><a class="player-link" href="/player/{{ c.pid }}">{{ c.name }}</a>{% if c.on_loan %} <span class="opt-badge opt-loan" title="Contract held, player on another team's roster">LOAN</span>{% endif %}</td>
             <td>${{ "%.1f"|format(c.salary / 1000000) }}M</td>
             <td>{{ c.years_left }}</td>
             <td>${{ "%.1f"|format(c.total_left / 1000000) }}M</td>

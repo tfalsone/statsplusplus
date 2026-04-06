@@ -761,6 +761,7 @@ h2.league-header { color: #aaa; font-size: 0.95rem; text-transform: uppercase; l
 }
 .opt-ntc { background: rgba(231,76,60,0.2); color: #e74c3c; }
 .opt-to  { background: rgba(241,196,15,0.2); color: #f1c40f; }
+.opt-loan { background: rgba(180,120,40,0.2); color: #c8a84b; }
 .opt-po  { background: rgba(52,152,219,0.2); color: #3498db; }
 
 .pctile-legend {
