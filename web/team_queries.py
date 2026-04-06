@@ -16,6 +16,16 @@ from web_league_context import (get_db, get_cfg, team_abbr_map, team_names_map,
 from constants import (ROLE_MAP, DEFAULT_MINIMUM_SALARY)
 
 
+# SQL fragment + params to filter contracts to players currently in a given org.
+# contract_team_id alone is unreliable — Rule 5 picks retain the original team's
+# contract_team_id even after the drafting team takes on the contract.
+_CONTRACT_ORG_SQL = (
+    "AND (p.parent_team_id = ? OR (p.parent_team_id = 0 AND p.team_id = ?))"
+)
+def _contract_org_params(team_id):
+    return (team_id, team_id)
+
+
 def _pap_context(conn, tid, year):
     """Get shared context for PAP calculation: team games, $/WAR, salary map."""
     team_g = conn.execute(
@@ -574,9 +584,9 @@ def get_contracts(team_id):
         JOIN players p ON c.player_id = p.player_id
         LEFT JOIN player_surplus ps ON c.player_id = ps.player_id AND ps.eval_date = ?
         WHERE c.contract_team_id = ?
-          AND (p.parent_team_id = ? OR (p.parent_team_id = 0 AND p.team_id = ?))
+          {_CONTRACT_ORG_SQL}
         ORDER BY c.salary_0 DESC
-    """, (ed, team_id, team_id, team_id)).fetchall()
+    """.format(_CONTRACT_ORG_SQL=_CONTRACT_ORG_SQL), (ed, team_id, *_contract_org_params(team_id))).fetchall()
 
     out = []
     for r in rows:
@@ -617,8 +627,8 @@ def get_payroll_summary(team_id):
         FROM contracts c
         JOIN players p ON c.player_id = p.player_id
         WHERE c.contract_team_id = ? AND c.is_major = 1
-          AND (p.parent_team_id = ? OR (p.parent_team_id = 0 AND p.team_id = ?))
-    """, (team_id, team_id, team_id)).fetchall()
+          {_CONTRACT_ORG_SQL}
+    """.format(_CONTRACT_ORG_SQL=_CONTRACT_ORG_SQL), (team_id, *_contract_org_params(team_id))).fetchall()
 
     # Project salaries for 1yr contract players using arb model (no non-tender gate)
     from contract_value import _resolve
@@ -726,8 +736,8 @@ def get_upcoming_fa(team_id):
         JOIN players p ON c.player_id = p.player_id
         LEFT JOIN player_surplus ps ON c.player_id = ps.player_id AND ps.eval_date = ?
         WHERE c.contract_team_id = ? AND c.is_major = 1
-          AND (p.parent_team_id = ? OR (p.parent_team_id = 0 AND p.team_id = ?))
-    """, (ed, team_id, team_id, team_id)).fetchall()
+          {_CONTRACT_ORG_SQL}
+    """.format(_CONTRACT_ORG_SQL=_CONTRACT_ORG_SQL), (ed, team_id, *_contract_org_params(team_id))).fetchall()
 
     out = []
     for pid, name, age, years, cur_yr, sal, surplus, ovr, bucket in rows:
@@ -1836,8 +1846,8 @@ def get_org_overview(team_id):
         JOIN players p ON c.player_id = p.player_id
         LEFT JOIN player_surplus ps ON c.player_id = ps.player_id AND ps.eval_date = ?
         WHERE c.contract_team_id = ? AND c.is_major = 1
-          AND (p.parent_team_id = ? OR (p.parent_team_id = 0 AND p.team_id = ?))
-    """, (ed_s, team_id, team_id, team_id)).fetchall()
+          {_CONTRACT_ORG_SQL}
+    """.format(_CONTRACT_ORG_SQL=_CONTRACT_ORG_SQL), (ed_s, team_id, *_contract_org_params(team_id))).fetchall()
     for r in ctrl_rows:
         surplus = r["surplus"]
         if not surplus or surplus <= 0:
