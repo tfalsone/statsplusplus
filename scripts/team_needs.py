@@ -60,7 +60,7 @@ def analyze(team_id=None, year=None):
         SELECT p.player_id, p.name, p.pos, r.ovr, r.pot,
                b.avg, b.obp, b.slg, (b.obp + b.slg) as ops,
                b.war, b.pa, b.hr, b.bb, b.k,
-               r.cntct_l, r.cntct_r, r.pow_l, r.pow_r, r.gap_l, r.gap_r, r.bats
+               r.cntct_l, r.cntct_r, r.pow_l, r.pow_r, r.eye_l, r.eye_r, r.bats
         FROM players p
         JOIN latest_ratings r ON p.player_id = r.player_id
         JOIN batting_stats b ON p.player_id = b.player_id
@@ -81,19 +81,29 @@ def analyze(team_id=None, year=None):
             pos_slots[pos] = r
 
     def _platoon_note(r):
-        """Flag only when a player has a strong split lean (combined 20+ point gap)."""
+        """Flag platoon concern only when: (1) gap is large (20+ combined), AND
+        (2) the weaker side is genuinely weak (below 45 on contact or power).
+        A player who hits better vs one hand but is still solid vs the other is not a platoon concern.
+        """
         cnt = (r["cntct_l"] or 0) - (r["cntct_r"] or 0)
         pow_ = (r["pow_l"] or 0) - (r["pow_r"] or 0)
-        gap = (r["gap_l"] or 0) - (r["gap_r"] or 0)
-        score = cnt + pow_ + gap  # positive = better vs LHP, negative = better vs RHP
+        eye = (r["eye_l"] or 0) - (r["eye_r"] or 0)
+        score = cnt + pow_ + eye  # positive = better vs LHP, negative = better vs RHP
         bats = r["bats"] or "R"
-        if bats == "R" and score <= -20:
-            return "R-platoon"   # RHB unusually better vs RHP
-        if bats == "L" and score >= 20:
-            return "L-platoon"   # LHB unusually better vs LHP
+
+        def _weak_vs_rhp():
+            return (r["cntct_r"] or 0) < 45 or (r["pow_r"] or 0) < 45
+
+        def _weak_vs_lhp():
+            return (r["cntct_l"] or 0) < 45 or (r["pow_l"] or 0) < 45
+
+        if bats == "R" and score <= -20 and _weak_vs_rhp():
+            return "R-platoon"
+        if bats == "L" and score >= 20 and _weak_vs_lhp():
+            return "L-platoon"
         if bats == "S":
-            if score >= 20: return "L-lean"
-            if score <= -20: return "R-lean"
+            if score >= 20 and _weak_vs_lhp(): return "L-lean"
+            if score <= -20 and _weak_vs_rhp(): return "R-lean"
         return ""
 
     hitting = []
