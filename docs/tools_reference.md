@@ -19,11 +19,14 @@ All scripts run from the project root: `cd ~/statsplusplus`
 League-wide standings with pythagorean expected records.
 
 ```bash
-python3 scripts/standings.py [--year 2033]
+python3 scripts/standings.py [--year 2033] [--actual]
 ```
 
-Output: Ranked table of all 34 MLB teams — W, L, Pct, GB, RS, RA, Diff. User's team
-marked with `◄`. Uses pythagorean expectation (exponent from league settings).
+Output: Ranked table of all teams — W, L, Pct, GB, RS, RA, Diff. User's team marked with `◄`.
+`--actual` adds actual W-L from `games` table alongside pythagorean and shows the delta with
+luck/regression interpretation (Pyth >> actual = bullpen drag; Pyth << actual = regression risk).
+
+Importable: `actual_record(team_id, year)` returns `(w, l)` from the `games` table.
 
 ### `scripts/prospect_query.py`
 
@@ -100,11 +103,13 @@ Positional needs analysis — production vs league average, upgrade priorities.
 ```bash
 python3 scripts/team_needs.py                  # My team
 python3 scripts/team_needs.py --team MIN       # Any team
+python3 scripts/team_needs.py --aaa-roster     # Needs report + full AAA roster
 ```
 
 Output: Per-position OPS vs league average (flagged SEVERE/WEAK/OK/STRONG), rotation and
-bullpen ERA vs league average, ranked upgrade priority list. Designed for trade analyst
-session initialization.
+bullpen ERA vs league average, ranked upgrade priority list with platoon flags where applicable.
+`--aaa-roster` appends full AAA roster sorted by Ovr — includes veterans below FV threshold
+that `prospect_query.py` misses. Designed for trade analyst session initialization.
 
 ### `scripts/trade_assets.py`
 
@@ -140,6 +145,8 @@ Seller teams (>8 GB from last playoff spot) flagged with `SELL`.
 
 
 
+### `scripts/free_agents.py`
+
 Upcoming free agent class analysis.
 
 ```bash
@@ -150,7 +157,13 @@ python3 scripts/free_agents.py --my-team
 python3 scripts/free_agents.py [--bucket SP] [--min-war 2.0] [--years 1]
 ```
 
-Output: Players approaching free agency with age, position, salary, surplus, option flags.
+Output: Players approaching free agency with age, position, salary, surplus, and status:
+- **FA** — true walk-year, hits free agency after this season
+- **ARB** — arb-eligible (service time < 6 years), another year of team control after this season
+- **TO** — team option exists
+
+FAs sorted before ARB players. Use status column to distinguish true rentals from arb-eligible
+players who carry a future salary obligation.
 
 ### `scripts/farm_analysis.py`
 

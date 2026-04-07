@@ -62,9 +62,9 @@ All other analysis scripts are read-only against the DB.
 | `trade_calculator.py` | 200 | Trade package evaluation — surplus balance with sensitivity ranges. Accepts player names or IDs via `--offer`/`--receive`. Team-agnostic. |
 | `trade_targets.py` | 350 | Trade target finder — MLB players by position with contract status (RENTAL/ARB/RENTAL+EXT/OPTION/CONTROLLED), seller classification, split ratings, pro-rated salary. |
 | `trade_assets.py` | 150 | Tradeable assets for any team — MLB surplus players + farm prospects ranked by value. |
-| `team_needs.py` | 160 | Positional needs vs league average — OPS/ERA gaps flagged by severity, upgrade priority list. Works for any team. |
-| `standings.py` | 115 | League-wide standings — W/L, run differential, pythagorean expected record. |
-| `free_agents.py` | 105 | Upcoming free agent class — expiring contracts with surplus data. Fixed to use league minimum salary from config. |
+| `team_needs.py` | 160 | Positional needs vs league average — OPS/ERA gaps flagged by severity, upgrade priority list, platoon flags, `--aaa-roster` for full AAA depth. Works for any team. |
+| `standings.py` | 115 | League-wide standings — W/L, run differential, pythagorean expected record. `--actual` flag shows actual W-L from `games` table with delta. `actual_record(team_id, year)` importable. |
+| `free_agents.py` | 105 | Upcoming free agent class — expiring contracts with FA/ARB/TO status. ARB-eligible players (service time < 6 years) distinguished from true walk-year FAs. |
 | `player_utils.py` | 324 | Shared evaluation logic — bucketing, FV calc, WAR/aging curves, normalization. |
 | `league_config.py` | 120 | Single abstraction for league-specific settings. Loads from `league_settings.json` + `state.json`. |
 | `constants.py` | 82 | Valuation tables — FV→WAR, OVR→WAR, aging curves, arb %, discount rates. |
@@ -99,6 +99,18 @@ All other analysis scripts are read-only against the DB.
 **Two-tier ratings storage** — `ratings` table keeps only the latest snapshot (all teams overwritten
 via `INSERT OR REPLACE`). `ratings_history` stores monthly in-game snapshots with slim columns
 for development tracking. Demographics (height/bats/throws) are backfilled on existing rows via UPDATE.
+
+**`contract_team_id` is unreliable for org membership** — The StatsPlus API retains the original
+signing team's ID in `contract_team_id` even after Rule 5 drafts or other transfers. All contract
+queries in `team_queries.py` use `_CONTRACT_ORG_SQL` + `_contract_org_params()` to additionally
+filter by `players.team_id` / `parent_team_id`, ensuring only players currently in the org appear.
+
+**Multi-stint stat aggregation** — `batting_stats` and `pitching_stats` store one row per team per
+year (PK includes `team_id`). `player_queries.py` aggregates stints into one combined row per year
+for display, preserving per-team breakdown as a `stints` list. Rate stats (ERA, OPS, K%, etc.) are
+recomputed from summed counting stats — `_bat_row`/`_pit_row` store raw counts (`_d`, `_t`, `_er`,
+`_hra`, `_bf`, etc.) alongside computed rates for this purpose. Percentile queries use `GROUP BY
+player_id` with `SUM` to aggregate stints before computing rankings.
 
 **FV calculation** — `calc_fv()` in `player_utils.py`. Inputs: Ovr, Pot, age vs. level norm,
 bucket, work ethic, scouting accuracy. Key rules:

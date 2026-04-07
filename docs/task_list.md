@@ -7,6 +7,7 @@ Open work items. Completed items are in `docs/changelog.md`.
 ## Code Quality
 
 - [ ] **Additional ratings scales** — Support 1-20 scale (maps to 20-80 in increments of ~3). Currently only 1-100 and 20-80 are supported; auto-detection checks if any rating exceeds 80. **LOE: Low.**
+- [ ] **Snapshot test fragility** — `test_prospect_value.py` and `test_player_utils.py` use hardcoded expected values that drift every time `league_averages.json` changes (i.e. every refresh). Consider replacing with range assertions or mocking `dollar_per_war` to a fixed value so tests don't require manual updates after each refresh. **LOE: Low.**
 
 ---
 

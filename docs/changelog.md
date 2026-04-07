@@ -4,6 +4,48 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 45 (2026-04-06)
+
+### Trade Analyst Agent — Refinements
+- `trade-analyst.json` Kiro agent added to `~/.kiro/agents/`
+- `standings.py`: added `actual_record(team_id, year)` function and `--actual` CLI flag — shows actual W-L from `games` table alongside pythagorean, computes delta with luck/regression interpretation
+- Steering file updated: Phase 1 now runs `standings.py --actual` instead of asking user for W-L; ARB vs FA distinction clarified throughout; `trade_targets.py` vs `free_agents.py` scope clarified; `--aaa-roster` added to Phase 1 farm step
+
+### `free_agents.py` — ARB/FA Detection
+- Arb-eligible players (1yr contract, service time < 6 years) now labeled **ARB** instead of appearing as walk-year FAs
+- True pending FAs labeled **FA**, team options labeled **TO**
+- Output sorted: FAs first, then ARB players
+- Fixes false positives where arb-eligible players were listed as "key walk-year players"
+
+### `team_needs.py` — Platoon Detection + AAA Roster
+- Added platoon split detection: flags players with large split gap (20+ combined contact/power/eye) AND genuine weakness on weaker side (contact or power < 45). Uses eye instead of gap as third tool.
+- Added `--aaa-roster` flag: prints full needs report + full AAA roster sorted by Ovr, including veterans below FV threshold that `prospect_query.py` misses
+- `aaa_roster()` uses `level_map` to find AAA level (not hardcoded `'2'`)
+- `--aaa-roster` now prints both the main report and AAA roster (previously either/or)
+
+### Player Page — Multi-Stint Stats (Traded Players)
+- Batting and pitching stats now aggregate multi-team stints into one combined row per year
+- Per-team breakdown shown indented below the totals row in the Stats tab
+- Totals row shown in bold with "(N teams)" label
+- Percentile rankings now use aggregated stats across all stints (previously used only the most recent team's stint)
+- Popup stats also aggregated via SQL `SUM`
+
+### Contracts Page — Rule 5 / Off-Roster Players
+- Players whose current org differs from `contract_team_id` (Rule 5 draft, etc.) are now excluded from all contract/payroll queries
+- Consolidated into `_CONTRACT_ORG_SQL` constant + `_contract_org_params()` helper in `team_queries.py` — single definition used by all 4 contract queries
+
+### Bug Fixes
+- `calibrate.py`: SQL injection bug — `{DEFAULT_MINIMUM_SALARY}` literal in query replaced with `?` parameter binding
+- `calibrate._bucket_player` + `fv_calc`: crash on empty string ratings from API (player ID 23 has `''` for all defensive grades) — `assign_bucket.pgrade()` now coerces non-numeric to 0; `fv_calc` skips players with non-numeric `Ovr`
+- `fv_calc`: `int(level)` crash on string level values — changed to `str(level) in ("7", "8")`
+- Multi-stint aggregation: `_bat_row`/`_pit_row` now store raw counting stats (`_d`, `_t`, `_hbp`, `_sf`, `_er`, `_hra`, `_bf`, etc.) needed for correct rate stat recomputation across stints
+
+### Tests
+- `tests/test_scripts.py` added: `assign_bucket` edge cases (empty string, None, string-numeric grades), `_bucket_player` with malformed DB rows, `fv_calc` skip logic for non-numeric Ovr
+- Snapshot test values updated after partial refresh ($/WAR shifted from $8.9M → $8.78M due to empty ratings export)
+
+---
+
 ## Session 44 (2026-04-05)
 
 ### Trade Analyst Agent

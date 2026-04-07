@@ -80,7 +80,8 @@ statsplusplus/
 │   ├── test_client.py          # API client tests (live API)
 │   ├── test_queries.py         # Integration tests for web/queries.py (league-level queries)
 │   ├── test_team_queries.py    # Integration tests for web/team_queries.py
-│   └── test_player_queries.py  # Integration tests for web/player_queries.py
+│   ├── test_player_queries.py  # Integration tests for web/player_queries.py
+│   └── test_scripts.py         # Unit/smoke tests for scripts layer (assign_bucket edge cases, calibrate, fv_calc)
 │
 └── docs/                       # Design docs, analysis guides, changelog
     └── valuation_model.md          # Plain-language explanation of FV, surplus, and WAR models
