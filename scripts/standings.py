@@ -81,8 +81,8 @@ def actual_record(team_id, year):
     conn.row_factory = None
     row = conn.execute("""
         SELECT
-            SUM(CASE WHEN (home_team=? AND runs0>runs1) OR (away_team=? AND runs1>runs0) THEN 1 ELSE 0 END) as w,
-            SUM(CASE WHEN (home_team=? AND runs0<runs1) OR (away_team=? AND runs1<runs0) THEN 1 ELSE 0 END) as l
+            SUM(CASE WHEN (home_team=? AND runs1>runs0) OR (away_team=? AND runs0>runs1) THEN 1 ELSE 0 END) as w,
+            SUM(CASE WHEN (home_team=? AND runs1<runs0) OR (away_team=? AND runs0<runs1) THEN 1 ELSE 0 END) as l
         FROM games
         WHERE played=1 AND date >= ? AND (home_team=? OR away_team=?)
     """, (team_id, team_id, team_id, team_id, f"{year}-01-01", team_id, team_id)).fetchone()

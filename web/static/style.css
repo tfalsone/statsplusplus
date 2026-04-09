@@ -52,11 +52,10 @@ nav a:hover { color: var(--text); background: rgba(15, 52, 96, 0.5); }
 .nav-dropdown-menu {
   display: none; position: absolute; top: 100%; left: 0; z-index: 900;
   background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
-  max-height: 400px; overflow-y: auto; min-width: 220px; margin-top: 4px;
+  max-height: 400px; overflow-y: auto; min-width: 220px; margin-top: 0;
   box-shadow: 0 4px 12px rgba(0,0,0,0.4);
 }
-.nav-dropdown:hover .nav-dropdown-menu,
-.nav-dropdown-menu:hover { display: flex; flex-direction: column; }
+.nav-dropdown-menu.open { display: flex; flex-direction: column; }
 .nav-dropdown-menu a {
   padding: 6px 12px; white-space: nowrap; font-size: 12px;
 }
