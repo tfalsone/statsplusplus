@@ -270,6 +270,7 @@ def _calibrate_tool_weights(conn, game_year, role_map):
                r.pot_lf, r.pot_cf, r.pot_rf,
                r.c, r.ss, r.second_b, r.third_b, r.first_b, r.lf, r.cf, r.rf,
                r.stm, r.ovr, r.pot,
+               r.hra AS rating_hra, r.pbabip AS rating_pbabip,
                r.pot_fst, r.pot_snk, r.pot_crv, r.pot_sld, r.pot_chg,
                r.pot_splt, r.pot_cutt, r.pot_cir_chg, r.pot_scr, r.pot_frk,
                r.pot_kncrv, r.pot_knbl,
@@ -323,6 +324,13 @@ def _calibrate_tool_weights(conn, game_year, role_map):
             "stuff": stuff, "movement": movement,
             "control": control, "arsenal": arsenal_quality,
         }
+        # Extended ratings: HRA and PBABIP (when available in the league)
+        hra_rating = norm(r["rating_hra"])
+        pbabip_rating = norm(r["rating_pbabip"])
+        if hra_rating and hra_rating > 20:
+            tool_dict["hra"] = hra_rating
+        if pbabip_rating and pbabip_rating > 20:
+            tool_dict["pbabip"] = pbabip_rating
         pitching_data[bucket][0].append(tool_dict)
         pitching_data[bucket][1].append(-fip)
 

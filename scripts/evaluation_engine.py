@@ -934,7 +934,7 @@ def derive_composite_from_components(
 # Pitcher composite
 # ---------------------------------------------------------------------------
 
-_PITCHER_TOOL_KEYS = ("stuff", "movement", "control")
+_PITCHER_TOOL_KEYS = ("stuff", "movement", "control", "hra", "pbabip")
 
 
 def compute_composite_pitcher(
@@ -2224,6 +2224,14 @@ def _extract_pitcher_tools(row: dict, norm_fn) -> dict[str, int | None]:
     tools["movement"] = norm_fn(row.get("mov"))
     tools["control"] = norm_fn(row.get("ctrl"))
 
+    # Extended ratings (available in some leagues)
+    hra_val = norm_fn(row.get("hra"))
+    if hra_val and hra_val > 20:
+        tools["hra"] = hra_val
+    pbabip_val = norm_fn(row.get("pbabip"))
+    if pbabip_val and pbabip_val > 20:
+        tools["pbabip"] = pbabip_val
+
     # L/R splits for platoon balance penalty
     tools["stuff_l"] = norm_fn(row.get("stf_l"))
     tools["stuff_r"] = norm_fn(row.get("stf_r"))
@@ -2232,11 +2240,19 @@ def _extract_pitcher_tools(row: dict, norm_fn) -> dict[str, int | None]:
 
 def _extract_potential_pitcher_tools(row: dict, norm_fn) -> dict[str, int | None]:
     """Extract potential pitcher tool ratings from a DB row."""
-    return {
+    tools = {
         "stuff": norm_fn(row.get("pot_stf")),
         "movement": norm_fn(row.get("pot_mov")),
         "control": norm_fn(row.get("pot_ctrl")),
     }
+    # Extended ratings potential (pot_ when available, else current)
+    for ext_key, pot_col, cur_col in [("hra", "pot_hra", "hra"), ("pbabip", "pot_pbabip", "pbabip")]:
+        val = norm_fn(row.get(pot_col))
+        if not val or val <= 20:
+            val = norm_fn(row.get(cur_col))
+        if val and val > 20:
+            tools[ext_key] = val
+    return tools
 
 
 def _extract_arsenal(row: dict, norm_fn) -> dict[str, int]:
