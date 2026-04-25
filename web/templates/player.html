@@ -641,7 +641,7 @@
     <div style="margin-top:4px">
       {% if p.divergence.type == 'hidden_gem' %}<span class="divergence-badge divergence-gem">▲ Hidden Gem</span>
       {% elif p.divergence.type == 'landmine' %}<span class="divergence-badge divergence-mine">▼ Landmine</span>{% endif %}
-      {% if p.divergence.component_context %}{% set top = p.divergence.component_context[0] %}<span style="color:var(--text-dim); margin-left:4px">{% if top.component == 'offensive_grade' %}offense{% elif top.component == 'baserunning_value' %}baserunning{% elif top.component == 'defensive_value' %}defense{% endif %}-driven</span>{% endif %}
+      {% if p.divergence.component_context %}{% set top = p.divergence.component_context[0] %}<span style="color:var(--text-dim); margin-left:4px">{% if top.component == 'offensive_grade' %}{% if p.is_pitcher %}pitching{% else %}offense{% endif %}{% elif top.component == 'baserunning_value' %}baserunning{% elif top.component == 'defensive_value' %}defense{% elif top.component == 'durability_score' %}durability{% endif %}-driven</span>{% endif %}
     </div>
     {% endif %}
   </div>

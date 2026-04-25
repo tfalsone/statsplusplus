@@ -20,44 +20,43 @@ def _mlb_context(conn, bucket, composite, ceiling):
     Compares against all MLB players at the same position bucket.
     Returns dict with comp_pctile, comp_tier, ceil_pctile, ceil_tier.
     """
-    rows = conn.execute("""
-        SELECT r.composite_score
-        FROM latest_ratings r
-        JOIN players p ON r.player_id = p.player_id
-        WHERE p.level = 1 AND r.composite_score IS NOT NULL
-    """).fetchall()
-
-    if not rows:
-        return None
-
     from player_utils import assign_bucket as _ab
     from league_config import config as _lc
     _rm = {str(k): v for k, v in _lc.role_map.items()}
 
-    vals = []
-    for r in rows:
-        # We need bucket but don't have full player dict — use a simpler approach
-        # Query with bucket pre-computed would be better but this works for now
-        vals.append(r["composite_score"])
-
-    # Re-query with position info for accurate bucketing
-    rows2 = conn.execute("""
-        SELECT r.composite_score, p.pos, p.role
-        FROM latest_ratings r
-        JOIN players p ON r.player_id = p.player_id
-        WHERE p.level = 1 AND r.composite_score IS NOT NULL
-    """).fetchall()
-
-    vals = []
-    for r in rows2:
-        p = {"Pos": str(r["pos"] or ""), "_role": _rm.get(str(r["role"] or 0), "position_player")}
-        p["_is_pitcher"] = p["Pos"] == "P" or p["_role"] in ("starter", "reliever", "closer")
-        try:
-            b = _ab(p, use_pot=False)
-        except Exception:
-            continue
-        if b == bucket:
-            vals.append(r["composite_score"])
+    # For pitcher buckets, match by role directly; for hitters, use assign_bucket
+    if bucket == "SP":
+        rows = conn.execute("""
+            SELECT r.composite_score FROM latest_ratings r
+            JOIN players p ON r.player_id = p.player_id
+            WHERE p.level = 1 AND r.composite_score IS NOT NULL AND p.role = '11'
+        """).fetchall()
+        vals = [r["composite_score"] for r in rows]
+    elif bucket == "RP":
+        rows = conn.execute("""
+            SELECT r.composite_score FROM latest_ratings r
+            JOIN players p ON r.player_id = p.player_id
+            WHERE p.level = 1 AND r.composite_score IS NOT NULL AND p.role IN ('12','13')
+        """).fetchall()
+        vals = [r["composite_score"] for r in rows]
+    else:
+        rows = conn.execute("""
+            SELECT r.composite_score, p.pos, p.role
+            FROM latest_ratings r
+            JOIN players p ON r.player_id = p.player_id
+            WHERE p.level = 1 AND r.composite_score IS NOT NULL
+              AND p.role NOT IN ('11','12','13')
+        """).fetchall()
+        vals = []
+        for r in rows:
+            p = {"Pos": str(r["pos"] or ""), "_role": _rm.get(str(r["role"] or 0), "position_player")}
+            p["_is_pitcher"] = False
+            try:
+                b = _ab(p, use_pot=False)
+            except Exception:
+                continue
+            if b == bucket:
+                vals.append(r["composite_score"])
 
     if len(vals) < 5:
         return None
