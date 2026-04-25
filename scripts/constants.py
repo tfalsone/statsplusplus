@@ -153,7 +153,7 @@ NO_TRACK_RECORD_DISCOUNT = 0.50
 # RP FV Pot discount factor. RPs produce less WAR per FV grade than other positions.
 # Scales Pot down so only elite RPs earn high FV grades.
 # 0.80 calibrated to produce ~5% RP share in top prospect lists (real-baseball norm).
-RP_POT_DISCOUNT = 0.80
+RP_POT_DISCOUNT = 0.85
 
 # Scarcity multiplier by talent tier. Low-ceiling players are freely available (waivers,
 # minor league FA) so their theoretical surplus has no trade value. Applied using Pot

@@ -52,6 +52,7 @@ def dev_weight(age, norm_age, level=None):
     """Development weight: how much to blend Pot vs Ovr based on age vs level norm."""
     diff = norm_age - age
     if diff >= 3:    w = 0.55 if age <= 17 else 0.65
+    elif diff >= 2:  w = 0.45 if age <= 17 else 0.60
     elif diff >= 1:  w = 0.40 if age <= 17 else 0.50
     elif diff >= -1: w = 0.35
     elif diff >= -2: w = 0.20
@@ -60,7 +61,7 @@ def dev_weight(age, norm_age, level=None):
     if low_level:
         w += 0.10
         if level.lower().replace(" ", "-") in ("usl", "dsl", "intl", "rookie"):
-            w = min(w, 0.50)
+            w = min(w, 0.55)
     return w
 
 
@@ -167,7 +168,7 @@ def calc_fv(p):
     positional access premium, critical tool floor penalty.
     """
     ovr    = p["Ovr"]
-    pot    = effective_pot(p)
+    pot    = p["Pot"]
     age, norm_age = p["Age"], p["_norm_age"]
     bucket = p["_bucket"]
 
