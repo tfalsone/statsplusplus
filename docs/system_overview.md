@@ -184,6 +184,9 @@ player_id` with `SUM` to aggregate stints before computing rankings.
 - Smooth market value ramp (linear from league min at 0 WAR to full $/WAR at 1.0 WAR)
 - Prospect age cutoff: ≤24 (25yo minor leaguers excluded — MLB-bubble, not prospects)
 - Zero surplus floor
+- Component-aware scenario adjustments: `_adjust_scenario_probs()` shifts base/mid/ceiling probabilities based on offensive grade, offensive ceiling, defensive value, and durability score. Premium defense at SS/C/CF boosts development probability; low-durability SP increases bust risk; balanced profiles tighten distributions.
+
+**Career outcome probabilities** — `career_outcome_probs()` in `prospect_value.py`. Three-scenario model (base/mid/ceiling) with logistic CDF for WAR variance within each scenario. Component scores adjust both scenario weights and development probability. Displayed as cumulative P(WAR ≥ threshold) bars on the player page.
 
 **$/WAR** — $8.62M (2033). Calibrated from 70 multi-year MLB contracts (salary ≥$5M, years >1).
 Stored in `config/league_averages.json`, recalculated each league refresh.

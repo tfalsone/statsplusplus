@@ -338,14 +338,18 @@ result = contract_value(player_id)
 
 ### `prospect_value`
 
-Prospect trade surplus calculator.
+Prospect trade surplus calculator with component-aware outcome model.
 
 ```python
-from prospect_value import prospect_surplus, prospect_surplus_with_option
+from prospect_value import prospect_surplus, prospect_surplus_with_option, career_outcome_probs
 result = prospect_surplus(fv=55, age=21, level='AA', bucket='SP', ovr=50, pot=70)
 # Returns dict: total_surplus, dev_discount, certainty_mult, scarcity_mult, breakdown
-opt = prospect_surplus_with_option(fv=55, age=21, level='AA', bucket='SP', ovr=50, pot=70)
-# Returns int: surplus including option value from upside scenarios
+opt = prospect_surplus_with_option(fv=55, age=21, level='AA', bucket='SP', ovr=50, pot=70,
+    offensive_grade=50, offensive_ceiling=60, defensive_value=None, durability_score=65)
+# Returns int: surplus including option value, adjusted for profile shape
+probs = career_outcome_probs(fv=55, age=21, level='AA', bucket='SP', ovr=50, pot=70,
+    offensive_grade=50, durability_score=65)
+# Returns dict: tiers (WAR probability curve), thresholds, confidence
 ```
 
 ### `player_utils`

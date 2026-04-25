@@ -45,7 +45,30 @@ Migrated legacy FV components from OVR/POT assumptions to composite/ceiling:
 
 FV40+ slight overshoot is a deliberate tradeoff from removing the ad-hoc low-upside discount in favor of the empirical age decay model.
 
-Files changed: `scripts/fv_model.py`, `scripts/evaluation_engine.py`, `scripts/calibrate.py`, `scripts/constants.py`, `scripts/player_utils.py`, `scripts/farm_analysis.py`, `web/player_queries.py`, `web/templates/player.html`
+### Stamina Calibration
+
+Reduced SP stamina overweighting. Volume bonus: 0.20/pt cap 7 → 0.12/pt cap 4 (calibrated from quartile WAR analysis). Peak bonus stamina contribution capped at +5. Stamina correlates with WAR at only r=0.168.
+
+### Player Evaluation UI — Iteration
+
+- **Pitcher percentiles fixed**: SP/RP now matched by role directly instead of `assign_bucket` (which failed on minimal player dicts).
+- **Divergence labels**: Pitchers show "pitching-driven" instead of "offense-driven". Added "durability-driven".
+- **MLB context: qualified regulars only**: Filters to 200+ PA (hitters), 80+ IP (SP), 30+ IP (RP). Excludes bench/callup players.
+- **Replaced percentiles with rank + distance from median**: Percentiles on small integer distributions were unreliable (1-point = 18 pctile swing). New display: "#27/45 MLB 2B, -1 vs median (51) · Average".
+- **Ceiling context**: Shows distance + tier only (no rank). Rank implies prediction; distance communicates possibility.
+- **Layout by player type**: Prospects get evaluation panel top-right (most prominent). MLB players keep it left column under ratings, freeing right column for stats/percentiles.
+
+### Component-Aware Career Outcomes
+
+Career outcome probabilities and surplus now adjust based on player profile shape:
+- Premium defense (SS/C/CF, def ≥ 60): higher development probability. Glove-first SS: 65% vs 59% Contributor at same FV.
+- Low-durability SP (dur < 45): higher bust risk. Low-stm SP: 45% vs 57% Contributor.
+- Offensive ceiling ≥ 60: shifts toward ceiling scenario.
+- Balanced profiles: tighter distributions. Extreme profiles: wider distributions.
+
+New `_adjust_scenario_probs()` in `prospect_value.py`. Component scores threaded from `fv_calc.py` through `prospect_surplus_with_option()` and `career_outcome_probs()`.
+
+Files changed: `scripts/fv_model.py`, `scripts/evaluation_engine.py`, `scripts/calibrate.py`, `scripts/constants.py`, `scripts/player_utils.py`, `scripts/farm_analysis.py`, `scripts/prospect_value.py`, `scripts/fv_calc.py`, `web/player_queries.py`, `web/templates/player.html`
 
 ---
 ## Session 48 (2026-04-25)
