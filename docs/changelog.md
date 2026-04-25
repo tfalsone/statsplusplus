@@ -4,6 +4,54 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 48 (2026-04-25)
+
+### Evaluation Engine — Cross-League Calibration & Model Independence
+
+First calibration run on both VMLB (20-80 scale) and EMLB (1-100 scale). Identified and fixed systematic prospect inflation, ceiling collapse, and calibration weight instability. Removed all POT/OVR dependencies from the evaluation engine — scores are now derived purely from individual tool ratings.
+
+**New: `scripts/benchmark.py`** — Evaluation engine performance benchmark. Measures composite vs WAR correlation, prospect inflation, ceiling collapse, and cross-league weight stability. Supports `--all` (all leagues) and `--json` output. Used for before/after comparison when tuning model parameters.
+
+**Calibration weight regularization (calibrate.py):**
+- Raised `min_weight` floor: hitter hitting 0.10→0.18, pitcher 0.05→0.15. Prevents single-tool dominance (max single weight dropped from 67% to 31%).
+- R²-proportional default blending: `final = R² × calibrated + (1-R²) × default`. Low-R² buckets (most hitter positions) now stay close to balanced defaults. High-R² buckets (EMLB C at 0.61) get more calibration influence.
+- Cross-league weight stability improved dramatically: minimum cosine similarity 0.65→0.98.
+
+**Prospect composite discount (evaluation_engine.py):**
+- Age-based discount for non-MLB players: 0 (age ≤17), 2 (18-19), 3 (20-21), 5 (22+) points.
+- Extra +3 discount for age 23+ prospects with low upside (ceiling within 5 points of composite).
+- Addresses the structural gap between OVR (which incorporates "proven-ness") and the tool-weighted composite (which doesn't). Prospect Comp-OVR offset reduced from +3.4 to +1.3 (VMLB) and +3.7 to +0.6 (EMLB).
+
+**Peak tool bonus for ceiling (evaluation_engine.py):**
+- Adds +1 point per potential tool point above 60, capped at +15, to the raw potential composite before the age-weighted blend.
+- Addresses ceiling collapse for prospects with uneven tool profiles (e.g., 80 contact / 30 power). The weighted average drags down such profiles; the peak bonus gives credit for carrying tools.
+- Purely tool-derived — no reference to game OVR/POT.
+- VMLB ceiling collapse: -8.7→-0.4. Crushed >10pts: 38%→12%.
+
+**Removed POT dependency from ceiling formula:**
+- Removed the POT+8 soft cap from `compute_ceiling()` (was added Session 46).
+- Removed the POT-informed ceiling blend (added and reverted this session).
+- Removed `pot` parameter from `compute_ceiling()` signature and all call sites.
+- The ceiling is now fully independent of the game's POT rating.
+
+**Benchmark results (final, POT-free):**
+
+| Metric | Before | After | Target |
+|---|---|---|---|
+| VMLB MLB bucket wins | 2/8 | 4/8 | ≥5/8 |
+| VMLB Prospect Comp-OVR | +3.4 | +1.3 | ±2.0 ✅ |
+| VMLB FV40 Comp-OVR | +8.0 | +3.5 | ±3.0 |
+| VMLB Ceiling collapse | -8.7 | -0.4 | > -3.0 ✅ |
+| VMLB Crushed >10pts | 38% | 12% | < 15% ✅ |
+| EMLB Prospect Comp-OVR | +3.7 | +0.6 | ±2.0 ✅ |
+| EMLB FV40 Comp-OVR | +7.5 | +2.8 | ±3.0 ✅ |
+| EMLB Ceiling collapse | -3.9 | +4.1 | > -3.0 ✅ |
+| Weight cosine similarity | 0.65 | 0.98 | > 0.85 ✅ |
+
+Files changed: `scripts/calibrate.py`, `scripts/evaluation_engine.py`, `scripts/benchmark.py` (new)
+
+---
+
 ## Session 47 (2026-04-19)
 
 ### Evaluation Engine — Calibration & Composite Overhaul

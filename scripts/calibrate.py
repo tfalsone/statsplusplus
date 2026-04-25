@@ -349,9 +349,27 @@ def _calibrate_tool_weights(conn, game_year, role_map):
             "offense": 0.65, "defense": 0.25, "baserunning": 0.10,
         })
 
-        # Normalize each component's coefficients
+        # Normalize each component's coefficients, then blend with defaults
+        # proportional to R² (low R² → trust defaults more).
         if hitting_raw is not None:
-            hitting_norm = normalize_coefficients(hitting_raw, min_weight=0.10)
+            hitting_norm = normalize_coefficients(hitting_raw, min_weight=0.18)
+            # Blend with defaults: final = R² × calibrated + (1-R²) × default
+            best_r2 = max(max(abs(v) for v in hitting_raw.values()), 0.0)
+            default_w = DEFAULT_TOOL_WEIGHTS["hitter"].get(bucket, {})
+            default_hitting = {}
+            for k in ("contact", "gap", "power", "eye"):
+                default_hitting[k] = default_w.get(k, 0.0)
+            dt = sum(default_hitting.values())
+            if dt > 0:
+                default_hitting = {k: v / dt for k, v in default_hitting.items()}
+            hitting_norm = {
+                k: best_r2 * hitting_norm.get(k, 0) + (1 - best_r2) * default_hitting.get(k, 0)
+                for k in set(hitting_norm) | set(default_hitting)
+            }
+            # Re-normalize after blending
+            ht = sum(hitting_norm.values())
+            if ht > 0:
+                hitting_norm = {k: v / ht for k, v in hitting_norm.items()}
         else:
             # Fall back to default hitting weights (extract offensive tools only)
             default_w = DEFAULT_TOOL_WEIGHTS["hitter"].get(bucket, {})
@@ -396,8 +414,19 @@ def _calibrate_tool_weights(conn, game_year, role_map):
         if pitching_raw is not None:
             # Use minimum weight floor for pitchers to prevent degenerate
             # single-variable solutions (e.g. RP movement=0.99).
-            # Floor of 0.05 ensures stuff/movement/control each get at least 5%.
-            result_pitcher[role] = {k: round(v, 4) for k, v in normalize_coefficients(pitching_raw, min_weight=0.05).items()}
+            # Floor of 0.15 ensures stuff/movement/control each get at least 15%.
+            pitching_norm = normalize_coefficients(pitching_raw, min_weight=0.15)
+            # Blend with defaults proportional to R²
+            best_r2 = max(max(abs(v) for v in pitching_raw.values()), 0.0)
+            default_p = DEFAULT_TOOL_WEIGHTS["pitcher"].get(role, {})
+            pitching_norm = {
+                k: best_r2 * pitching_norm.get(k, 0) + (1 - best_r2) * default_p.get(k, 0)
+                for k in set(pitching_norm) | set(default_p)
+            }
+            pt = sum(pitching_norm.values())
+            if pt > 0:
+                pitching_norm = {k: v / pt for k, v in pitching_norm.items()}
+            result_pitcher[role] = {k: round(v, 4) for k, v in pitching_norm.items()}
         else:
             result_pitcher[role] = dict(DEFAULT_TOOL_WEIGHTS["pitcher"].get(role, {}))
 

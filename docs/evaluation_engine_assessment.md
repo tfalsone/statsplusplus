@@ -1,6 +1,6 @@
 # Evaluation Engine — Current State Assessment
 
-*Generated: 2026-04-19 | Updated: Session 47 | League year: 2033*
+*Generated: 2026-04-19 | Updated: Session 48 | League year: 2033*
 
 ---
 
@@ -140,10 +140,12 @@ Likely candidates: (a) the interaction between pitches (a 65 slider paired with 
 
 **Calibration contradiction for 1B:** The calibrated 1B defense weight is 0.15 — *higher* than the 0.10 default. The regression is pushing defense weight *up* for 1B, which is the opposite of what the correlation analysis suggests should happen. This indicates the calibration regression is finding a spurious or indirect relationship (e.g., better defenders happen to be better hitters in the sample) rather than a causal one. The 1B calibration r² is only 0.204, confirming the weak signal.
 
-### 3. Ceiling formula over-weights character traits for low-POT players — FIXED
+### 3. Ceiling formula over-weights character traits for low-POT players — REPLACED
 
-**Status:** Fixed (2026-04-19). A POT soft cap was implemented: `ceiling ≤ POT + 8` when
-POT is available. The cap never pushes ceiling below the current composite score.
+**Status:** The POT+8 soft cap (Session 46) has been removed (Session 48) to eliminate
+POT dependency. Replaced by a peak tool bonus (+1 per potential tool point above 60,
+capped at +15) that addresses ceiling collapse for uneven profiles without referencing
+the game's POT rating. The ceiling is now fully tool-derived.
 
 **Original symptom:** Several low-POT players (POT=20-42) were receiving ceiling scores
 20-30 points above their POT.

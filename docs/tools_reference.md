@@ -200,6 +200,19 @@ python3 scripts/refresh.py state <game_date> [year]  # Manual state override
 
 **Do not run during article writing.** Only run when the game date has advanced.
 
+### `scripts/benchmark.py`
+
+Evaluation engine performance benchmark. Measures composite vs WAR correlation by
+position bucket, prospect inflation by level/age, ceiling collapse for high-upside
+young prospects, and cross-league weight stability.
+
+```bash
+python3 scripts/benchmark.py              # Active league
+python3 scripts/benchmark.py --all        # All leagues side-by-side
+python3 scripts/benchmark.py --json       # Machine-readable output
+STATSPP_LEAGUE=emlb python3 scripts/benchmark.py  # Specific league
+```
+
 ### `scripts/calibrate.py`
 
 Derives league-specific valuation tables and tool weights from actual data. Produces
@@ -213,7 +226,7 @@ python3 scripts/calibrate.py --dry-run # Show results without writing
 ```
 
 Two-pass execution during refresh:
-- **Pass 1** (before evaluation engine): tool weight regression (hitting→WAR, baserunning→SB metrics, fielding→ZR, pitching→FIP) + OVR_TO_WAR. Hitting regression uses WAR as target (not OPS+) and excludes `avoid_k` (collinear with contact) and `speed` (contributes via baserunning only). Min weight floor: 0.10 for hitters, 0.05 for pitchers.
+- **Pass 1** (before evaluation engine): tool weight regression (hitting→WAR, baserunning→SB metrics, fielding→ZR, pitching→FIP) + OVR_TO_WAR. Hitting regression uses WAR as target (not OPS+) and excludes `avoid_k` (collinear with contact) and `speed` (contributes via baserunning only). Min weight floor: 0.18 for hitters, 0.15 for pitchers. Calibrated weights are blended with defaults proportional to R² (`final = R² × calibrated + (1-R²) × default`).
 - **Pass 2** (after evaluation engine): COMPOSITE_TO_WAR regression using freshly computed composite scores
 
 ---

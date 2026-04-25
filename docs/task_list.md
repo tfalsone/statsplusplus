@@ -14,8 +14,12 @@ Open work items. Completed items are in `docs/changelog.md`.
 
 ## Evaluation Engine Tuning
 
-- [ ] **Score compression further tuning** — The elite tool bonus (+0.5 per point above 60) expanded the top end by ~3-5 points but the composite still maxes at ~64 vs OVR 80. Options: increase the bonus multiplier, add a non-linear combination, or reduce the number of tools in the average. See design doc tuning notes. **LOE: Low-Medium.**
-- [ ] **Calibration on VMLB** — Run the full calibrate → evaluation_engine → fv_calc pipeline on VMLB to derive league-specific tool weights and COMPOSITE_TO_WAR tables. Currently using default weights. **LOE: Low.**
+- [x] **Score compression further tuning** — Replaced elite tool bonus with piecewise tool transform (Session 47). Peak tool bonus for ceiling added (Session 48). Composite now within ±2 of OVR for prospects.
+- [x] **Calibration on VMLB** — Full calibrate → evaluation_engine → fv_calc pipeline run on VMLB (Session 48). R²-blended defaults and raised min_weight floors produce stable cross-league weights (cosine similarity 0.98+).
+- [ ] **SP underrepresentation in prospect rankings** — Only 18/100 SP in VMLB top 100, 8/100 in EMLB. SP typically 25-30% of real prospect lists. Pitcher composite may still compress the top end. Investigate innings-volume adjustment and arsenal bonus effectiveness for prospect SP. **LOE: Medium.**
+- [ ] **FV40 prospect inflation residual** — FV 40+ prospects still +3.5 Comp-OVR on VMLB (target ±3.0). Driven by 2B/CF/COF buckets at +4.5 to +5.5. May need position-specific discount tuning. **LOE: Low.**
+- [ ] **EMLB ceiling slight inflation** — Mean Ceil-POT is +4.1 on EMLB after peak tool bonus. The +1/point above 60 bonus may be slightly too generous on 1-100 scale leagues. Consider scale-aware bonus or lower cap. **LOE: Low.**
+- [ ] **COMPOSITE_TO_WAR calibration** — Now that composite scores exist on both leagues, run a second calibration pass to produce COMPOSITE_TO_WAR tables. These feed into `peak_war_from_score()` for surplus calculations. **LOE: Low.**
 
 ---
 

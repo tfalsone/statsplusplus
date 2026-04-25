@@ -1208,7 +1208,6 @@ def compute_ceiling(
     stamina: int = 50,
     role: str = "SP",
     age: int = 25,
-    pot: int | None = None,
 ) -> int:
     """Compute Ceiling_Score from potential tool ratings.
 
@@ -1237,7 +1236,6 @@ def compute_ceiling(
         stamina: Stamina rating (pitchers only).
         role: Pitcher role ``"SP"`` or ``"RP"`` (pitchers only).
         age: Player's current age (for age-weighted blend).
-        pot: Game's POT rating on 20-80 scale (for soft cap). None to skip cap.
 
     Returns:
         Integer ceiling score in [20, 80], never below ``composite_score``.
@@ -1254,6 +1252,18 @@ def compute_ceiling(
             defense or {},
             def_weights or {},
         )
+
+    # Peak tool bonus: the weighted average underestimates ceiling for
+    # prospects with uneven profiles (e.g., 80/70/30/40). A prospect's
+    # ceiling is defined by their carrying tools, not their average.
+    # Add +1 point per potential tool point above 60, capped at +15.
+    # Purely tool-derived, no reference to game OVR/POT.
+    if is_pitcher:
+        ceiling_tools = [potential_tools.get(k) or 0 for k in ("stuff", "movement", "control")]
+    else:
+        ceiling_tools = [potential_tools.get(k) or 0 for k in ("contact", "gap", "power", "eye")]
+    peak_bonus = sum(max(0, t - 60) for t in ceiling_tools)
+    raw_ceiling += min(peak_bonus, 15)
 
     # Age-weighted blend: younger players weight potential tools more heavily.
     # At age 16-17: potential_weight = 0.90-0.95 (ceiling driven by potential)
@@ -1274,15 +1284,6 @@ def compute_ceiling(
 
     # Floor constraint: ceiling is never below composite
     raw_ceiling = max(raw_ceiling, composite_score)
-
-    # POT soft cap: ceiling cannot exceed POT + 8 (when POT is available).
-    # This prevents the formula from projecting unrealistic ceilings for
-    # players the game has assessed as low-upside (POT=21 → max ceiling=29).
-    if pot is not None and pot > 0:
-        pot_cap = pot + 8
-        raw_ceiling = min(raw_ceiling, pot_cap)
-        # But never below composite (composite is ground truth for current ability)
-        raw_ceiling = max(raw_ceiling, composite_score)
 
     # Clamp to [20, 80]
     return max(20, min(80, raw_ceiling))
@@ -2626,7 +2627,6 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
 
             # Ceiling: compute for both roles, take higher
             player_age = row_dict.get("age") or 25
-            player_pot = row_dict.get("pot")
             h_ceiling = compute_ceiling(
                 potential_hitter_tools, h_weights, two_way_result["hitter_composite"],
                 accuracy=row_dict.get("acc") or "A",
@@ -2634,7 +2634,6 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 defense=defense_tools,
                 def_weights=def_weights,
                 age=player_age,
-                pot=player_pot,
             )
             p_ceiling = compute_ceiling(
                 potential_pitcher_tools, p_weights, two_way_result["pitcher_composite"],
@@ -2645,7 +2644,6 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 stamina=stamina,
                 role=pitcher_role,
                 age=player_age,
-                pot=player_pot,
             )
 
             ceiling_score = max(h_ceiling, p_ceiling)
@@ -2723,7 +2721,6 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 stamina=stamina,
                 role=role,
                 age=player_age,
-                pot=row_dict.get("pot"),
             )
 
             # Component scores for pitchers:
@@ -2763,7 +2760,6 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 defense=defense_tools,
                 def_weights=def_weights,
                 age=player_age,
-                pot=row_dict.get("pot"),
             )
 
             # Component scores for hitters
@@ -2828,6 +2824,34 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                         peak_age=peak_age, player_age=player_age,
                         is_pitcher=is_pitcher,
                     )
+
+        # -- Prospect composite discount --
+        # OVR for prospects incorporates a "proven-ness" discount that
+        # the tool-weighted composite does not. Older minor leaguers
+        # with decent tools get lower OVR because the game knows that
+        # if those tools were going to translate, they would have by now.
+        # Apply an age-based discount to align prospect composites with
+        # the MLB baseline. Derived from empirical Comp-OVR offsets.
+        # Extra discount for older prospects with low upside (ceiling
+        # close to composite), who are near their peak already.
+        if not is_mlb:
+            player_age = row_dict.get("age") or 25
+            if player_age >= 22:
+                prospect_discount = 5
+                # Extra penalty for older prospects with low upside
+                upside_gap = ceiling_score - composite_score
+                if player_age >= 23 and upside_gap <= 5:
+                    prospect_discount += 3
+                elif player_age >= 23 and upside_gap <= 10:
+                    prospect_discount += 1
+            elif player_age >= 20:
+                prospect_discount = 3
+            elif player_age >= 18:
+                prospect_discount = 2
+            else:
+                prospect_discount = 0
+            composite_score = max(20, composite_score - prospect_discount)
+            tool_only_score = max(20, tool_only_score - prospect_discount)
 
         # Ensure ceiling >= composite after stat blending
         ceiling_score = max(ceiling_score, composite_score)
