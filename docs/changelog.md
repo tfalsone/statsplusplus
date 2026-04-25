@@ -68,6 +68,19 @@ Career outcome probabilities and surplus now adjust based on player profile shap
 
 New `_adjust_scenario_probs()` in `prospect_value.py`. Component scores threaded from `fv_calc.py` through `prospect_surplus_with_option()` and `career_outcome_probs()`.
 
+### Bug Fixes
+
+- **Ratings scale not updating on league switch**: `app.py` was setting `player_utils._ratings_scale` (no effect) instead of `ratings._ratings_scale`. Switching from VMLB (20-80) to EMLB (1-100) displayed inflated potential grades (e.g. 75 instead of 65 for raw 73).
+- **MLB context qualification thresholds**: Hardcoded full-season thresholds (200 PA, 80 IP SP, 30 IP RP) produced tiny comparison pools early in the season (14 SP by June 10). Now scales by season progress with minimum floors.
+
+### Hitter/Pitcher Age Decay Split
+
+Cross-sectional OVR/POT gap analysis across both leagues shows pitchers develop later:
+- Age 24: hitter runway 0.43, pitcher runway 0.48 (was 0.28 combined)
+- Age 23: hitter 0.55, pitcher 0.62 (was 0.40 combined)
+
+New `_AGE_RUNWAY_HITTER` and `_AGE_RUNWAY_PITCHER` tables in `fv_model.py`. Both curves are also less aggressive than the old combined table at ages 22-26. `dev_weight()` and `age_development_mult()` now accept `is_pitcher` parameter.
+
 Files changed: `scripts/fv_model.py`, `scripts/evaluation_engine.py`, `scripts/calibrate.py`, `scripts/constants.py`, `scripts/player_utils.py`, `scripts/farm_analysis.py`, `scripts/prospect_value.py`, `scripts/fv_calc.py`, `web/player_queries.py`, `web/templates/player.html`
 
 ---
