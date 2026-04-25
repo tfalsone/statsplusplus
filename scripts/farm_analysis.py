@@ -11,7 +11,7 @@ from datetime import date
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from player_utils import (norm, norm_floor, height_str, fmt_table, assign_bucket,
-                           calc_fv, dev_weight, effective_pot, versatility_bonus,
+                           calc_fv, dev_weight,
                            PITCH_FIELDS, PITCH_NAMES, LEVEL_NORM_AGE)
 from league_config import config as _cfg
 from league_context import get_league_dir

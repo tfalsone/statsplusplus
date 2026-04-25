@@ -7,12 +7,11 @@ All functions are pure (no DB access).
 Public API:
   calc_fv(p)            → (fv_base: int, fv_plus: bool)
   dev_weight(age, norm_age, level) → float
-  effective_pot(p)      → int
-  versatility_bonus(p)  → int
+  age_development_mult(age) → float
   defensive_score(p, bucket) → float
 """
 
-from constants import PITCH_FIELDS, RP_POT_DISCOUNT
+from constants import RP_POT_DISCOUNT
 from ratings import norm, norm_floor
 
 # ---------------------------------------------------------------------------
@@ -94,32 +93,6 @@ def dev_weight(age, norm_age, level=None):
     if age > 21:
         w *= age_development_mult(age)
     return w
-
-
-def effective_pot(p):
-    """Pitcher arsenal ceiling override — elite multi-pitch arsenal raises effective Pot."""
-    pot = p["Pot"]
-    if not p.get("_is_pitcher"):
-        return pot
-    elite = sum(1 for f in PITCH_FIELDS if p.get("Pot" + f, 0) >= 80)
-    if elite >= 3: return max(pot, 55)
-    if elite >= 2: return max(pot, 50)
-    return pot
-
-
-def versatility_bonus(p):
-    """+1 per additional viable position beyond primary, capped at +2. Requires Pot >= 45."""
-    if p.get("_is_pitcher") or p["Pot"] < 45:
-        return 0
-    use_pot = p["Age"] <= 23
-    def pgrade(f):
-        return p.get(("Pot" + f) if use_pot else f, 0)
-    primary = p["_bucket"]
-    thresholds = {"C":45,"SS":50,"2B":50,"CF":55,"LF":45,"RF":45,"3B":45,"1B":45}
-    bucket_map = {"C":"C","SS":"SS","2B":"2B","CF":"CF","LF":"COF","RF":"COF","3B":"3B","1B":"1B"}
-    extra = sum(1 for pos, thr in thresholds.items()
-                if bucket_map[pos] != primary and pgrade(pos) >= thr)
-    return min(extra, 2)
 
 
 def defensive_score(p, bucket):

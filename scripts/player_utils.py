@@ -152,7 +152,7 @@ def assign_bucket(p, use_pot=None):
 # FV calculation — re-exported from fv_model for backward compatibility
 # ---------------------------------------------------------------------------
 from fv_model import (  # noqa: F401
-    calc_fv, dev_weight, effective_pot, versatility_bonus,
+    calc_fv, dev_weight, age_development_mult,
     defensive_score, LEVEL_NORM_AGE, DEFENSIVE_WEIGHTS
 )
 
