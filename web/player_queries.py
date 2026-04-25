@@ -61,11 +61,47 @@ def _mlb_context(conn, bucket, composite, ceiling):
     if len(vals) < 5:
         return None
 
+    # Also collect ceiling scores for ceiling percentile comparison
+    if bucket == "SP":
+        ceil_rows = conn.execute("""
+            SELECT r.ceiling_score FROM latest_ratings r
+            JOIN players p ON r.player_id = p.player_id
+            WHERE p.level = 1 AND r.ceiling_score IS NOT NULL AND p.role = '11'
+        """).fetchall()
+        ceil_vals = sorted(r["ceiling_score"] for r in ceil_rows)
+    elif bucket == "RP":
+        ceil_rows = conn.execute("""
+            SELECT r.ceiling_score FROM latest_ratings r
+            JOIN players p ON r.player_id = p.player_id
+            WHERE p.level = 1 AND r.ceiling_score IS NOT NULL AND p.role IN ('12','13')
+        """).fetchall()
+        ceil_vals = sorted(r["ceiling_score"] for r in ceil_rows)
+    else:
+        # Re-query with ceiling_score for hitters at same bucket
+        ceil_rows = conn.execute("""
+            SELECT r.ceiling_score, p.pos, p.role
+            FROM latest_ratings r
+            JOIN players p ON r.player_id = p.player_id
+            WHERE p.level = 1 AND r.ceiling_score IS NOT NULL
+              AND p.role NOT IN ('11','12','13')
+        """).fetchall()
+        ceil_vals = []
+        for r in ceil_rows:
+            p = {"Pos": str(r["pos"] or ""), "_role": _rm.get(str(r["role"] or 0), "position_player")}
+            p["_is_pitcher"] = False
+            try:
+                b = _ab(p, use_pot=False)
+            except Exception:
+                continue
+            if b == bucket:
+                ceil_vals.append(r["ceiling_score"])
+        ceil_vals.sort()
+
     vals_sorted = sorted(vals)
     n = len(vals_sorted)
 
-    def pctile(score):
-        return round(sum(1 for v in vals_sorted if v <= score) / n * 100)
+    def pctile(score, distribution):
+        return round(sum(1 for v in distribution if v <= score) / len(distribution) * 100)
 
     def tier(pct):
         if pct >= 90: return "Elite"
@@ -74,8 +110,8 @@ def _mlb_context(conn, bucket, composite, ceiling):
         if pct >= 20: return "Below Avg"
         return "Fringe"
 
-    cp = pctile(composite) if composite else None
-    clp = pctile(ceiling) if ceiling else None
+    cp = pctile(composite, vals_sorted) if composite else None
+    clp = pctile(ceiling, ceil_vals) if ceiling and ceil_vals else None
 
     return {
         "comp_pctile": cp,
