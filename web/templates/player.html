@@ -491,7 +491,7 @@
   </div>
   <div class="summary-item">
     <span class="label">Position</span>
-    <span class="value">{{ p.pos }}{% if p.is_two_way %} <span class="tw-toggle"><button class="tw-btn active" onclick="twSwitch('pit')">Pitcher</button><button class="tw-btn" onclick="twSwitch('hit')">Hitter</button></span>{% endif %}</span>
+    <span class="value">{{ p.pos }}{% if p.valuation and p.valuation.bucket and p.valuation.bucket != p.pos and p.valuation.bucket not in p.pos %} <span style="color:var(--text-dim); font-size:11px">(eval: {{ p.valuation.bucket }})</span>{% endif %}{% if p.is_two_way %} <span class="tw-toggle"><button class="tw-btn active" onclick="twSwitch('pit')">Pitcher</button><button class="tw-btn" onclick="twSwitch('hit')">Hitter</button></span>{% endif %}</span>
   </div>
   <div class="summary-item">
     <span class="label">Age</span>
@@ -590,13 +590,18 @@
   <div style="margin-bottom:16px">
     <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:1px; margin-bottom:6px">Components</div>
     {% macro comp_bar(label, val, ceil_val) %}
+    {% set pot = ceil_val if ceil_val and ceil_val > val else val %}
+    {% set cur_pct = ((val - 20) / 60 * 100)|int if val > 20 else 2 %}
+    {% set pot_pct = ((pot - 20) / 60 * 100)|int if pot > 20 else 2 %}
     <div style="display:flex; align-items:center; margin-bottom:4px; font-size:12px">
-      <span style="width:80px; color:var(--text-dim)">{{ label }}</span>
+      <span style="width:80px; color:var(--text-dim); flex-shrink:0">{{ label }}</span>
       <div style="flex:1; height:8px; background:var(--bg); border-radius:4px; position:relative; overflow:hidden">
-        <div style="height:100%; width:{{ [val * 1.25, 100]|min }}%; background:{% if val >= 60 %}#4caf50{% elif val >= 45 %}#ff9800{% else %}#f44336{% endif %}; border-radius:4px"></div>
+        {% if pot > val %}<div style="position:absolute; height:100%; width:{{ pot_pct }}%; background:{% if pot >= 60 %}rgba(76,175,80,0.3){% elif pot >= 45 %}rgba(255,152,0,0.3){% else %}rgba(244,67,54,0.3){% endif %}; border-radius:4px"></div>{% endif %}
+        <div style="position:absolute; height:100%; width:{{ cur_pct }}%; background:{% if val >= 60 %}#4caf50{% elif val >= 45 %}#ff9800{% else %}#f44336{% endif %}; border-radius:4px"></div>
       </div>
-      <span style="width:28px; text-align:right; font-weight:600; margin-left:8px">{{ val }}</span>
-      {% if ceil_val and ceil_val != val %}<span style="width:28px; text-align:right; color:var(--text-dim); font-size:10px">→{{ ceil_val }}</span>{% endif %}
+      <span style="width:56px; text-align:right; flex-shrink:0; margin-left:8px">
+        <span style="font-weight:600">{{ val }}</span>{% if pot > val %}<span style="color:var(--text-dim); font-size:10px">/{{ pot }}</span>{% endif %}
+      </span>
     </div>
     {% endmacro %}
     {% if p.is_pitcher %}
@@ -604,8 +609,8 @@
       {% if p.durability_score %}{{ comp_bar("Durability", p.durability_score, none) }}{% endif %}
     {% else %}
       {{ comp_bar("Offense", p.offensive_grade, p.offensive_ceiling) }}
-      {% if p.baserunning_value %}{{ comp_bar("Baserunning", p.baserunning_value, none) }}{% endif %}
-      {% if p.defensive_value %}{{ comp_bar("Defense", p.defensive_value, none) }}{% endif %}
+      {% if p.baserunning_value is not none %}{{ comp_bar("Baserunning", p.baserunning_value, none) }}{% endif %}
+      {% if p.defensive_value is not none %}{{ comp_bar("Defense", p.defensive_value, none) }}{% endif %}
     {% endif %}
   </div>
   {% endif %}
