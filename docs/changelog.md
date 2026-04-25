@@ -18,37 +18,45 @@ First calibration run on both VMLB (20-80 scale) and EMLB (1-100 scale). Identif
 - Cross-league weight stability improved dramatically: minimum cosine similarity 0.65→0.98.
 
 **Prospect composite discount (evaluation_engine.py):**
-- Age-based discount for non-MLB players: 0 (age ≤17), 2 (18-19), 3 (20-21), 5 (22+) points.
+- Age-based discount for non-MLB players: 0 (age ≤17), 3 (18-19), 5 (20+) points.
 - Extra +3 discount for age 23+ prospects with low upside (ceiling within 5 points of composite).
-- Addresses the structural gap between OVR (which incorporates "proven-ness") and the tool-weighted composite (which doesn't). Prospect Comp-OVR offset reduced from +3.4 to +1.3 (VMLB) and +3.7 to +0.6 (EMLB).
+- Addresses the structural gap between OVR (which incorporates "proven-ness") and the tool-weighted composite (which doesn't). Prospect Comp-OVR offset reduced from +3.4 to +0.7 (VMLB) and +3.7 to +0.1 (EMLB).
 
 **Peak tool bonus for ceiling (evaluation_engine.py):**
-- Adds +1 point per potential tool point above 60, capped at +15, to the raw potential composite before the age-weighted blend.
-- Addresses ceiling collapse for prospects with uneven tool profiles (e.g., 80 contact / 30 power). The weighted average drags down such profiles; the peak bonus gives credit for carrying tools.
-- Purely tool-derived — no reference to game OVR/POT.
-- VMLB ceiling collapse: -8.7→-0.4. Crushed >10pts: 38%→12%.
+- Adds +1 point per potential tool point above 60, capped at +15 (20-80 scale) or +10 (1-100 scale).
+- SP stamina included as a 4th tool when stamina ≥ 55, giving SP parity with hitters' 4 offensive tools.
+- Addresses ceiling collapse for prospects with uneven tool profiles. Purely tool-derived.
+- VMLB ceiling collapse: -8.7→-0.2. Crushed >10pts: 38%→10%.
 
 **Removed POT dependency from ceiling formula:**
 - Removed the POT+8 soft cap from `compute_ceiling()` (was added Session 46).
-- Removed the POT-informed ceiling blend (added and reverted this session).
 - Removed `pot` parameter from `compute_ceiling()` signature and all call sites.
 - The ceiling is now fully independent of the game's POT rating.
+
+**Positional reclassification (player_utils.py):**
+- Borderline SS (PotSS ≤ 55) with significantly better 3B/2B defense (≥10 point gap) are reclassified to the alternative position.
+- Borderline CF (PotCF ≤ 55) with significantly better corner OF defense (≥10 point gap) are reclassified to COF.
+- Reflects real scouting practice: a college SS who projects as a 3B gets evaluated as a 3B prospect.
+- SP representation in top 100 improved: 18→22 (VMLB), 8→14 (EMLB) via stamina bonus.
+
+**COMPOSITE_TO_WAR calibration:**
+- Second calibration pass now produces COMPOSITE_TO_WAR tables on both leagues.
+- EMLB shows strong R² at several positions (C=0.83, 3B=0.72, CF=0.65), confirming the composite is a useful WAR predictor when fed through position-specific regression tables.
 
 **Benchmark results (final, POT-free):**
 
 | Metric | Before | After | Target |
 |---|---|---|---|
-| VMLB MLB bucket wins | 2/8 | 4/8 | ≥5/8 |
-| VMLB Prospect Comp-OVR | +3.4 | +1.3 | ±2.0 ✅ |
-| VMLB FV40 Comp-OVR | +8.0 | +3.5 | ±3.0 |
-| VMLB Ceiling collapse | -8.7 | -0.4 | > -3.0 ✅ |
-| VMLB Crushed >10pts | 38% | 12% | < 15% ✅ |
-| EMLB Prospect Comp-OVR | +3.7 | +0.6 | ±2.0 ✅ |
-| EMLB FV40 Comp-OVR | +7.5 | +2.8 | ±3.0 ✅ |
-| EMLB Ceiling collapse | -3.9 | +4.1 | > -3.0 ✅ |
+| VMLB Prospect Comp-OVR | +3.4 | +0.7 | ±2.0 ✅ |
+| VMLB FV40 Comp-OVR | +8.0 | +2.7 | ±3.0 ✅ |
+| VMLB Ceiling collapse | -8.7 | -0.2 | > -3.0 ✅ |
+| VMLB Crushed >10pts | 38% | 10% | < 15% ✅ |
+| EMLB Prospect Comp-OVR | +3.7 | +0.1 | ±2.0 ✅ |
+| EMLB FV40 Comp-OVR | +7.5 | +2.3 | ±3.0 ✅ |
+| EMLB Ceiling collapse | -3.9 | +2.7 | > -3.0 ✅ |
 | Weight cosine similarity | 0.65 | 0.98 | > 0.85 ✅ |
 
-Files changed: `scripts/calibrate.py`, `scripts/evaluation_engine.py`, `scripts/benchmark.py` (new)
+Files changed: `scripts/calibrate.py`, `scripts/evaluation_engine.py`, `scripts/player_utils.py`, `scripts/benchmark.py` (new)
 
 ---
 

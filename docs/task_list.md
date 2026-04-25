@@ -19,7 +19,7 @@ Open work items. Completed items are in `docs/changelog.md`.
 - [ ] **SP underrepresentation in prospect rankings** — Only 18/100 SP in VMLB top 100, 8/100 in EMLB. SP typically 25-30% of real prospect lists. Pitcher composite may still compress the top end. Investigate innings-volume adjustment and arsenal bonus effectiveness for prospect SP. **LOE: Medium.**
 - [ ] **FV40 prospect inflation residual** — FV 40+ prospects still +3.5 Comp-OVR on VMLB (target ±3.0). Driven by 2B/CF/COF buckets at +4.5 to +5.5. May need position-specific discount tuning. **LOE: Low.**
 - [ ] **EMLB ceiling slight inflation** — Mean Ceil-POT is +4.1 on EMLB after peak tool bonus. The +1/point above 60 bonus may be slightly too generous on 1-100 scale leagues. Consider scale-aware bonus or lower cap. **LOE: Low.**
-- [ ] **COMPOSITE_TO_WAR calibration** — Now that composite scores exist on both leagues, run a second calibration pass to produce COMPOSITE_TO_WAR tables. These feed into `peak_war_from_score()` for surplus calculations. **LOE: Low.**
+- [x] **COMPOSITE_TO_WAR calibration** — Now that composite scores exist on both leagues, run a second calibration pass to produce COMPOSITE_TO_WAR tables. These feed into `peak_war_from_score()` for surplus calculations. **Done Session 48.**
 
 ---
 

@@ -1260,10 +1260,19 @@ def compute_ceiling(
     # Purely tool-derived, no reference to game OVR/POT.
     if is_pitcher:
         ceiling_tools = [potential_tools.get(k) or 0 for k in ("stuff", "movement", "control")]
+        # SP stamina bonus: stamina is a 4th tool for SP that contributes
+        # to value (innings volume) but isn't in the core 3. Include it
+        # in the peak bonus to give SP parity with hitters' 4 tools.
+        if role == "SP" and stamina >= 55:
+            ceiling_tools.append(stamina)
     else:
         ceiling_tools = [potential_tools.get(k) or 0 for k in ("contact", "gap", "power", "eye")]
     peak_bonus = sum(max(0, t - 60) for t in ceiling_tools)
-    raw_ceiling += min(peak_bonus, 15)
+    # Scale-aware cap: on 1-100 scale, tools normalize higher so more
+    # tools cross 60 and the bonus accumulates faster. Use a lower cap.
+    from ratings import get_ratings_scale as _get_scale
+    _peak_cap = 10 if _get_scale() == "1-100" else 15
+    raw_ceiling += min(peak_bonus, _peak_cap)
 
     # Age-weighted blend: younger players weight potential tools more heavily.
     # At age 16-17: potential_weight = 0.90-0.95 (ceiling driven by potential)
@@ -2845,9 +2854,9 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 elif player_age >= 23 and upside_gap <= 10:
                     prospect_discount += 1
             elif player_age >= 20:
-                prospect_discount = 3
+                prospect_discount = 5
             elif player_age >= 18:
-                prospect_discount = 2
+                prospect_discount = 3
             else:
                 prospect_discount = 0
             composite_score = max(20, composite_score - prospect_discount)

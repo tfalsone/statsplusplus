@@ -121,9 +121,23 @@ def assign_bucket(p, use_pot=None):
         return "RP" if (viable < 3 or stm < 40) else "SP"
 
     if pgrade("C")  >= 45:                          return "C"
-    if pgrade("SS") >= 50:                          return "SS"
+    if pgrade("SS") >= 50:
+        # Check if player would be more valuable at a less premium position.
+        # A borderline SS (50-55) with much better 3B/2B defense will produce
+        # more WAR at the alternative position despite the positional downgrade.
+        ss_grade = pgrade("SS")
+        if ss_grade <= 55:
+            if pgrade("3B") >= ss_grade + 10:       return "3B"
+            if pgrade("2B") >= ss_grade + 10:       return "2B"
+        return "SS"
     if pgrade("2B") >= 50 or pgrade("SS") >= 50:   return "2B"
-    if pgrade("CF") >= 55:                          return "CF"
+    if pgrade("CF") >= 55:
+        # Same logic: borderline CF with much better corner OF defense
+        cf_grade = pgrade("CF")
+        if cf_grade <= 55:
+            best_cof = max(pgrade("LF"), pgrade("RF"))
+            if best_cof >= cf_grade + 10:           return "COF"
+        return "CF"
     if pgrade("LF") >= 45 or pgrade("RF") >= 45:   return "COF"
     if pgrade("3B") >= 45:                          return "3B"
     if pgrade("1B") >= 45:                          return "1B"
