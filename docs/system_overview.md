@@ -134,13 +134,14 @@ player_id` with `SUM` to aggregate stints before computing rankings.
 
 **FV calculation** — `calc_fv()` in `fv_model.py` (re-exported via `player_utils.py`). Simplified in Session 48 to trust the evaluation engine's composite and ceiling scores. Inputs: composite (as Ovr), ceiling (as Pot), age vs. level norm, bucket, work ethic, scouting accuracy. Key rules:
 - Core formula: `fv = composite + dev_weight × (ceiling - composite)`
-- RP ceiling scaled to 80% before FV calc (innings-volume discount). RP FV capped at 55.
+- `dev_weight()` blends ceiling vs composite based on age-vs-level norm (diff-based tiers) with empirical age decay via `age_development_mult()` for prospects past 21 (derived from cross-sectional OVR/POT gap closure rates).
+- RP ceiling scaled to 85% before FV calc (innings-volume discount). RP FV capped at 55.
 - `Acc=L` applies -2 FV penalty
 - Platoon split penalty: -2/-3 FV for severe L/R splits (weak-side Contact < 30 for hitters, Stuff < 30 for pitchers)
 - Work ethic: +1 for H/VH, -1 for L
-- Pitcher arsenal ceiling override: 3+ pitches Pot ≥80 → effective Pot ≥55
-- Knuckleball pitchers (`PotKnbl ≥ 45`) bucketed as SP regardless of supporting arsenal
-- Removed (now in composite/ceiling): defensive bonus, versatility bonus, positional access premium, critical tool floor penalty
+- Removed (now in composite/ceiling): defensive bonus, versatility bonus, positional access premium, critical tool floor penalty, effective_pot override
+
+**Pitcher composite extended ratings** — `compute_composite_pitcher()` in `evaluation_engine.py` uses HRA and PBABIP as optional weighted tools when available. Calibration produces weights automatically; leagues without extended ratings degrade gracefully to stuff/movement/control + arsenal.
 
 **League-calibrated model** — `calibrate.py` derives valuation tables from the league's own data:
 

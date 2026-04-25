@@ -296,8 +296,9 @@ get_ratings_scale()   # → '1-100' or '20-80'
 Prospect FV grade calculation. Pure functions — no DB access.
 
 ```python
-from fv_model import calc_fv, dev_weight, defensive_score
+from fv_model import calc_fv, dev_weight, age_development_mult, defensive_score
 fv_base, fv_plus = calc_fv(player_dict)   # player_dict needs Ovr, Pot, Age, _bucket, _norm_age
+age_development_mult(24)                   # → 0.28 (empirical development runway remaining)
 ```
 
 ### `war_model`

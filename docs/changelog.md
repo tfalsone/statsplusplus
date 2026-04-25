@@ -4,6 +4,50 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 49 (2026-04-25)
+
+### Player Page — Evaluation Panel
+
+Replaced the scattered evaluation display (Tool Profile panel, Development Tracking panel, header component scores) with a unified **Player Evaluation** panel.
+
+- **Header simplified:** Added Comp/Ceil scores, kept OVR/POT as game reference. Removed inline component scores, carrying tool bonus, divergence badges. Position label shows `(eval: XX)` when evaluation bucket differs from listed position.
+- **Evaluation panel:** Two-box layout (Now/Ceiling) with MLB percentile and tier label. Component bars with current/potential overlay. Carrying/red-flag tools. "vs. Game Rating" divergence section. Development tracking deltas.
+- **`_mlb_context()` query** in `player_queries.py` — computes positional percentile and tier for composite/ceiling vs MLB population at that position.
+
+### FV Pipeline Migration to Composite/Ceiling
+
+Migrated legacy FV components from OVR/POT assumptions to composite/ceiling:
+
+- **`dev_weight()` curve:** diff≥2 now gets 0.60 (was 0.50). Fixes undervaluation of young-for-level high-ceiling prospects (Joe Read: 20yo A-ball SS, FV 50+ → 55+).
+- **`age_development_mult()`:** New empirical age decay function derived from cross-sectional OVR/POT gap analysis (N=50+ per age bucket). At age 22, 69% of development runway remains; at 24, 28%; at 26, 12%. Replaces arbitrary hard cutoffs.
+- **Removed redundant low-upside discount:** The extra +1/+3 composite penalty for age 23+ prospects with small ceiling gaps is now handled by `age_development_mult()`.
+- **`effective_pot()` removed:** Dead code — column name mismatch meant it never fired.
+- **`versatility_bonus()` removed:** No longer called by `calc_fv`.
+- **`RP_POT_DISCOUNT`:** 0.80 → 0.85. Old value double-counted RP devaluation already in pitcher composite weights.
+
+### Pitcher Composite — Extended Ratings
+
+- **HRA and PBABIP** added as optional weighted tools in pitcher composite. Calibration produces weights when data exists (VMLB: hra=0.024, pbabip=0.020). Leagues without extended ratings (EMLB) degrade gracefully.
+- HRA correlates with SP WAR at r=0.449 (partial r=0.265 controlling for composite), adding 0.040 to R².
+- **COMPOSITE_TO_WAR tables** regenerated via calibration on both leagues. Surplus calculations now properly reflect positional value differences.
+
+### Benchmark (Session 49 Final vs Session 48 Baseline)
+
+| Metric | Baseline | Final | Target |
+|--------|----------|-------|--------|
+| VMLB All Prospect Comp-OVR | +0.7 | +1.2 | ±2.0 ✅ |
+| VMLB FV40+ Comp-OVR | +2.6 | +3.5 | ±3.0 ⚠️ |
+| VMLB Ceiling collapse | -0.2 | -0.2 | > -3.0 ✅ |
+| VMLB Crushed >10pts | 10% | 10% | < 15% ✅ |
+| EMLB All Prospect Comp-OVR | +0.1 | +0.7 | ±2.0 ✅ |
+| EMLB FV40+ Comp-OVR | +2.3 | +3.2 | ±3.0 ⚠️ |
+| Weight cosine similarity | 0.98+ | 0.98+ | > 0.85 ✅ |
+
+FV40+ slight overshoot is a deliberate tradeoff from removing the ad-hoc low-upside discount in favor of the empirical age decay model.
+
+Files changed: `scripts/fv_model.py`, `scripts/evaluation_engine.py`, `scripts/calibrate.py`, `scripts/constants.py`, `scripts/player_utils.py`, `scripts/farm_analysis.py`, `web/player_queries.py`, `web/templates/player.html`
+
+---
 ## Session 48 (2026-04-25)
 
 ### Evaluation Engine — Cross-League Calibration & Model Independence
