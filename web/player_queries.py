@@ -75,7 +75,10 @@ def _mlb_context(conn, bucket, composite, ceiling):
     n = len(vals_sorted)
 
     def pctile(score, distribution):
-        return round(sum(1 for v in distribution if v <= score) / len(distribution) * 100)
+        below = sum(1 for v in distribution if v < score)
+        equal = sum(1 for v in distribution if v == score)
+        # Average rank method: percentile = (below + equal/2) / N
+        return round((below + equal / 2) / len(distribution) * 100)
 
     def tier(pct):
         if pct >= 90: return "Elite"
