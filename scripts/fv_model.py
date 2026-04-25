@@ -51,31 +51,43 @@ LEVEL_NORM_AGE = {
 # Derived from cross-sectional OVR/POT gap analysis: at each age, what
 # fraction of the ceiling-current gap remains unrealized? Normalized to
 # age 21 = 1.0 (the inflection where level-based context gives way to
-# age-based decay). Source: VMLB 2033, N=50+ per age bucket.
+# age-based decay). Source: VMLB + EMLB 2033 average, N=50+ per bucket.
+# Separate tables for hitters and pitchers — pitchers develop later
+# (stuff/movement can improve into mid-20s, control peaks even later).
+_AGE_RUNWAY_HITTER = {
+    17: 1.60, 18: 1.43, 19: 1.26, 20: 1.16, 21: 1.00,
+    22: 0.73, 23: 0.55, 24: 0.43, 25: 0.33, 26: 0.19,
+}
+_AGE_RUNWAY_PITCHER = {
+    17: 1.56, 18: 1.42, 19: 1.30, 20: 1.16, 21: 1.00,
+    22: 0.79, 23: 0.62, 24: 0.48, 25: 0.35, 26: 0.20,
+}
+# Combined table kept for backward compatibility / external callers
 _AGE_RUNWAY = {
-    17: 1.42, 18: 1.42, 19: 1.29, 20: 1.18, 21: 1.00,
-    22: 0.69, 23: 0.40, 24: 0.28, 25: 0.22, 26: 0.12,
+    17: 1.58, 18: 1.42, 19: 1.28, 20: 1.16, 21: 1.00,
+    22: 0.76, 23: 0.58, 24: 0.46, 25: 0.34, 26: 0.20,
 }
 
 
-def age_development_mult(age):
+def age_development_mult(age, is_pitcher=False):
     """Multiplier on dev_weight reflecting remaining development runway.
 
     Returns 1.0 for age ≤ 21 (full runway), decays based on empirical
     gap-closure rates for older prospects. Linearly interpolates between
-    defined age points.
+    defined age points. Pitchers retain more runway at each age.
     """
+    table = _AGE_RUNWAY_PITCHER if is_pitcher else _AGE_RUNWAY_HITTER
     if age <= 21:
-        return _AGE_RUNWAY.get(age, 1.42)
+        return table.get(age, 1.58)
     if age >= 26:
-        return _AGE_RUNWAY[26]
+        return table[26]
     lo = int(age)
     hi = lo + 1
     frac = age - lo
-    return _AGE_RUNWAY.get(lo, 0.12) * (1 - frac) + _AGE_RUNWAY.get(hi, 0.12) * frac
+    return table.get(lo, 0.20) * (1 - frac) + table.get(hi, 0.20) * frac
 
 
-def dev_weight(age, norm_age, level=None):
+def dev_weight(age, norm_age, level=None, is_pitcher=False):
     """Development weight: how much to blend Pot vs Ovr based on age vs level norm."""
     diff = norm_age - age
     if diff >= 3:    w = 0.55 if age <= 17 else 0.65
@@ -91,7 +103,7 @@ def dev_weight(age, norm_age, level=None):
             w = min(w, 0.55)
     # Apply empirical age decay for prospects past peak development age
     if age > 21:
-        w *= age_development_mult(age)
+        w *= age_development_mult(age, is_pitcher=is_pitcher)
     return w
 
 
@@ -179,7 +191,8 @@ def calc_fv(p):
     if bucket == "RP":
         pot = round(pot * RP_POT_DISCOUNT)
 
-    dw = dev_weight(age, norm_age, level=p.get("_level"))
+    dw = dev_weight(age, norm_age, level=p.get("_level"),
+                    is_pitcher=bool(p.get("_is_pitcher")))
     fv = ovr + (pot - ovr) * dw
 
     # Character modifiers
