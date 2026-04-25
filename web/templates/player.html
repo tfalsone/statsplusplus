@@ -564,11 +564,15 @@
       <div style="color:var(--text-dim); font-size:11px; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px">Now</div>
       <div style="font-size:32px; font-weight:700"><span class="ovr-color" data-g="{{ p.composite_score }}">{{ p.composite_score }}</span></div>
       {% if p.mlb_context %}
+      {% set ctx = p.mlb_context %}
+      {% set cdiff = p.composite_score - ctx.median %}
       <div style="font-size:12px; margin-top:4px">
-        {% set cp = p.mlb_context.comp_pctile %}<span style="{% if cp >= 75 %}color:#4caf50{% elif cp <= 25 %}color:#f44336{% else %}color:var(--text-dim){% endif %}">{{ cp }}{{ 'st' if cp % 10 == 1 and cp != 11 else 'nd' if cp % 10 == 2 and cp != 12 else 'rd' if cp % 10 == 3 and cp != 13 else 'th' }} pctile</span>
-        <span style="color:var(--text-dim)">MLB {{ p.valuation.bucket if p.valuation else '' }}</span>
+        <span style="color:var(--text-dim)">#{{ ctx.comp_rank }}/{{ ctx.n }} MLB {{ p.valuation.bucket if p.valuation else '' }}</span>
       </div>
-      <div style="font-size:11px; color:var(--text-dim)">{{ p.mlb_context.comp_tier }}</div>
+      <div style="font-size:11px; margin-top:2px">
+        <span style="{% if cdiff > 3 %}color:#4caf50{% elif cdiff < -3 %}color:#f44336{% else %}color:var(--text-dim){% endif %}">{{ "%+d"|format(cdiff) }} vs median ({{ ctx.median }})</span>
+        · <span style="color:var(--text-dim)">{{ ctx.comp_tier }}</span>
+      </div>
       {% endif %}
     </div>
     {# CEILING #}
@@ -576,11 +580,14 @@
       <div style="color:var(--text-dim); font-size:11px; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px">Ceiling</div>
       <div style="font-size:32px; font-weight:700"><span class="ovr-color" data-g="{{ p.ceiling_score }}">{{ p.ceiling_score }}</span></div>
       {% if p.mlb_context %}
+      {% set cldiff = p.ceiling_score - ctx.median %}
       <div style="font-size:12px; margin-top:4px">
-        {% set clp = p.mlb_context.ceil_pctile %}<span style="{% if clp >= 75 %}color:#4caf50{% elif clp <= 25 %}color:#f44336{% else %}color:var(--text-dim){% endif %}">{{ clp }}{{ 'st' if clp % 10 == 1 and clp != 11 else 'nd' if clp % 10 == 2 and clp != 12 else 'rd' if clp % 10 == 3 and clp != 13 else 'th' }} pctile</span>
-        <span style="color:var(--text-dim)">MLB {{ p.valuation.bucket if p.valuation else '' }}</span>
+        <span style="color:var(--text-dim)">#{{ ctx.ceil_rank }}/{{ ctx.n }} MLB {{ p.valuation.bucket if p.valuation else '' }}</span>
       </div>
-      <div style="font-size:11px; color:var(--text-dim)">{{ p.mlb_context.ceil_tier }}</div>
+      <div style="font-size:11px; margin-top:2px">
+        <span style="{% if cldiff > 3 %}color:#4caf50{% elif cldiff < -3 %}color:#f44336{% else %}color:var(--text-dim){% endif %}">{{ "%+d"|format(cldiff) }} vs median ({{ ctx.median }})</span>
+        · <span style="color:var(--text-dim)">{{ ctx.ceil_tier }}</span>
+      </div>
       {% endif %}
     </div>
   </div>

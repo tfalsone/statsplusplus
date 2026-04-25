@@ -73,33 +73,30 @@ def _mlb_context(conn, bucket, composite, ceiling):
 
     vals_sorted = sorted(vals)
     n = len(vals_sorted)
+    median = vals_sorted[n // 2]
 
-    def pctile(score, distribution):
-        below = sum(1 for v in distribution if v < score)
-        equal = sum(1 for v in distribution if v == score)
-        # Average rank method: percentile = (below + equal/2) / N
-        return round((below + equal / 2) / len(distribution) * 100)
+    # Rank: 1 = best. Count how many are strictly above this score + 1.
+    def rank(score):
+        return min(n, sum(1 for v in vals_sorted if v > score) + 1)
 
-    def tier(pct):
-        if pct >= 90: return "Elite"
-        if pct >= 75: return "Plus"
-        if pct >= 40: return "Average"
-        if pct >= 20: return "Below Avg"
+    def tier(score, med):
+        diff = score - med
+        if diff >= 8: return "Elite"
+        if diff >= 4: return "Plus"
+        if diff >= -3: return "Average"
+        if diff >= -7: return "Below Avg"
         return "Fringe"
 
-    # Compare both composite and ceiling against the same distribution
-    # (qualified regulars' composites). This answers a consistent question:
-    # "where does this score rank among current MLB production at this position?"
-    cp = pctile(composite, vals_sorted) if composite else None
-    clp = pctile(ceiling, vals_sorted) if ceiling else None
+    comp_rank = rank(composite) if composite else None
+    ceil_rank = rank(ceiling) if ceiling else None
 
     return {
-        "comp_pctile": cp,
-        "comp_tier": tier(cp) if cp is not None else None,
-        "ceil_pctile": clp,
-        "ceil_tier": tier(clp) if clp is not None else None,
+        "comp_rank": comp_rank,
+        "ceil_rank": ceil_rank,
+        "comp_tier": tier(composite, median) if composite else None,
+        "ceil_tier": tier(ceiling, median) if ceiling else None,
         "n": n,
-        "median": vals_sorted[n // 2],
+        "median": median,
     }
 
 
