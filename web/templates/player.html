@@ -582,12 +582,9 @@
       {% if p.mlb_context %}
       {% set cldiff = p.ceiling_score - ctx.median %}
       <div style="font-size:12px; margin-top:4px">
-        <span style="color:var(--text-dim)">#{{ ctx.ceil_rank }}/{{ ctx.n }} MLB {{ p.valuation.bucket if p.valuation else '' }}</span>
+        <span style="{% if cldiff > 3 %}color:#4caf50{% elif cldiff < -3 %}color:#f44336{% else %}color:var(--text-dim){% endif %}">{{ "%+d"|format(cldiff) }} vs MLB {{ p.valuation.bucket if p.valuation else '' }} median ({{ ctx.median }})</span>
       </div>
-      <div style="font-size:11px; margin-top:2px">
-        <span style="{% if cldiff > 3 %}color:#4caf50{% elif cldiff < -3 %}color:#f44336{% else %}color:var(--text-dim){% endif %}">{{ "%+d"|format(cldiff) }} vs median ({{ ctx.median }})</span>
-        · <span style="color:var(--text-dim)">{{ ctx.ceil_tier }}</span>
-      </div>
+      <div style="font-size:11px; color:var(--text-dim)">{{ ctx.ceil_tier }}</div>
       {% endif %}
     </div>
   </div>
