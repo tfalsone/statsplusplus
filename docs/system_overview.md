@@ -132,16 +132,15 @@ recomputed from summed counting stats — `_bat_row`/`_pit_row` store raw counts
 `_hra`, `_bf`, etc.) alongside computed rates for this purpose. Percentile queries use `GROUP BY
 player_id` with `SUM` to aggregate stints before computing rankings.
 
-**FV calculation** — `calc_fv()` in `player_utils.py`. Inputs: Ovr, Pot, age vs. level norm,
-bucket, work ethic, scouting accuracy. Key rules:
-- RP FV hard cap at 50 (≤2.0 WAR/season ceiling); RP Pot scaled to 80% before FV calc (positional discount — only elite RPs reach FV 50). Surplus uses raw FV to avoid double-counting with RP WAR table.
-- `Acc=L` applies -2 FV penalty + bust-only risk shift
-- Critical tool penalties: Pot Control ≤35 or Pot Movement ≤35 (pitchers), Pot Contact ≤35 (hitters)
-- Pitcher arsenal ceiling override: 3+ pitches Pot ≥80 → effective Pot ≥55
-- Positional versatility bonus: +1/+2 FV for multi-position viability
-- Unified defensive bonus: composite-driven base + weighted score modifier for all defensive positions (C/SS/CF/2B/3B/COF). Comp ≥ 70 + wt ≥ 65 → +3, comp ≥ 70 + wt 55-64 → +2, comp ≥ 70 + wt < 55 → +1, comp 60-69 + wt ≥ 65 → +2, comp 60-69 + wt 55-64 → +1. Position-weighted scores use position-specific tool importance.
+**FV calculation** — `calc_fv()` in `fv_model.py` (re-exported via `player_utils.py`). Simplified in Session 48 to trust the evaluation engine's composite and ceiling scores. Inputs: composite (as Ovr), ceiling (as Pot), age vs. level norm, bucket, work ethic, scouting accuracy. Key rules:
+- Core formula: `fv = composite + dev_weight × (ceiling - composite)`
+- RP ceiling scaled to 80% before FV calc (innings-volume discount). RP FV capped at 55.
+- `Acc=L` applies -2 FV penalty
 - Platoon split penalty: -2/-3 FV for severe L/R splits (weak-side Contact < 30 for hitters, Stuff < 30 for pitchers)
+- Work ethic: +1 for H/VH, -1 for L
+- Pitcher arsenal ceiling override: 3+ pitches Pot ≥80 → effective Pot ≥55
 - Knuckleball pitchers (`PotKnbl ≥ 45`) bucketed as SP regardless of supporting arsenal
+- Removed (now in composite/ceiling): defensive bonus, versatility bonus, positional access premium, critical tool floor penalty
 
 **League-calibrated model** — `calibrate.py` derives valuation tables from the league's own data:
 

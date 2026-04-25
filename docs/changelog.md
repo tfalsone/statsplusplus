@@ -56,7 +56,29 @@ First calibration run on both VMLB (20-80 scale) and EMLB (1-100 scale). Identif
 | EMLB Ceiling collapse | -3.9 | +2.7 | > -3.0 ✅ |
 | Weight cosine similarity | 0.65 | 0.98 | > 0.85 ✅ |
 
-Files changed: `scripts/calibrate.py`, `scripts/evaluation_engine.py`, `scripts/player_utils.py`, `scripts/benchmark.py` (new)
+Files changed: `scripts/calibrate.py`, `scripts/evaluation_engine.py`, `scripts/player_utils.py`, `scripts/fv_model.py`, `scripts/benchmark.py` (new)
+
+---
+
+### FV Formula Simplification
+
+Revamped `calc_fv()` to trust the evaluation engine's composite and ceiling scores, removing adjustments that were double-counting what the composite already captures.
+
+**Removed from FV formula:**
+- Defensive bonus (+1 to +3 for good defense) — already in composite via recombination weights
+- Versatility bonus (+1 to +2 for multi-position) — was inflating borderline prospects by a full FV tier through rounding (e.g., Tim Klann: 55→50 after fix)
+- Positional access premium (SS/C/CF bonus) — already in composite via position-specific tool weights
+- Critical tool floor penalty — already in composite via piecewise tool transform
+- RP hard cap at FV 50 — replaced with softer cap at FV 55 (allows elite RP to reach 55, was too restrictive at 50)
+
+**Retained in FV formula:**
+- `dev_weight` blend of composite and ceiling (core FV logic)
+- RP ceiling discount (0.8×) — RP innings volume justifies lower ceiling
+- Work ethic modifier (+1/-1)
+- Accuracy penalty (-2 for Acc=L)
+- Platoon split penalty (-2/-3) — not captured by composite
+
+**Result:** FV formula went from ~50 lines with 6 adjustment mechanisms to ~25 lines with 3. Top 25 prospect list nearly identical. Tim Klann (49th percentile 2B) correctly grades as FV 50 instead of inflated FV 55.
 
 ---
 

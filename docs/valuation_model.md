@@ -36,18 +36,18 @@ gets heavy weight on Pot (lots of projection). A 25-year-old in AAA gets almost 
 
 **Modifiers** adjust FV up or down:
 
-- Defensive bonus (+1 to +3): premium glove at a key position
-- Versatility bonus (+1 to +2): can play multiple positions
 - Work ethic (+1 for high, -1 for low)
-- Critical tool penalty (-3 to -5): fatally weak contact (hitters) or control/movement (pitchers)
 - Platoon split penalty (-2 to -3): severe weakness against one handedness
 - Scouting accuracy penalty (-2): low-accuracy scouting reports are less trustworthy
 
+Note: defensive bonus, versatility bonus, and critical tool floor penalty were removed
+in Session 48. These adjustments are now captured upstream in the composite and ceiling
+scores produced by the evaluation engine.
+
 **RP positional discount**: Relief pitchers produce less WAR per talent grade than
-other positions. Before calculating FV, an RP's Pot is scaled to 80% of its raw value.
-This means only elite RPs (Pot 70+) earn FV 50, and a typical Pot 55 RP grades out
-around FV 40 rather than FV 45. RPs are also hard-capped at FV 50. This discount
-is for display/ranking only — surplus uses the raw Pot through a separate RP WAR table
+other positions. Before calculating FV, an RP's ceiling is scaled to 80% of its raw value.
+RPs are capped at FV 55. This discount
+is for display/ranking only — surplus uses the raw FV through a separate RP WAR table
 to avoid double-counting.
 
 **FV grades use 5-point increments** (40, 45, 50, etc.) with a "+" modifier for

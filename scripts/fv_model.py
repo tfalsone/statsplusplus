@@ -156,6 +156,15 @@ def calc_fv(p):
     Compute FV for a prospect. Player dict must have:
       Ovr, Pot, Age, _is_pitcher, _bucket, _norm_age
     Returns (fv_base: int, fv_plus: bool).
+
+    Simplified formula (Session 48): the composite already incorporates
+    positional tool weights, defensive value, and carrying tool bonuses.
+    The ceiling already incorporates peak tool bonus and age-weighted blend.
+    FV is now just: composite + dev_weight × (ceiling - composite), plus
+    character modifiers and platoon penalty.
+
+    Removed (now in composite/ceiling): defensive bonus, versatility bonus,
+    positional access premium, critical tool floor penalty.
     """
     ovr    = p["Ovr"]
     pot    = effective_pot(p)
@@ -168,54 +177,15 @@ def calc_fv(p):
     dw = dev_weight(age, norm_age, level=p.get("_level"))
     fv = ovr + (pot - ovr) * dw
 
-    if pot >= 45:
-        comp = _pos_composite(p, bucket, age) or 0
-        off_grade = p.get("_offensive_grade")
-        # Premium positions with offensive grade available: use positional access
-        if bucket in POSITIONAL_ACCESS and off_grade is not None:
-            if p.get("_defensive_value") is not None:
-                dv = p["_defensive_value"]
-            else:
-                dv = defensive_score(p, bucket)
-            premium = positional_access_premium(bucket, off_grade, dv)
-            if premium > 0:
-                fv = min(fv + premium, pot)
-        elif comp >= 60:
-            # Non-premium positions or no offensive grade: existing defensive bonus
-            if p.get("_defensive_value") is not None:
-                wt = p["_defensive_value"]
-            else:
-                wt = defensive_score(p, bucket)
-            if comp >= 70:
-                db = 3 if wt >= 65 else 2 if wt >= 55 else 1
-            else:
-                db = 2 if wt >= 65 else 1 if wt >= 55 else 0
-            fv = min(fv + db, pot)
-        vb = versatility_bonus(p)
-        if vb:
-            fv = min(fv + vb, pot + 5)
-        we = p.get("WrkEthic", "N")
-        if we in ("H", "VH"): fv += 1
-        elif we == "L":        fv -= 1
-
-    if bucket == "RP":
-        fv = min(fv, 50)
+    # Character modifiers
+    we = p.get("WrkEthic", "N")
+    if we in ("H", "VH"): fv += 1
+    elif we == "L":        fv -= 1
 
     if p.get("Acc") == "L":
         fv -= 2
 
-    # Critical tool floor penalty
-    if p.get("_is_pitcher"):
-        for field in ("PotCtrl", "PotMov"):
-            val = norm_floor(p.get(field, 100))
-            if val <= 30:   fv -= 5
-            elif val <= 35: fv -= 3
-    else:
-        crit = norm_floor(p.get("PotCntct", 100))
-        if crit <= 30:   fv -= 5
-        elif crit <= 35: fv -= 3
-
-    # Platoon split penalty
+    # Platoon split penalty (not captured by composite)
     if p.get("_is_pitcher"):
         sl, sr = norm_floor(p.get("Stf_L", 0)), norm_floor(p.get("Stf_R", 0))
         if sl and sr:
@@ -228,6 +198,11 @@ def calc_fv(p):
             gap, weak = abs(cl - cr), min(cl, cr)
             if weak <= 25 and gap >= 15: fv -= 3
             elif weak <= 25 and gap >= 10: fv -= 2
+
+    # RP ceiling: cap FV at 55. RP value is heavily discounted due to
+    # fewer innings; even elite closers rarely justify FV above 55.
+    if bucket == "RP":
+        fv = min(fv, 57)  # 57 rounds to 55+
 
     base = round(fv / 5) * 5
     remainder = fv - base
