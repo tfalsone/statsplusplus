@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "name": "Sync Docs on Source Change",
+  "description": "When Python source files, HTML templates, JS, CSS, or config files are edited, asks the agent to review the change and update relevant documentation in the docs/ folder, README.md, STRUCTURE.md, or other project docs to keep them in sync.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "**/*.py",
+      "**/*.html",
+      "**/*.js",
+      "**/*.css",
+      "**/*.json",
+      "requirements.txt"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A source file was just edited. Review the change and determine if any documentation needs updating. Check README.md, STRUCTURE.md, RULES.md, PURPOSE.md, and files in the docs/ folder. If the change affects interfaces, CLI tools, query functions, routes, DB schema, directory structure, or project conventions, update the relevant docs to reflect the new state. If the change is cosmetic or doesn't affect documented behavior, do nothing."
+  }
+}

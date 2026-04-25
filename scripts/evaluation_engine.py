@@ -1,0 +1,2954 @@
+"""
+evaluation_engine.py — Custom player evaluation engine.
+
+Computes Composite_Score, Ceiling_Score, and Tool_Only_Score for every player
+from individual tool ratings, replacing the system's dependency on OOTP's
+OVR/POT ratings.
+
+All computation functions are **pure** — no DB access, no global state, no side
+effects. Database access is confined to the batch entry point (``run()``).
+
+Public API (pure computation):
+    compute_composite_hitter(tools, weights, defense, def_weights) -> int
+    compute_composite_pitcher(tools, weights, arsenal, stamina, role) -> int
+    compute_tool_only_score(player_type, tools, weights, ...) -> int
+    compute_composite_mlb(tool_score, stat_seasons, peak_age, player_age) -> int
+    compute_ceiling(potential_tools, weights, composite_score, accuracy, work_ethic, ...) -> int
+
+Configuration:
+    load_tool_weights(league_dir) -> dict
+    validate_tool_weights(weights) -> bool
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+import statistics
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+log = logging.getLogger("statspp.evaluation_engine")
+
+
+# ---------------------------------------------------------------------------
+# Two-way player detection thresholds (tool-based path)
+# ---------------------------------------------------------------------------
+# These thresholds gate the tool-based two-way detection for prospects without
+# stat history. Deliberately high — on 20-80 scale leagues, the median pitcher
+# has contact=20 and power=20. Lower thresholds (e.g. 35/30) flagged ~64% of
+# players as two-way on VMLB. See is_two_way_player() docstring for history.
+TWO_WAY_CONTACT_THRESHOLD = 45
+TWO_WAY_POWER_THRESHOLD = 40
+
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+
+@dataclass
+class EvaluationResult:
+    """Result of evaluating a single player."""
+    player_id: int
+    composite_score: int              # 20-80, current ability (primary role)
+    ceiling_score: int                # 20-80, projected peak (primary role)
+    tool_only_score: int              # 20-80, pre-stat-blend
+
+    # Component scores (new)
+    offensive_grade: int | None = None       # hitting for hitters, pitching for pitchers
+    baserunning_value: int | None = None     # hitters only
+    defensive_value: int | None = None       # hitters only
+    durability_score: int | None = None      # SP only
+
+    # Component ceilings (new)
+    offensive_ceiling: int | None = None
+    baserunning_ceiling: int | None = None
+    defensive_ceiling: int | None = None
+
+    secondary_composite: int | None = None   # two-way players only
+    secondary_ceiling: int | None = None     # two-way players only
+    is_two_way: bool = False
+    combined_value: int | None = None
+    archetype: str = ""
+    carrying_tools: list[str] = field(default_factory=list)
+    red_flag_tools: list[str] = field(default_factory=list)
+    divergence: dict[str, Any] | None = None
+    confidence: str = "full"          # "full" or "partial"
+
+    # Carrying tool bonus (positional context enhancement)
+    carrying_tool_bonus: float = 0.0
+    carrying_tool_breakdown: list[dict] = field(default_factory=list)
+    ceiling_carrying_tool_bonus: float = 0.0
+    ceiling_carrying_tool_breakdown: list[dict] = field(default_factory=list)
+
+    # Positional context (positional context enhancement)
+    positional_percentile: float | None = None
+    positional_median: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# Default tool weights — fallback when no calibrated config exists
+# ---------------------------------------------------------------------------
+
+DEFAULT_TOOL_WEIGHTS: dict[str, Any] = {
+    "version": 1,
+    "source": "default",
+    "hitter": {
+        # avoid_k excluded: Contact is a composite of BABIP + K-avoidance.
+        # Speed excluded from hitting regression: contributes via baserunning only.
+        # Defense shares derived from WAR regression (see recombination section).
+        "C":   {"contact": 0.30, "gap": 0.16, "power": 0.24, "eye": 0.16, "speed": 0.02, "steal": 0.01, "stl_rt": 0.01, "defense": 0.15},
+        "SS":  {"contact": 0.30, "gap": 0.18, "power": 0.22, "eye": 0.16, "speed": 0.03, "steal": 0.02, "stl_rt": 0.01, "defense": 0.05},
+        "2B":  {"contact": 0.30, "gap": 0.18, "power": 0.22, "eye": 0.16, "speed": 0.03, "steal": 0.02, "stl_rt": 0.01, "defense": 0.05},
+        "3B":  {"contact": 0.28, "gap": 0.16, "power": 0.26, "eye": 0.16, "speed": 0.04, "steal": 0.02, "stl_rt": 0.01, "defense": 0.00},
+        "CF":  {"contact": 0.26, "gap": 0.16, "power": 0.20, "eye": 0.16, "speed": 0.04, "steal": 0.03, "stl_rt": 0.02, "defense": 0.10},
+        "COF": {"contact": 0.29, "gap": 0.18, "power": 0.28, "eye": 0.17, "speed": 0.02, "steal": 0.01, "stl_rt": 0.01, "defense": 0.00},
+        "1B":  {"contact": 0.30, "gap": 0.18, "power": 0.32, "eye": 0.19, "speed": 0.02, "steal": 0.00, "stl_rt": 0.00, "defense": 0.00},
+    },
+    "pitcher": {
+        "SP": {"stuff": 0.35, "movement": 0.25, "control": 0.30, "arsenal": 0.10},
+        "RP": {"stuff": 0.40, "movement": 0.25, "control": 0.25, "arsenal": 0.10},
+    },
+    "recombination": {
+        # Derived empirically from WAR regression across EMLB + VMLB (AB >= 200).
+        # Grid search for offense/defense/baserunning split that maximizes
+        # Pearson r with WAR per position. Defense contributes far less to WAR
+        # than the original design spec assumed — WAR already includes positional
+        # adjustment, so the composite doesn't need to separately reward defense.
+        "C":   {"offense": 0.80, "defense": 0.15, "baserunning": 0.05},
+        "SS":  {"offense": 0.90, "defense": 0.05, "baserunning": 0.05},
+        "2B":  {"offense": 0.90, "defense": 0.05, "baserunning": 0.05},
+        "3B":  {"offense": 0.90, "defense": 0.00, "baserunning": 0.10},
+        "CF":  {"offense": 0.80, "defense": 0.10, "baserunning": 0.10},
+        "COF": {"offense": 0.95, "defense": 0.00, "baserunning": 0.05},
+        "1B":  {"offense": 0.95, "defense": 0.00, "baserunning": 0.05},
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Default carrying tool config — fallback when no calibrated config exists
+# ---------------------------------------------------------------------------
+
+DEFAULT_CARRYING_TOOL_CONFIG: dict[str, Any] = {
+    "version": 1,
+    "source": "calibrated",
+    "positions": {
+        "SS": {
+            "carrying_tools": {
+                "contact": {"war_premium_factor": 0.30},
+                "power":   {"war_premium_factor": 0.35},
+                "eye":     {"war_premium_factor": 0.22},
+            }
+        },
+        "C": {
+            "carrying_tools": {
+                "contact": {"war_premium_factor": 0.37},
+                "power":   {"war_premium_factor": 0.40},
+            }
+        },
+        "CF": {
+            "carrying_tools": {
+                "contact": {"war_premium_factor": 0.23},
+                "power":   {"war_premium_factor": 0.30},
+            }
+        },
+        "2B": {
+            "carrying_tools": {
+                "power":   {"war_premium_factor": 0.18},
+                "contact": {"war_premium_factor": 0.10},
+            }
+        },
+        "3B": {
+            "carrying_tools": {
+                "power":   {"war_premium_factor": 0.09},
+                "contact": {"war_premium_factor": 0.12},
+                "eye":     {"war_premium_factor": 0.12},
+                "gap":     {"war_premium_factor": 0.12},
+            }
+        },
+        "COF": {
+            "carrying_tools": {
+                "contact": {"war_premium_factor": 0.13},
+            }
+        },
+        "1B": {
+            "carrying_tools": {
+                "contact": {"war_premium_factor": 0.16},
+            }
+        },
+    },
+    "scarcity_schedule": [
+        {"threshold": 65, "multiplier": 1.0},
+        {"threshold": 70, "multiplier": 1.5},
+        {"threshold": 75, "multiplier": 2.0},
+        {"threshold": 80, "multiplier": 3.0},
+    ],
+}
+
+
+# ---------------------------------------------------------------------------
+# Configuration loading
+# ---------------------------------------------------------------------------
+
+def load_carrying_tool_config(league_dir: Path) -> dict:
+    """Load carrying tool configuration from the league config directory.
+
+    Reads ``data/<league>/config/carrying_tool_config.json``. Falls back to
+    ``DEFAULT_CARRYING_TOOL_CONFIG`` when the file doesn't exist or contains
+    malformed JSON (logs a warning for malformed files).
+
+    Validates the config on load:
+    - Raises ``ValueError`` for negative ``war_premium_factor`` values.
+    - Raises ``ValueError`` for non-positive ``scarcity_multiplier`` values.
+    - Uses the default scarcity schedule when the ``scarcity_schedule`` key
+      is missing from the loaded config.
+
+    Args:
+        league_dir: Path to the league data directory (e.g. ``data/emlb``).
+
+    Returns:
+        A validated carrying tool config dict.
+
+    Raises:
+        ValueError: If any ``war_premium_factor`` is negative or any
+            ``scarcity_multiplier`` value is non-positive.
+    """
+    config_path = league_dir / "config" / "carrying_tool_config.json"
+    config: dict
+
+    if not config_path.exists():
+        log.info("No carrying_tool_config.json found at %s — using default config", config_path)
+        config = _deep_copy_config(DEFAULT_CARRYING_TOOL_CONFIG)
+    else:
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
+        except (json.JSONDecodeError, OSError) as exc:
+            log.warning(
+                "Failed to read carrying_tool_config.json at %s (%s) — using default config",
+                config_path, exc,
+            )
+            config = _deep_copy_config(DEFAULT_CARRYING_TOOL_CONFIG)
+
+    # Fill in default scarcity schedule when missing from loaded config
+    if "scarcity_schedule" not in config:
+        config["scarcity_schedule"] = list(DEFAULT_CARRYING_TOOL_CONFIG["scarcity_schedule"])
+
+    _validate_carrying_tool_config(config)
+    return config
+
+
+def _deep_copy_config(config: dict) -> dict:
+    """Return a deep copy of a carrying tool config dict."""
+    return json.loads(json.dumps(config))
+
+
+def _validate_carrying_tool_config(config: dict) -> None:
+    """Validate a carrying tool config, raising ValueError on invalid entries.
+
+    Checks:
+    - All ``war_premium_factor`` values must be non-negative.
+    - All ``scarcity_schedule`` multiplier values must be positive (> 0).
+
+    Raises:
+        ValueError: With a descriptive message identifying the invalid entry.
+    """
+    positions = config.get("positions", {})
+    for pos, pos_data in positions.items():
+        carrying_tools = pos_data.get("carrying_tools", {})
+        for tool, tool_data in carrying_tools.items():
+            wpf = tool_data.get("war_premium_factor", 0)
+            if wpf < 0:
+                raise ValueError(
+                    f"Negative war_premium_factor ({wpf}) for {pos}/{tool}"
+                )
+
+    for entry in config.get("scarcity_schedule", []):
+        mult = entry.get("multiplier", 1.0)
+        if mult <= 0:
+            raise ValueError(
+                f"Non-positive scarcity_multiplier ({mult}) at threshold "
+                f"{entry.get('threshold', '?')}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Carrying tool bonus computation
+# ---------------------------------------------------------------------------
+
+# Only these offensive tools can qualify for the carrying tool bonus.
+# Speed and all defensive tools are excluded.
+_CARRYING_TOOL_ELIGIBLE = frozenset({"contact", "gap", "power", "eye"})
+
+# Minimum tool grade to qualify for a carrying tool bonus.
+_CARRYING_TOOL_GRADE_THRESHOLD = 65
+
+
+def _scarcity_multiplier(tool_grade: int, schedule: list[dict]) -> float:
+    """Compute the scarcity multiplier for a tool grade via linear interpolation.
+
+    The *schedule* is a sorted list of ``{"threshold": int, "multiplier": float}``
+    breakpoints.  For grades between breakpoints the multiplier is linearly
+    interpolated.  Grades at or below the first breakpoint get the first
+    multiplier; grades at or above the last breakpoint get the last multiplier.
+    """
+    if not schedule:
+        return 1.0
+
+    # Below or at the first breakpoint
+    if tool_grade <= schedule[0]["threshold"]:
+        return schedule[0]["multiplier"]
+
+    # Above or at the last breakpoint
+    if tool_grade >= schedule[-1]["threshold"]:
+        return schedule[-1]["multiplier"]
+
+    # Find the surrounding breakpoints and interpolate
+    for i in range(len(schedule) - 1):
+        lo = schedule[i]
+        hi = schedule[i + 1]
+        if lo["threshold"] <= tool_grade <= hi["threshold"]:
+            span = hi["threshold"] - lo["threshold"]
+            if span == 0:
+                return lo["multiplier"]
+            frac = (tool_grade - lo["threshold"]) / span
+            return lo["multiplier"] + frac * (hi["multiplier"] - lo["multiplier"])
+
+    # Fallback (should not be reached with a well-formed schedule)
+    return schedule[-1]["multiplier"]
+
+
+def compute_carrying_tool_bonus(
+    tools: dict[str, int | None],
+    position: str,
+    config: dict,
+) -> tuple[float, list[dict]]:
+    """Compute the additive carrying tool bonus for a hitter.
+
+    For each offensive tool grading 65+, checks if the tool/position
+    combination is defined as a carrying tool in the config.  If so,
+    computes:
+
+        bonus = war_premium_factor × (tool_grade − 60) × scarcity_multiplier(tool_grade)
+
+    Args:
+        tools: Tool ratings dict with keys like ``"contact"``, ``"gap"``,
+            ``"power"``, ``"eye"`` (values may be ``None``).
+        position: Position bucket (e.g. ``"SS"``, ``"C"``, ``"CF"``).
+        config: Carrying tool config dict (as returned by
+            ``load_carrying_tool_config``).
+
+    Returns:
+        ``(total_bonus, breakdown)`` where *total_bonus* is the sum of
+        individual tool bonuses and *breakdown* is a list of dicts, each
+        with keys ``"tool"``, ``"grade"``, ``"bonus"``.
+    """
+    positions = config.get("positions", {})
+    pos_data = positions.get(position)
+    if pos_data is None:
+        return 0.0, []
+
+    carrying_tools_cfg = pos_data.get("carrying_tools", {})
+    schedule = config.get("scarcity_schedule", [])
+
+    total_bonus = 0.0
+    breakdown: list[dict] = []
+
+    for tool_name in _CARRYING_TOOL_ELIGIBLE:
+        grade = tools.get(tool_name)
+        if grade is None or grade < _CARRYING_TOOL_GRADE_THRESHOLD:
+            continue
+
+        tool_cfg = carrying_tools_cfg.get(tool_name)
+        if tool_cfg is None:
+            continue
+
+        wpf = tool_cfg.get("war_premium_factor", 0.0)
+        scarcity = _scarcity_multiplier(grade, schedule)
+        bonus = wpf * (grade - 60) * scarcity
+
+        total_bonus += bonus
+        breakdown.append({"tool": tool_name, "grade": grade, "bonus": bonus})
+
+    return total_bonus, breakdown
+
+
+def apply_carrying_tool_bonus(
+    base_offensive_grade: float,
+    tools: dict[str, int | None],
+    position: str,
+    config: dict,
+) -> tuple[int, float, list[dict]]:
+    """Apply carrying tool bonus to a base offensive grade.
+
+    Computes the bonus via ``compute_carrying_tool_bonus``, adds it to
+    *base_offensive_grade*, and clamps the result to [20, 80].
+
+    Args:
+        base_offensive_grade: The unclamped offensive grade from
+            ``_offensive_grade_raw()``.
+        tools: Tool ratings dict.
+        position: Position bucket.
+        config: Carrying tool config dict.
+
+    Returns:
+        ``(enhanced_grade, bonus_amount, breakdown)`` where
+        *enhanced_grade* is an ``int`` on the 20-80 scale.
+    """
+    bonus, breakdown = compute_carrying_tool_bonus(tools, position, config)
+    enhanced = max(20, min(80, round(base_offensive_grade + bonus)))
+    return enhanced, bonus, breakdown
+
+
+# ---------------------------------------------------------------------------
+# Positional median / percentile helpers
+# ---------------------------------------------------------------------------
+
+
+def compute_positional_medians(
+    offensive_grades: dict[str, list[int]],
+    min_sample_size: int = 15,
+) -> dict[str, dict]:
+    """Compute per-position offensive grade medians and percentile thresholds.
+
+    Args:
+        offensive_grades: Dict mapping position bucket to list of offensive
+            grades for MLB players at that position.
+        min_sample_size: Minimum number of players per bucket.  Buckets with
+            fewer players are excluded.
+
+    Returns:
+        Dict mapping position bucket to ``{"median": int, "p25": int,
+        "p75": int, "count": int}``.  Buckets with insufficient data are
+        omitted.
+    """
+    result: dict[str, dict] = {}
+    for bucket, grades in offensive_grades.items():
+        if len(grades) < min_sample_size:
+            continue
+        med = int(round(statistics.median(grades)))
+        # statistics.quantiles with n=4 gives [Q1, Q2, Q3]
+        # Requires at least 2 data points
+        if len(grades) >= 2:
+            q1, _, q3 = statistics.quantiles(grades, n=4)
+        else:
+            # Single element: all percentiles equal the sole value
+            q1 = float(grades[0])
+            q3 = float(grades[0])
+        result[bucket] = {
+            "median": med,
+            "p25": int(round(q1)),
+            "p75": int(round(q3)),
+            "count": len(grades),
+        }
+    return result
+
+
+def compute_positional_percentile(
+    offensive_grade: int,
+    position: str,
+    medians: dict[str, dict],
+    offensive_grades: dict[str, list[int]],
+) -> float | None:
+    """Compute a player's offensive grade percentile within their position.
+
+    Percentile = (count of grades in the position bucket that are ≤
+    *offensive_grade*) / total count × 100.
+
+    Args:
+        offensive_grade: The player's offensive grade.
+        position: Position bucket.
+        medians: Output from ``compute_positional_medians()``.  Used only to
+            check whether the position has sufficient data.
+        offensive_grades: The raw grade lists (needed for percentile rank).
+
+    Returns:
+        Percentile as a float in [0, 100], or ``None`` if position data is
+        unavailable (not in *medians* or not in *offensive_grades*).
+    """
+    if position not in medians:
+        return None
+    grades = offensive_grades.get(position)
+    if not grades:
+        return None
+    count_le = sum(1 for g in grades if g <= offensive_grade)
+    return count_le / len(grades) * 100.0
+
+
+def load_tool_weights(league_dir: Path) -> dict:
+    """Load tool weights from a league's config directory.
+
+    Reads ``data/<league>/config/tool_weights.json``. Falls back to
+    ``DEFAULT_TOOL_WEIGHTS`` when the file is missing, unreadable, or invalid.
+
+    Args:
+        league_dir: Path to the league data directory (e.g. ``data/emlb``).
+
+    Returns:
+        A validated tool-weights dict matching the ``DEFAULT_TOOL_WEIGHTS``
+        schema.
+    """
+    config_path = league_dir / "config" / "tool_weights.json"
+    if not config_path.exists():
+        log.info("No tool_weights.json found at %s — using default weights", config_path)
+        return dict(DEFAULT_TOOL_WEIGHTS)
+
+    try:
+        with open(config_path) as f:
+            weights = json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        log.warning("Failed to read tool_weights.json at %s (%s) — using default weights",
+                     config_path, exc)
+        return dict(DEFAULT_TOOL_WEIGHTS)
+
+    if not validate_tool_weights(weights):
+        log.warning("Invalid tool_weights.json at %s (validation failed) — using default weights",
+                     config_path)
+        return dict(DEFAULT_TOOL_WEIGHTS)
+
+    return weights
+
+
+def validate_tool_weights(weights: dict) -> bool:
+    """Validate a tool-weights configuration dict.
+
+    Checks:
+    - ``hitter`` and ``pitcher`` top-level keys exist and are dicts.
+    - Each positional bucket's weights are numeric and sum to 1.0 (±0.01).
+    - Logs warnings for expected buckets that are missing (non-fatal).
+
+    Returns:
+        ``True`` if the config is valid, ``False`` otherwise.
+    """
+    if not isinstance(weights, dict):
+        return False
+
+    _EXPECTED_HITTER_BUCKETS = {"C", "SS", "2B", "3B", "CF", "COF", "1B"}
+    _EXPECTED_PITCHER_BUCKETS = {"SP", "RP"}
+
+    for section in ("hitter", "pitcher"):
+        if section not in weights or not isinstance(weights[section], dict):
+            return False
+        for bucket, bucket_weights in weights[section].items():
+            if not isinstance(bucket_weights, dict):
+                return False
+            values = []
+            for v in bucket_weights.values():
+                if not isinstance(v, (int, float)):
+                    return False
+                values.append(float(v))
+            if not values:
+                return False
+            if abs(sum(values) - 1.0) > 0.01:
+                return False
+
+    # Warn about missing expected buckets (non-fatal — defaults will fill gaps)
+    if "hitter" in weights:
+        missing_h = _EXPECTED_HITTER_BUCKETS - set(weights["hitter"].keys())
+        if missing_h:
+            log.warning("tool_weights.json missing hitter buckets: %s — defaults will be used for those positions",
+                        ", ".join(sorted(missing_h)))
+    if "pitcher" in weights:
+        missing_p = _EXPECTED_PITCHER_BUCKETS - set(weights["pitcher"].keys())
+        if missing_p:
+            log.warning("tool_weights.json missing pitcher buckets: %s — defaults will be used for those roles",
+                        ", ".join(sorted(missing_p)))
+
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Hitter composite
+# ---------------------------------------------------------------------------
+
+# Offensive tool keys expected in the tools dict
+_HITTER_TOOL_KEYS = ("contact", "gap", "power", "eye", "speed", "steal", "stl_rt")
+
+
+def _tool_transform(val: float) -> float:
+    """Apply non-linear piecewise transformation to a tool rating.
+
+    Uses a hybrid approach: linear in the middle (45-60) where most MLB
+    players sit, with non-linear penalties below 45 and bonuses above 60.
+
+    This matches the empirical WAR data:
+    - Below 40: cliff — each point below 40 is worth 1.5× (a 30 contact
+      is effectively ~25, reflecting that sub-40 tools produce negative WAR)
+    - 40-60: linear (1:1) — preserves sensitivity for MLB-level players
+    - Above 60: each point above 60 is worth 1.3× (a 70 power is
+      effectively ~73, reflecting outsized WAR gains from elite tools)
+
+    The penalty/bonus multipliers are derived from the marginal WAR data:
+    - Contact 40→45 adds +0.61 WAR (biggest single increment)
+    - Contact 45→50 adds +0.34 WAR (normal)
+    - Ratio: 0.61/0.34 ≈ 1.8× — we use 1.5× as conservative estimate
+
+    Args:
+        val: Raw tool value on the 20-80 scale.
+
+    Returns:
+        Transformed value on the 20-80 scale.
+    """
+    _LOW_THRESHOLD = 40.0
+    _HIGH_THRESHOLD = 60.0
+    _LOW_PENALTY = 1.5    # each point below 40 counts as 1.5 points
+    _HIGH_BONUS = 1.3     # each point above 60 counts as 1.3 points
+
+    if val >= _HIGH_THRESHOLD:
+        return _HIGH_THRESHOLD + (val - _HIGH_THRESHOLD) * _HIGH_BONUS
+    elif val <= _LOW_THRESHOLD:
+        return _LOW_THRESHOLD - (_LOW_THRESHOLD - val) * _LOW_PENALTY
+    else:
+        return float(val)
+
+def compute_composite_hitter(
+    tools: dict[str, int | None],
+    weights: dict[str, float],
+    defense: dict[str, int | None],
+    def_weights: dict[str, float],
+) -> int:
+    """Compute hitter Composite_Score from tool ratings and weights.
+
+    Internally decomposes into offensive, baserunning, and defensive raw
+    component values, then recombines using shares derived from the weight
+    profile.  This ensures the decomposition into component scores is
+    lossless — ``derive_composite_from_components`` called with the same
+    raw values produces an identical result.
+
+    Preconditions:
+        - Tool values on the 20-80 scale (already normalized) or ``None``.
+        - ``weights`` keys include offensive tool names plus ``"defense"``,
+          summing to 1.0 (±0.01).
+        - ``defense`` maps defensive tool abbreviations (e.g. ``"IFR"``) to
+          raw ratings.
+        - ``def_weights`` maps the same abbreviations to positional importance
+          weights (from ``DEFENSIVE_WEIGHTS``).
+
+    Postconditions:
+        - Returns an integer in [20, 80].
+
+    Edge cases:
+        - Missing tools (``None``): re-normalizes weights over available tools.
+        - All tools missing: returns 20 (floor).
+    """
+    # Compute raw (unclamped) component values using the shared helpers
+    off_raw = _offensive_grade_raw(tools, weights)
+    br_raw = _baserunning_value_raw(tools, weights)
+    def_raw = _defensive_value_raw(defense, def_weights)
+
+    # If no data at all, return floor
+    if off_raw is None and br_raw is None and def_raw is None:
+        return 20
+
+    # Derive recombination shares from the weight profile.
+    # The defense share comes directly from the weight dict.
+    # The remaining (1 - defense_share) is split between offense and
+    # baserunning proportionally to their summed tool weights.
+    defense_weight = weights.get("defense", 0.0)
+
+    off_w = sum(weights.get(k, 0.0) for k in _OFFENSIVE_TOOL_KEYS)
+    br_w = sum(weights.get(k, 0.0) for k in _BASERUNNING_TOOL_KEYS)
+    tool_w_total = off_w + br_w
+
+    if tool_w_total > 0:
+        offense_share = off_w / tool_w_total * (1.0 - defense_weight)
+        baserunning_share = br_w / tool_w_total * (1.0 - defense_weight)
+    else:
+        offense_share = 1.0 - defense_weight
+        baserunning_share = 0.0
+
+    # Recombine raw component values weighted by their shares.
+    # Components that are None contribute 0 to the sum and their share
+    # is NOT redistributed — this matches the original behavior where
+    # missing tools simply don't contribute.
+    raw = 0.0
+    if off_raw is not None:
+        raw += off_raw * offense_share
+    if br_raw is not None:
+        raw += br_raw * baserunning_share
+    if def_raw is not None:
+        raw += def_raw * defense_weight
+
+    return max(20, min(80, round(raw)))
+
+
+# ---------------------------------------------------------------------------
+# Component score extraction — pure functions
+# ---------------------------------------------------------------------------
+
+# Offensive tool keys (hitting only — excludes baserunning and defense)
+_OFFENSIVE_TOOL_KEYS = ("contact", "gap", "power", "eye")
+
+# Baserunning tool keys
+_BASERUNNING_TOOL_KEYS = ("speed", "steal", "stl_rt")
+
+
+def _offensive_grade_raw(
+    tools: dict[str, int | None],
+    weights: dict[str, float],
+) -> float | None:
+    """Return the unclamped offensive weighted average, or ``None``.
+
+    This is the internal helper used by both ``compute_offensive_grade``
+    (which clamps to [20, 80]) and ``compute_composite_hitter`` (which
+    needs the unclamped value for accurate recombination).
+    """
+    available: list[tuple[float, float]] = []
+    for key in _OFFENSIVE_TOOL_KEYS:
+        val = tools.get(key)
+        w = weights.get(key, 0.0)
+        if val is not None and w > 0:
+            transformed = _tool_transform(float(val))
+            available.append((transformed, w))
+
+    if not available:
+        return None
+
+    total_weight = sum(w for _, w in available)
+    if total_weight <= 0:
+        return None
+
+    return sum(val * (w / total_weight) for val, w in available)
+
+
+def compute_offensive_grade(
+    tools: dict[str, int | None],
+    weights: dict[str, float],
+) -> int | None:
+    """Compute offensive component from hitting tools only.
+
+    Uses contact, gap, power, eye with the existing piecewise tool transform
+    and calibrated tool weights. Excludes speed, steal, stl_rt, and defense.
+
+    The offensive grade isolates the hitting contribution from
+    ``compute_composite_hitter``. It applies ``_tool_transform`` to each
+    hitting tool, then computes a weighted sum using only the offensive tool
+    weights (re-normalized to sum to 1.0 over available tools).
+
+    Args:
+        tools: Tool ratings dict with keys like ``"contact"``, ``"gap"``,
+            ``"power"``, ``"eye"`` on the 20-80 scale (or ``None``).
+        weights: Positional weight profile (same as used in
+            ``compute_composite_hitter``). Only the offensive tool keys
+            are used; ``"defense"``, ``"speed"``, ``"steal"``, ``"stl_rt"``
+            are ignored.
+
+    Returns:
+        Integer on 20-80 scale, or ``None`` if all hitting tools are missing.
+    """
+    raw = _offensive_grade_raw(tools, weights)
+    if raw is None:
+        return None
+    return max(20, min(80, round(raw)))
+
+
+def _baserunning_value_raw(
+    tools: dict[str, int | None],
+    weights: dict[str, float],
+) -> float | None:
+    """Return the unclamped baserunning weighted average, or ``None``.
+
+    Internal helper used by both ``compute_baserunning_value`` (clamped)
+    and ``compute_composite_hitter`` (unclamped for accurate recombination).
+    """
+    available: list[tuple[float, float]] = []
+    for key in _BASERUNNING_TOOL_KEYS:
+        val = tools.get(key)
+        w = weights.get(key, 0.0)
+        if val is not None and w > 0:
+            available.append((float(val), w))
+
+    if not available:
+        return None
+
+    total_weight = sum(w for _, w in available)
+    if total_weight <= 0:
+        return None
+
+    return sum(val * (w / total_weight) for val, w in available)
+
+
+def compute_baserunning_value(
+    tools: dict[str, int | None],
+    weights: dict[str, float],
+) -> int | None:
+    """Compute baserunning component from speed, steal, and steal rating.
+
+    Uses linear tool values (no piecewise transform — consistent with
+    current composite behavior where speed/steal/stl_rt are not transformed).
+
+    Args:
+        tools: Tool ratings dict with keys ``"speed"``, ``"steal"``,
+            ``"stl_rt"`` on the 20-80 scale (or ``None``).
+        weights: Positional weight profile. Only the baserunning tool keys
+            are used.
+
+    Returns:
+        Integer on 20-80 scale, or ``None`` if all baserunning tools are
+        missing.
+    """
+    raw = _baserunning_value_raw(tools, weights)
+    if raw is None:
+        return None
+    return max(20, min(80, round(raw)))
+
+
+def _defensive_value_raw(
+    defense: dict[str, int | None],
+    def_weights: dict[str, float],
+) -> float | None:
+    """Return the unclamped defensive weighted average, or ``None``.
+
+    Internal helper used by both ``compute_defensive_value`` (clamped)
+    and ``compute_composite_hitter`` (unclamped for accurate recombination).
+    """
+    if not def_weights or not defense:
+        return None
+
+    available: list[tuple[float, float]] = []
+    for dk, dw in def_weights.items():
+        dv = defense.get(dk)
+        if dv is not None and dw > 0:
+            available.append((float(dv), dw))
+
+    if not available:
+        return None
+
+    total_weight = sum(w for _, w in available)
+    if total_weight <= 0:
+        return None
+
+    return sum(val * (w / total_weight) for val, w in available)
+
+
+def compute_defensive_value(
+    defense: dict[str, int | None],
+    def_weights: dict[str, float],
+) -> int | None:
+    """Compute defensive component from positional defensive tools.
+
+    Uses the existing position-specific defensive weights from
+    ``DEFENSIVE_WEIGHTS``. This is the same defensive score computation
+    already in ``compute_composite_hitter``, extracted as a standalone
+    function.
+
+    Args:
+        defense: Dict mapping defensive tool abbreviations (e.g. ``"IFR"``)
+            to raw ratings on the 20-80 scale (or ``None``).
+        def_weights: Dict mapping the same abbreviations to positional
+            importance weights (from ``DEFENSIVE_WEIGHTS``).
+
+    Returns:
+        Integer on 20-80 scale, or ``None`` if all defensive tools are
+        missing or no weights are provided.
+    """
+    raw = _defensive_value_raw(defense, def_weights)
+    if raw is None:
+        return None
+    return max(20, min(80, round(raw)))
+
+
+def compute_durability_score(stamina: int | None, role: str) -> int | None:
+    """Compute durability component for pitchers.
+
+    For SP: returns stamina on the 20-80 scale (already normalized).
+    For RP: returns ``None`` (stamina is not a meaningful differentiator).
+
+    Args:
+        stamina: Stamina rating on the 20-80 scale, or ``None``.
+        role: Pitcher role — ``"SP"`` or ``"RP"``.
+
+    Returns:
+        Integer on 20-80 scale for SP, ``None`` for RP or when stamina is
+        missing.
+    """
+    if role != "SP" or stamina is None:
+        return None
+    return max(20, min(80, stamina))
+
+
+def derive_composite_from_components(
+    offensive_grade: int | float,
+    baserunning_value: int | float | None,
+    defensive_value: int | float | None,
+    recombination: dict[str, float],
+) -> int:
+    """Derive composite_score from component scores using recombination weights.
+
+    This is the inverse of the current flow: instead of computing composite
+    directly from tools, we compute it from the component scores using the
+    same offense/defense/baserunning shares.
+
+    When called with the **raw unclamped** component values (as floats from
+    ``_offensive_grade_raw``, ``_baserunning_value_raw``,
+    ``_defensive_value_raw``), the result is identical to
+    ``compute_composite_hitter`` for the same inputs — the decomposition is
+    lossless.
+
+    When called with clamped integer component scores (the public 20-80
+    values), the result may differ by up to ±1 at the scale boundaries due
+    to per-component clamping.  For display purposes this is acceptable;
+    for round-trip verification, pass raw floats.
+
+    When a component is ``None``, its share is redistributed proportionally
+    to the remaining components.
+
+    Args:
+        offensive_grade: Offensive component score. Pass the raw float from
+            ``_offensive_grade_raw`` for exact round-trip, or the clamped
+            int (20-80) for display derivation.
+        baserunning_value: Baserunning component score (raw float or clamped
+            int), or ``None``.
+        defensive_value: Defensive component score (raw float or clamped
+            int), or ``None``.
+        recombination: Position-specific domain shares dict with keys
+            ``"offense"``, ``"defense"``, ``"baserunning"`` summing to 1.0.
+
+    Returns:
+        Integer on 20-80 scale.
+    """
+    offense_share = recombination.get("offense", 0.0)
+    defense_share = recombination.get("defense", 0.0)
+    baserunning_share = recombination.get("baserunning", 0.0)
+
+    # Build list of (score, share) for available components
+    components: list[tuple[float, float]] = [(float(offensive_grade), offense_share)]
+    if baserunning_value is not None:
+        components.append((float(baserunning_value), baserunning_share))
+    if defensive_value is not None:
+        components.append((float(defensive_value), defense_share))
+
+    total_share = sum(s for _, s in components)
+    if total_share <= 0:
+        return max(20, min(80, round(float(offensive_grade))))
+
+    # Re-normalize shares over available components
+    raw = sum(score * (share / total_share) for score, share in components)
+    return max(20, min(80, round(raw)))
+
+
+# ---------------------------------------------------------------------------
+# Pitcher composite
+# ---------------------------------------------------------------------------
+
+_PITCHER_TOOL_KEYS = ("stuff", "movement", "control")
+
+
+def compute_composite_pitcher(
+    tools: dict[str, int | None],
+    weights: dict[str, float],
+    arsenal: dict[str, int],
+    stamina: int,
+    role: str,
+) -> int:
+    """Compute pitcher Composite_Score from tool ratings, arsenal, and role.
+
+    Preconditions:
+        - ``tools`` has keys ``"stuff"``, ``"movement"``, ``"control"`` on
+          20-80 scale (or ``None``).
+        - ``weights`` has keys ``"stuff"``, ``"movement"``, ``"control"``,
+          ``"arsenal"`` summing to 1.0.
+        - ``arsenal`` maps pitch names to ratings (e.g. ``{"Fst": 70, ...}``).
+        - ``stamina`` is on the 20-80 scale.
+        - ``role`` is ``"SP"`` or ``"RP"``.
+
+    Postconditions:
+        - Returns an integer in [20, 80].
+    """
+    arsenal_weight = weights.get("arsenal", 0.0)
+
+    # Collect available pitch tools
+    available: list[tuple[float, float]] = []
+    for key in _PITCHER_TOOL_KEYS:
+        val = tools.get(key)
+        w = weights.get(key, 0.0)
+        if val is not None and w > 0:
+            available.append((_tool_transform(float(val)), w))
+
+    if not available:
+        return 20
+
+    # Re-normalize pitch tool weights over available tools
+    total_tool_weight = sum(w for _, w in available)
+    tool_share = 1.0 - arsenal_weight
+
+    if total_tool_weight > 0:
+        tool_sum = sum(
+            val * (w / total_tool_weight) * tool_share
+            for val, w in available
+        )
+    else:
+        tool_sum = 0.0
+
+    # Arsenal depth bonus: +1 per pitch rated 45+ beyond the third, capped +3
+    pitches_45_plus = sum(1 for r in arsenal.values() if r >= 45)
+    depth_bonus = min(3, max(0, pitches_45_plus - 3))
+
+    # Top-pitch quality bonus: +2 if best >= 70, +1 if best >= 65
+    best_pitch = max(arsenal.values()) if arsenal else 0
+    if best_pitch >= 70:
+        quality_bonus = 2
+    elif best_pitch >= 65:
+        quality_bonus = 1
+    else:
+        quality_bonus = 0
+
+    # Arsenal score on 20-80 scale for weighting
+    # Map bonus points into a 20-80 range contribution
+    arsenal_score = 50.0 + (depth_bonus + quality_bonus) * 5.0
+    arsenal_score = max(20.0, min(80.0, arsenal_score))
+
+    raw = tool_sum + arsenal_score * arsenal_weight
+
+    # Stamina penalty for SP: min(5, (40 - stamina) * 0.15) when stamina < 40
+    if role == "SP" and stamina < 40:
+        penalty = min(5.0, (40 - stamina) * 0.15)
+        raw -= penalty
+
+    # SP innings-volume adjustment: high-stamina SP absorb more innings,
+    # producing more total WAR. The composite is a rate-stat model, but WAR
+    # is a counting stat — Comp × IP correlates with WAR at r=0.70, nearly
+    # matching OVR (r=0.73). This adjustment bridges the rate/volume gap.
+    #
+    # Scale: +1 per 5 points above 45, capped at +7.
+    # Examples: Stm=50 → +1, Stm=60 → +3, Stm=70 → +5, Stm=80 → +7.
+    # The cap at +7 prevents stamina from dominating the score while still
+    # giving elite workhorses (Stm 75-80) meaningful separation.
+    if role == "SP" and stamina > 45:
+        bonus = min(7.0, (stamina - 45) * 0.2)
+        raw += bonus
+
+    # Platoon balance penalty: -2 to -3 when weak side < 35 and gap >= 15
+    stuff_l = tools.get("stuff_l")
+    stuff_r = tools.get("stuff_r")
+    if stuff_l is not None and stuff_r is not None:
+        weak_side = min(stuff_l, stuff_r)
+        gap = abs(stuff_l - stuff_r)
+        if weak_side < 35 and gap >= 15:
+            if weak_side <= 25:
+                raw -= 3
+            else:
+                raw -= 2
+
+    return max(20, min(80, round(raw)))
+
+
+# ---------------------------------------------------------------------------
+# Tool-only score
+# ---------------------------------------------------------------------------
+
+def compute_tool_only_score(
+    player_type: str,
+    tools: dict[str, int | None],
+    weights: dict[str, float],
+    defense: dict[str, int | None] | None = None,
+    def_weights: dict[str, float] | None = None,
+    arsenal: dict[str, int] | None = None,
+    stamina: int = 50,
+    role: str = "SP",
+) -> int:
+    """Compute the pre-stat-blend score for a player.
+
+    Delegates to ``compute_composite_hitter`` or ``compute_composite_pitcher``
+    based on ``player_type``.
+    """
+    if player_type == "hitter":
+        return compute_composite_hitter(
+            tools, weights,
+            defense or {},
+            def_weights or {},
+        )
+    else:
+        return compute_composite_pitcher(
+            tools, weights,
+            arsenal or {},
+            stamina,
+            role,
+        )
+
+
+# ---------------------------------------------------------------------------
+# MLB stat blending
+# ---------------------------------------------------------------------------
+
+def compute_composite_mlb(
+    tool_score: int,
+    stat_seasons: list[float],
+    peak_age: int = 28,
+    player_age: int = 28,
+    is_pitcher: bool = False,
+) -> int:
+    """Blend tool-based score with stat performance for MLB players.
+
+    Args:
+        tool_score: Pre-blend tool-only score (20-80).
+        stat_seasons: List of normalized stat values (already on 20-80 scale
+            via ``stat_to_2080``), ordered most-recent first. Empty list means
+            no qualifying seasons.
+        peak_age: Expected peak age for the player's position.
+        player_age: Player's current age.
+        is_pitcher: Whether the player is a pitcher. Pitchers use asymmetric
+            blending — the blend is less aggressive when stats pull *down*
+            from tools, because pitcher stats (FIP) have higher variance than
+            hitter stats (OPS+) due to defense, sequencing, and luck.
+
+    Returns:
+        Integer composite score in [20, 80].
+    """
+    if not stat_seasons:
+        return tool_score
+
+    # Recency weighting: most recent 3×, second 2×, third 1×
+    recency_weights = [3.0, 2.0, 1.0]
+    weighted_sum = 0.0
+    total_weight = 0.0
+    for i, stat_val in enumerate(stat_seasons[:3]):
+        w = recency_weights[i] if i < len(recency_weights) else 1.0
+        weighted_sum += stat_val * w
+        total_weight += w
+
+    stat_signal = weighted_sum / total_weight if total_weight > 0 else tool_score
+
+    # Blend weight: min(0.5, qualifying_seasons * 0.15)
+    qualifying_seasons = len(stat_seasons)
+    blend_weight = min(0.5, qualifying_seasons * 0.15)
+
+    # Young player blend: reduce blend_weight when player is under peak age
+    # and tools suggest more upside than stats show. The age_factor scales
+    # from 1.0 at peak age down to a floor of 0.3 for very young players.
+    # The 0.3 floor ensures stats still contribute at least ~9% even for
+    # the youngest MLB players (0.3 × 0.15 per season) — completely ignoring
+    # stats would miss real production signals from early-career callups.
+    if player_age < peak_age and tool_score > stat_signal:
+        age_factor = max(0.3, 1.0 - (peak_age - player_age) * 0.1)
+        blend_weight *= age_factor
+
+    # Asymmetric blend for pitchers: when stats pull DOWN from tools, reduce
+    # the blend weight by 50%. Pitcher stats (FIP) have higher variance than
+    # hitter stats (OPS+) — a single bad season can be driven by defense,
+    # sequencing, HR luck, or park effects rather than true ability decline.
+    # When stats pull UP from tools, use full blend (stats confirming/exceeding
+    # tools is a reliable signal).
+    if is_pitcher and stat_signal < tool_score:
+        blend_weight *= 0.5
+
+    composite = tool_score * (1.0 - blend_weight) + stat_signal * blend_weight
+    return max(20, min(80, round(composite)))
+
+
+def stat_to_2080(stat_plus: float) -> float:
+    """Convert a league-normalized rate stat to the 20-80 scale.
+
+    Formula: ``20 + (stat_plus / 200) * 60``, clamped to [20, 80].
+
+    Args:
+        stat_plus: League-normalized stat (e.g. OPS+ 100 = league average).
+
+    Returns:
+        Float value on the 20-80 scale.
+    """
+    raw = 20.0 + (stat_plus / 200.0) * 60.0
+    return max(20.0, min(80.0, raw))
+
+
+def pitcher_stat_to_2080(stat_plus: float) -> float:
+    """Convert a pitcher's inverted FIP- to the 20-80 scale.
+
+    Uses an **asymmetric** mapping: above-average performance (stat_plus > 100)
+    gets a steeper slope (0.45 per point) to properly reward pitching
+    excellence, while below-average performance (stat_plus < 100) uses the
+    standard hitter slope (0.30 per point) to avoid over-penalizing.
+
+    This corrects the systematic downward pull on SP composites. FIP has a
+    compressed range compared to OPS+ — a dominant FIP- of 80 (inverted to
+    120) should map higher than the generic formula allows. But a mediocre
+    FIP- of 110 (inverted to 90) shouldn't be penalized more harshly than
+    a mediocre OPS+ of 90.
+
+    Mapping examples:
+        stat_plus=100 (avg)  → 50
+        stat_plus=120 (good) → 59
+        stat_plus=135 (elite)→ 66.75 → 67
+        stat_plus=80 (poor)  → 44
+        stat_plus=60 (bad)   → 38
+
+    Args:
+        stat_plus: Inverted FIP- (200 - FIP-), where 100 = league average
+            and higher = better.
+
+    Returns:
+        Float value on the 20-80 scale.
+    """
+    if stat_plus >= 100:
+        # Above average: steeper slope rewards pitching excellence
+        raw = 50.0 + (stat_plus - 100.0) * 0.45
+    else:
+        # Below average: standard slope avoids over-penalizing
+        raw = 50.0 + (stat_plus - 100.0) * 0.30
+    return max(20.0, min(80.0, raw))
+
+
+# ---------------------------------------------------------------------------
+# Ceiling score
+# ---------------------------------------------------------------------------
+
+def compute_ceiling(
+    potential_tools: dict[str, int | None],
+    weights: dict[str, float],
+    composite_score: int,
+    accuracy: str = "A",
+    work_ethic: str = "N",
+    defense: dict[str, int | None] | None = None,
+    def_weights: dict[str, float] | None = None,
+    is_pitcher: bool = False,
+    arsenal: dict[str, int] | None = None,
+    stamina: int = 50,
+    role: str = "SP",
+    age: int = 25,
+    pot: int | None = None,
+) -> int:
+    """Compute Ceiling_Score from potential tool ratings.
+
+    Uses the same positional weight formula as the composite, applied to
+    potential ratings instead of current ratings. For pitchers, uses the
+    pitcher composite formula.
+
+    The ceiling is age-weighted: younger players weight potential tools more
+    heavily (reflecting developmental upside), while veterans weight current
+    composite more heavily.
+
+    A soft cap prevents ceiling from exceeding POT by more than 8 points
+    when POT is available, preventing inflated ceilings for low-upside players.
+
+    Args:
+        potential_tools: Potential tool ratings (20-80 scale).
+        weights: Positional weight profile (same as composite).
+        composite_score: The player's current Composite_Score (floor).
+        accuracy: Scouting accuracy (``"A"`` normal, ``"L"`` low).
+        work_ethic: Work ethic code (``"H"``/``"VH"`` high, ``"L"`` low,
+            ``"N"`` normal).
+        defense: Defensive potential tool ratings (hitters only).
+        def_weights: Defensive weight profile (hitters only).
+        is_pitcher: Whether the player is a pitcher.
+        arsenal: Pitch arsenal dict (pitchers only).
+        stamina: Stamina rating (pitchers only).
+        role: Pitcher role ``"SP"`` or ``"RP"`` (pitchers only).
+        age: Player's current age (for age-weighted blend).
+        pot: Game's POT rating on 20-80 scale (for soft cap). None to skip cap.
+
+    Returns:
+        Integer ceiling score in [20, 80], never below ``composite_score``.
+    """
+    # Compute raw potential composite using the appropriate formula
+    if is_pitcher:
+        raw_ceiling = compute_composite_pitcher(
+            potential_tools, weights, arsenal or {}, stamina, role,
+        )
+    else:
+        raw_ceiling = compute_composite_hitter(
+            potential_tools,
+            weights,
+            defense or {},
+            def_weights or {},
+        )
+
+    # Age-weighted blend: younger players weight potential tools more heavily.
+    # At age 16-17: potential_weight = 0.90-0.95 (ceiling driven by potential)
+    # At age 25+: potential_weight = 0.50 (blend of current and potential)
+    # At age 30+: potential_weight = 0.30 (current-dominant)
+    potential_weight = max(0.30, min(0.95, 1.0 - (age - 16) * 0.05))
+    raw_ceiling = round(raw_ceiling * potential_weight + composite_score * (1.0 - potential_weight))
+
+    # Work ethic modifier
+    if work_ethic in ("H", "VH"):
+        raw_ceiling += 1
+    elif work_ethic == "L":
+        raw_ceiling -= 1
+
+    # Accuracy variance: Acc=L → -2 penalty
+    if accuracy == "L":
+        raw_ceiling -= 2
+
+    # Floor constraint: ceiling is never below composite
+    raw_ceiling = max(raw_ceiling, composite_score)
+
+    # POT soft cap: ceiling cannot exceed POT + 8 (when POT is available).
+    # This prevents the formula from projecting unrealistic ceilings for
+    # players the game has assessed as low-upside (POT=21 → max ceiling=29).
+    if pot is not None and pot > 0:
+        pot_cap = pot + 8
+        raw_ceiling = min(raw_ceiling, pot_cap)
+        # But never below composite (composite is ground truth for current ability)
+        raw_ceiling = max(raw_ceiling, composite_score)
+
+    # Clamp to [20, 80]
+    return max(20, min(80, raw_ceiling))
+
+
+def compute_component_ceilings(
+    potential_tools: dict[str, int | None],
+    weights: dict[str, float],
+    current_components: dict[str, int | None],
+    defense: dict[str, int | None] | None = None,
+    def_weights: dict[str, float] | None = None,
+    is_pitcher: bool = False,
+    arsenal: dict[str, int] | None = None,
+    stamina: int = 50,
+    role: str = "SP",
+    age: int = 25,
+    ct_config: dict | None = None,
+    position: str = "",
+) -> dict[str, int | None]:
+    """Compute component-level ceilings from potential tool ratings.
+
+    Applies the same component formulas to potential tools, with the
+    age-weighted blend applied per-component (each component's ceiling
+    is floored at its current value).
+
+    The age-weighted blend uses the same formula as :func:`compute_ceiling`:
+    younger players weight potential more heavily, older players weight
+    current ability more heavily.
+
+    When *ct_config* is provided and *position* is non-empty, the carrying
+    tool bonus is computed on the potential offensive tools and added to the
+    raw offensive ceiling **before** the age-weighted blend with current.
+    The bonus is applied only to the offensive ceiling — defensive and
+    baserunning ceilings are unaffected.
+
+    Args:
+        potential_tools: Potential tool ratings (20-80 scale).
+        weights: Positional weight profile (same as composite).
+        current_components: Dict with current component scores. Expected
+            keys: ``offensive_grade``, ``baserunning_value``,
+            ``defensive_value``, ``durability_score``.
+        defense: Defensive potential tool ratings (hitters only).
+        def_weights: Defensive weight profile (hitters only).
+        is_pitcher: Whether the player is a pitcher.
+        arsenal: Pitch arsenal dict (pitchers only).
+        stamina: Stamina rating (pitchers only).
+        role: Pitcher role ``"SP"`` or ``"RP"`` (pitchers only).
+        age: Player's current age (for age-weighted blend).
+        ct_config: Carrying tool config dict (optional). When provided
+            with a non-empty *position*, the carrying tool bonus is
+            applied to the offensive ceiling.
+        position: Position bucket (e.g. ``"SS"``, ``"C"``). Required
+            together with *ct_config* for ceiling bonus computation.
+
+    Returns:
+        Dict with keys: ``offensive_ceiling``, ``baserunning_ceiling``,
+        ``defensive_ceiling``, ``ceiling_carrying_tool_bonus``,
+        ``ceiling_carrying_tool_breakdown``. For pitchers, only
+        ``offensive_ceiling`` (the pitching ceiling) is computed;
+        baserunning and defensive ceilings are ``None``.
+    """
+    # Age-weighted blend factor — same formula as compute_ceiling
+    potential_weight = max(0.30, min(0.95, 1.0 - (age - 16) * 0.05))
+
+    result: dict[str, int | None] = {
+        "offensive_ceiling": None,
+        "baserunning_ceiling": None,
+        "defensive_ceiling": None,
+        "ceiling_carrying_tool_bonus": 0.0,
+        "ceiling_carrying_tool_breakdown": [],
+    }
+
+    if is_pitcher:
+        # For pitchers, offensive_ceiling is the pitching ceiling
+        raw_pitching = compute_composite_pitcher(
+            potential_tools, weights, arsenal or {}, stamina, role,
+        )
+        current_off = current_components.get("offensive_grade")
+        if current_off is not None:
+            blended = round(
+                raw_pitching * potential_weight
+                + current_off * (1.0 - potential_weight)
+            )
+            # Floor at current value
+            blended = max(blended, current_off)
+            result["offensive_ceiling"] = max(20, min(80, blended))
+        else:
+            result["offensive_ceiling"] = max(20, min(80, raw_pitching))
+    else:
+        # Hitter: compute each component from potential tools
+        raw_offensive = compute_offensive_grade(potential_tools, weights)
+        raw_baserunning = compute_baserunning_value(potential_tools, weights)
+        raw_defensive = compute_defensive_value(
+            defense or {}, def_weights or {},
+        )
+
+        # Apply carrying tool bonus to raw offensive ceiling (Req 6.1-6.3)
+        ceiling_ct_bonus = 0.0
+        ceiling_ct_breakdown: list[dict] = []
+        if raw_offensive is not None and ct_config and position:
+            ceiling_ct_bonus, ceiling_ct_breakdown = compute_carrying_tool_bonus(
+                potential_tools, position, ct_config,
+            )
+            raw_offensive = raw_offensive + ceiling_ct_bonus
+
+        result["ceiling_carrying_tool_bonus"] = ceiling_ct_bonus
+        result["ceiling_carrying_tool_breakdown"] = ceiling_ct_breakdown
+
+        current_off = current_components.get("offensive_grade")
+        current_br = current_components.get("baserunning_value")
+        current_def = current_components.get("defensive_value")
+
+        # Offensive ceiling
+        if raw_offensive is not None:
+            if current_off is not None:
+                blended = round(
+                    raw_offensive * potential_weight
+                    + current_off * (1.0 - potential_weight)
+                )
+                blended = max(blended, current_off)
+                result["offensive_ceiling"] = max(20, min(80, blended))
+            else:
+                result["offensive_ceiling"] = max(20, min(80, round(raw_offensive)))
+
+        # Baserunning ceiling
+        if raw_baserunning is not None:
+            if current_br is not None:
+                blended = round(
+                    raw_baserunning * potential_weight
+                    + current_br * (1.0 - potential_weight)
+                )
+                blended = max(blended, current_br)
+                result["baserunning_ceiling"] = max(20, min(80, blended))
+            else:
+                result["baserunning_ceiling"] = max(
+                    20, min(80, raw_baserunning),
+                )
+
+        # Defensive ceiling
+        if raw_defensive is not None:
+            if current_def is not None:
+                blended = round(
+                    raw_defensive * potential_weight
+                    + current_def * (1.0 - potential_weight)
+                )
+                blended = max(blended, current_def)
+                result["defensive_ceiling"] = max(20, min(80, blended))
+            else:
+                result["defensive_ceiling"] = max(
+                    20, min(80, raw_defensive),
+                )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Two-way player handling
+# ---------------------------------------------------------------------------
+
+def is_two_way_player(
+    tools: dict,
+    is_pitcher: bool = False,
+    batting_stats: list | None = None,
+    pitching_stats: list | None = None,
+    stat_two_way_set: set | None = None,
+    player_id: int | None = None,
+) -> bool:
+    """Determine whether a player qualifies as a two-way player.
+
+    Uses a tiered approach:
+
+    1. **Stat-based (ground truth)**: If ``stat_two_way_set`` is provided and
+       the player's ID is in it, they are two-way. This set comes from
+       ``war_model.load_stat_history()`` which identifies players with
+       qualifying seasons in both batting (AB ≥ 130) and pitching (GS ≥ 10)
+       in the same year.
+
+    2. **Stat-based (local)**: If ``batting_stats`` and ``pitching_stats``
+       are provided, checks for overlapping qualifying years (AB ≥ 130 and
+       IP ≥ 40 in the same season).
+
+    3. **Tool-based (prospects)**: For players without stat history, requires
+       the player to be a pitcher (``is_pitcher=True``) AND have hitting
+       tools well above pitcher norms: ``contact >= 45`` AND ``power >= 40``.
+       These thresholds are deliberately high — on a 20-80 scale league,
+       the median pitcher has contact=20 and power=20. The old thresholds
+       (contact ≥ 35, power ≥ 30) flagged ~36% of pitchers as two-way
+       because most pitchers have non-zero hitting ratings.
+
+    .. note:: Design decision (2026-04-19)
+
+       The original tool-based threshold (contact ≥ 35, power ≥ 30) was too
+       permissive on 20-80 scale leagues where every player has all tools
+       populated at 20+. On the VMLB league, this flagged 9,649 of 15,012
+       players as two-way (64%). The fix adds ``is_pitcher`` as a required
+       precondition for the tool path and raises thresholds to contact ≥ 45,
+       power ≥ 40, which yields ~50-100 realistic two-way candidates.
+
+    Args:
+        tools: Tool ratings dict with keys like ``"contact"``, ``"power"``,
+            ``"stuff"``, ``"movement"``, ``"control"`` (values on 20-80 scale).
+        is_pitcher: Whether the player's primary position is pitcher.
+            Required for the tool-based path — hitters with non-zero pitcher
+            ratings are NOT two-way.
+        batting_stats: Optional list of season dicts with ``"ab"`` key.
+        pitching_stats: Optional list of season dicts with ``"ip"`` key.
+        stat_two_way_set: Optional set of player IDs identified as two-way
+            by ``war_model.load_stat_history()``. Takes precedence over
+            tool-based detection.
+        player_id: The player's ID, used for lookup in ``stat_two_way_set``.
+
+    Returns:
+        ``True`` if the player qualifies as two-way, ``False`` otherwise.
+    """
+    # Tier 1: stat-based ground truth from war_model
+    if stat_two_way_set is not None and player_id is not None:
+        if player_id in stat_two_way_set:
+            return True
+
+    # Tier 2: stat-based from provided season lists
+    if batting_stats and pitching_stats:
+        batting_years = {s.get("year") for s in batting_stats if s.get("ab", 0) >= 130}
+        pitching_years = {s.get("year") for s in pitching_stats if s.get("ip", 0) >= 40}
+        if batting_years & pitching_years:
+            return True
+
+    # Tier 3: tool-based for prospects — pitcher position required
+    if not is_pitcher:
+        return False
+
+    contact = tools.get("contact")
+    power = tools.get("power")
+
+    if contact is not None and power is not None:
+        if contact >= TWO_WAY_CONTACT_THRESHOLD and power >= TWO_WAY_POWER_THRESHOLD:
+            return True
+
+    return False
+
+
+def compute_two_way_scores(
+    hitting_tools: dict,
+    pitching_tools: dict,
+    hitter_weights: dict,
+    pitcher_weights: dict,
+    defense: dict | None = None,
+    def_weights: dict | None = None,
+    arsenal: dict | None = None,
+    stamina: int = 50,
+    role: str = "SP",
+) -> dict:
+    """Compute separate hitter and pitcher Composite_Scores for a two-way player."""
+    hitter_composite = compute_composite_hitter(
+        hitting_tools, hitter_weights,
+        defense or {}, def_weights or {},
+    )
+    pitcher_composite = compute_composite_pitcher(
+        pitching_tools, pitcher_weights,
+        arsenal or {}, stamina, role,
+    )
+
+    if hitter_composite >= pitcher_composite:
+        primary = hitter_composite
+        secondary = pitcher_composite
+    else:
+        primary = pitcher_composite
+        secondary = hitter_composite
+
+    return {
+        "hitter_composite": hitter_composite,
+        "pitcher_composite": pitcher_composite,
+        "primary_composite": primary,
+        "secondary_composite": secondary,
+    }
+
+
+def compute_combined_value(primary_composite: int, secondary_composite: int) -> int:
+    """Compute the combined value for a two-way player.
+
+    Formula: ``primary + min(8, max(0, (secondary - 35) * 0.3))``
+
+    The secondary bonus reflects partial additional value from the secondary
+    role. Only applies when the secondary score exceeds replacement level (35).
+    Capped at +8 to prevent unrealistically high combined scores.
+
+    Args:
+        primary_composite: The higher of the two role scores (20-80).
+        secondary_composite: The lower of the two role scores (20-80).
+
+    Returns:
+        Combined value as an integer. Always >= primary_composite.
+    """
+    secondary_bonus = min(8, max(0, (secondary_composite - 35) * 0.3))
+    return round(primary_composite + secondary_bonus)
+
+
+# ---------------------------------------------------------------------------
+# Divergence detection
+# ---------------------------------------------------------------------------
+
+def detect_divergence(
+    tool_only_score: int,
+    ovr: int | None,
+    components: dict[str, int | None] | None = None,
+    positional_context: dict | None = None,
+) -> dict | None:
+    """Compare Tool_Only_Score against OVR to detect evaluation divergence.
+
+    When components are provided and divergence exists, includes a
+    ``component_context`` key identifying which dimensions are strongest/
+    weakest, sorted by value descending.
+
+    When *positional_context* is provided, adds a ``"positional_context"``
+    annotation for specific divergence/percentile combinations:
+
+    * **landmine** with percentile > 60 → annotation present
+    * **hidden_gem** with percentile < 25 → annotation present
+
+    The existing ±5 threshold logic is unchanged — positional context is
+    additive annotation only.
+
+    Args:
+        tool_only_score: The pre-stat-blend score from tool ratings (20-80).
+        ovr: The game engine's OVR rating, or ``None`` if unavailable.
+        components: Optional dict with component names as keys and scores
+            (int or None) as values. When provided and divergence exists,
+            non-None entries are included in ``component_context`` sorted
+            by value descending.
+        positional_context: Optional dict with keys ``"percentile"``
+            (float 0-100), ``"position"`` (str), ``"median"`` (int).
+            When provided, annotations are added for landmine/hidden_gem
+            cases that meet the percentile thresholds.
+
+    Returns:
+        ``None`` when OVR is ``None``.
+        Otherwise a dict with:
+        - ``"type"``: ``"hidden_gem"`` (tool_only >= ovr + 5),
+          ``"landmine"`` (ovr >= tool_only + 5), or ``"agreement"``.
+        - ``"magnitude"``: ``tool_only_score - ovr``.
+        - ``"tool_only_score"``: the tool-only score.
+        - ``"ovr"``: the OVR value.
+        - ``"component_context"``: (only when components provided and
+          divergence exists) list of dicts with ``"component"`` and
+          ``"value"`` keys, sorted by value descending.
+        - ``"positional_context"``: (only when positional_context provided
+          and annotation criteria met) dict with percentile, position,
+          and median info.
+    """
+    if ovr is None:
+        return None
+
+    diff = tool_only_score - ovr
+
+    if diff >= 5:
+        divergence_type = "hidden_gem"
+    elif diff <= -5:
+        divergence_type = "landmine"
+    else:
+        divergence_type = "agreement"
+
+    result = {
+        "type": divergence_type,
+        "magnitude": diff,
+        "tool_only_score": tool_only_score,
+        "ovr": ovr,
+    }
+
+    # Add component context when divergence exists and components are provided
+    if divergence_type != "agreement" and components is not None:
+        context = [
+            {"component": name, "value": val}
+            for name, val in components.items()
+            if val is not None
+        ]
+        context.sort(key=lambda entry: entry["value"], reverse=True)
+        result["component_context"] = context
+
+    # Add positional context annotation when criteria are met
+    if positional_context is not None and divergence_type != "agreement":
+        percentile = positional_context.get("percentile")
+        if percentile is not None:
+            annotate = False
+            if divergence_type == "landmine" and percentile > 60:
+                annotate = True
+            elif divergence_type == "hidden_gem" and percentile < 25:
+                annotate = True
+            if annotate:
+                result["positional_context"] = {
+                    "percentile": percentile,
+                    "position": positional_context.get("position"),
+                    "median": positional_context.get("median"),
+                }
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Tool profile analysis
+# ---------------------------------------------------------------------------
+
+def classify_archetype(
+    tools: dict,
+    composite: int,
+    is_pitcher: bool = False,
+    arsenal: dict | None = None,
+) -> str:
+    """Classify a player's tool profile into an archetype.
+
+    Hitter archetypes (checked in order):
+    - ``"speed-first"``: speed >= composite + 15
+    - ``"contact-first"``: contact >= composite + 10 AND power < composite
+    - ``"power-over-hit"``: power >= composite + 10 AND contact < composite
+    - ``"elite-defender"``: defensive score >= 65 AND offensive tools < composite
+    - ``"balanced"``: all tools within ±8 of composite
+    - ``"unclassified"``: none of the above
+
+    Pitcher archetypes (checked in order):
+    - ``"pitch-mix-specialist"``: arsenal depth >= 4 pitches at 50+ AND no
+      single pitch >= 65
+    - ``"stuff-over-command"``: stuff >= composite + 10 AND control < composite
+    - ``"command-over-stuff"``: control >= composite + 10 AND stuff < composite
+    - ``"balanced"``: all tools within ±8 of composite
+    - ``"unclassified"``: none of the above
+
+    Args:
+        tools: Tool ratings dict (20-80 scale).
+        composite: The player's Composite_Score.
+        is_pitcher: Whether the player is a pitcher.
+        arsenal: Pitch arsenal dict (pitchers only, for pitch-mix specialist).
+
+    Returns:
+        Archetype string label.
+    """
+    if is_pitcher:
+        # Pitch-mix specialist: 4+ pitches at 50+, no single pitch >= 65
+        if arsenal:
+            pitches_at_50_plus = sum(1 for r in arsenal.values() if r >= 50)
+            max_pitch = max(arsenal.values()) if arsenal else 0
+            if pitches_at_50_plus >= 4 and max_pitch < 65:
+                return "pitch-mix-specialist"
+
+        stuff = tools.get("stuff", 0) or 0
+        control = tools.get("control", 0) or 0
+        movement = tools.get("movement", 0) or 0
+
+        # Stuff-over-command
+        if stuff >= composite + 10 and control < composite:
+            return "stuff-over-command"
+
+        # Command-over-stuff
+        if control >= composite + 10 and stuff < composite:
+            return "command-over-stuff"
+
+        # Balanced: all pitcher tools within ±8
+        pitcher_tools = [stuff, movement, control]
+        if all(abs(t - composite) <= 8 for t in pitcher_tools):
+            return "balanced"
+
+        return "unclassified"
+
+    # Hitter archetypes
+    contact = tools.get("contact", 0) or 0
+    power = tools.get("power", 0) or 0
+    speed = tools.get("speed", 0) or 0
+
+    # Speed-first (checked first — most distinctive)
+    if speed >= composite + 15:
+        return "speed-first"
+
+    # Contact-first
+    if contact >= composite + 10 and power < composite:
+        return "contact-first"
+
+    # Power-over-hit
+    if power >= composite + 10 and contact < composite:
+        return "power-over-hit"
+
+    # Elite defender: defensive score >= 65 AND offensive tools < composite
+    # We check if a "defense" key is present in tools for the defensive score
+    defense_score = tools.get("defense_score", 0) or 0
+    offensive_keys = ["contact", "gap", "power", "eye"]
+    offensive_vals = [tools.get(k, 0) or 0 for k in offensive_keys]
+    if defense_score >= 65 and all(v < composite for v in offensive_vals):
+        return "elite-defender"
+
+    # Balanced: all tools within ±8
+    all_tool_keys = ["contact", "gap", "power", "eye", "speed"]
+    all_vals = [tools.get(k, 0) or 0 for k in all_tool_keys if tools.get(k) is not None]
+    if all_vals and all(abs(v - composite) <= 8 for v in all_vals):
+        return "balanced"
+
+    return "unclassified"
+
+
+def identify_carrying_tools(tools: dict, composite: int) -> list[str]:
+    """Identify tools rated 15+ points above the Composite_Score.
+
+    Args:
+        tools: Tool ratings dict (20-80 scale).
+        composite: The player's Composite_Score.
+
+    Returns:
+        List of tool names that are carrying tools.
+    """
+    carrying = []
+    for key, val in tools.items():
+        if val is not None and isinstance(val, (int, float)):
+            if val >= composite + 15:
+                carrying.append(key)
+    return sorted(carrying)
+
+
+def identify_red_flag_tools(tools: dict, composite: int) -> list[str]:
+    """Identify tools rated 15+ points below the Composite_Score.
+
+    Args:
+        tools: Tool ratings dict (20-80 scale).
+        composite: The player's Composite_Score.
+
+    Returns:
+        List of tool names that are red-flag tools.
+    """
+    red_flags = []
+    for key, val in tools.items():
+        if val is not None and isinstance(val, (int, float)):
+            if val <= composite - 15:
+                red_flags.append(key)
+    return sorted(red_flags)
+
+
+# ---------------------------------------------------------------------------
+# Snapshot delta computation
+# ---------------------------------------------------------------------------
+
+
+def compute_snapshot_deltas(
+    current: dict[str, int | None],
+    previous: dict[str, int | None],
+) -> dict:
+    """Compute tool-level deltas and flags between two rating snapshots.
+
+    Takes two snapshot dicts with keys like ``"composite_score"``,
+    ``"ceiling_score"``, and tool names (e.g. ``"contact"``, ``"power"``).
+    Returns a dict describing the changes.
+
+    Args:
+        current: Most recent snapshot dict. Values are integer ratings or
+            ``None`` for missing tools.
+        previous: Earlier snapshot dict with the same key structure.
+
+    Returns:
+        Dict with:
+        - ``"tool_deltas"``: dict of tool name → delta value (current - previous)
+          for all keys present in both snapshots with non-None values.
+          Component score keys (offensive_grade, baserunning_value,
+          defensive_value) are excluded from tool_deltas.
+        - ``"composite_delta"``: int (current - previous composite_score),
+          or 0 if either is None.
+        - ``"ceiling_delta"``: int (current - previous ceiling_score),
+          or 0 if either is None.
+        - ``"is_riser"``: bool — ``True`` when composite_delta >= 3.
+        - ``"reduced_ceiling"``: bool — ``True`` when ceiling_delta <= -3.
+        - ``"offensive_delta"``: int (current - previous offensive_grade),
+          or 0 if either is None.
+        - ``"baserunning_delta"``: int (current - previous baserunning_value),
+          or 0 if either is None.
+        - ``"defensive_delta"``: int (current - previous defensive_value),
+          or 0 if either is None.
+        - ``"top_component_change"``: str — name of the component with the
+          largest absolute delta ("offensive", "baserunning", or "defensive").
+          Empty string if all component deltas are 0.
+    """
+    # Compute tool-level deltas for all shared non-None keys
+    tool_deltas: dict[str, int] = {}
+    # Exclude meta keys and component score keys — only compute deltas for tool keys
+    _meta_keys = {"player_id", "snapshot_date"}
+    _component_keys = {"offensive_grade", "baserunning_value", "defensive_value"}
+    for key in current:
+        if key in _meta_keys or key in _component_keys:
+            continue
+        cur_val = current.get(key)
+        prev_val = previous.get(key)
+        if cur_val is not None and prev_val is not None:
+            tool_deltas[key] = cur_val - prev_val
+
+    # Composite and ceiling deltas
+    cur_comp = current.get("composite_score")
+    prev_comp = previous.get("composite_score")
+    composite_delta = (cur_comp - prev_comp) if (cur_comp is not None and prev_comp is not None) else 0
+
+    cur_ceil = current.get("ceiling_score")
+    prev_ceil = previous.get("ceiling_score")
+    ceiling_delta = (cur_ceil - prev_ceil) if (cur_ceil is not None and prev_ceil is not None) else 0
+
+    # Component deltas
+    cur_off = current.get("offensive_grade")
+    prev_off = previous.get("offensive_grade")
+    offensive_delta = (cur_off - prev_off) if (cur_off is not None and prev_off is not None) else 0
+
+    cur_br = current.get("baserunning_value")
+    prev_br = previous.get("baserunning_value")
+    baserunning_delta = (cur_br - prev_br) if (cur_br is not None and prev_br is not None) else 0
+
+    cur_def = current.get("defensive_value")
+    prev_def = previous.get("defensive_value")
+    defensive_delta = (cur_def - prev_def) if (cur_def is not None and prev_def is not None) else 0
+
+    # Top component change
+    component_deltas = {
+        "offensive": abs(offensive_delta),
+        "baserunning": abs(baserunning_delta),
+        "defensive": abs(defensive_delta),
+    }
+    max_delta = max(component_deltas.values())
+    top_component_change = "" if max_delta == 0 else max(component_deltas, key=component_deltas.get)
+
+    return {
+        "tool_deltas": tool_deltas,
+        "composite_delta": composite_delta,
+        "ceiling_delta": ceiling_delta,
+        "is_riser": composite_delta >= 3,
+        "reduced_ceiling": ceiling_delta <= -3,
+        "offensive_delta": offensive_delta,
+        "baserunning_delta": baserunning_delta,
+        "defensive_delta": defensive_delta,
+        "top_component_change": top_component_change,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool weight derivation (pure functions)
+# ---------------------------------------------------------------------------
+
+
+def derive_tool_weights(
+    tool_ratings: list[dict],
+    target_values: list[float],
+    min_n: int = 40,
+) -> dict | None:
+    """Derive tool weights from tool rating vectors and target stat values.
+
+    Uses per-feature Pearson correlation with the target. Each feature's
+    weight is proportional to its r² (squared correlation), which measures
+    how much variance in the target that feature explains. This approach
+    avoids multicollinearity issues that plague multivariate OLS with
+    correlated features (e.g., contact and eye) and is robust with small
+    samples.
+
+    Args:
+        tool_ratings: List of dicts, each mapping tool names to numeric
+            ratings (e.g. ``[{"contact": 55, "power": 60}, ...]``).
+            All dicts must have the same keys.
+        target_values: List of target stat values (e.g. OPS+), same length
+            as ``tool_ratings``.
+        min_n: Minimum sample size. Returns ``None`` if N < min_n.
+
+    Returns:
+        Dict mapping tool names to raw (un-normalized) correlation-based
+        coefficients, or ``None`` if N < min_n or the best R² < 0.05
+        (no feature explains meaningful variance).
+    """
+    n = len(tool_ratings)
+    if n < min_n or n != len(target_values):
+        return None
+    if n == 0:
+        return None
+
+    # Identify feature keys from the first record
+    keys = sorted(tool_ratings[0].keys())
+    if not keys:
+        return None
+
+    # Extract target stats
+    ys = target_values
+    my = sum(ys) / n
+    ss_yy = sum((y - my) ** 2 for y in ys)
+    if ss_yy == 0:
+        return None  # no variance in target
+
+    # For each feature, compute Pearson r² with the target
+    coefficients = {}
+    best_r2 = 0.0
+
+    for key in keys:
+        xs = [rec.get(key, 0) or 0 for rec in tool_ratings]
+        mx = sum(xs) / n
+        ss_xx = sum((x - mx) ** 2 for x in xs)
+        if ss_xx == 0:
+            coefficients[key] = 0.0
+            continue
+        ss_xy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+        r = ss_xy / (ss_xx * ss_yy) ** 0.5
+        r2 = r * r
+        # Use signed r² to preserve direction: positive correlation → positive weight
+        # Negative correlations will be clamped to zero by normalize_coefficients()
+        coefficients[key] = r2 if r >= 0 else -r2
+        best_r2 = max(best_r2, r2)
+
+    # Quality gate: if no feature explains >= 5% of variance, bail out
+    if best_r2 < 0.05:
+        return None
+
+    return coefficients
+
+
+def normalize_coefficients(coefficients: dict, min_weight: float = 0.0) -> dict:
+    """Clamp negative coefficients to zero and normalize to sum to 1.0.
+
+    Negative coefficients are clamped because a negative weight would imply
+    that a higher tool rating predicts worse performance, which is
+    nonsensical for weight derivation.
+
+    Args:
+        coefficients: Dict mapping tool names to raw numeric coefficients.
+        min_weight: Minimum weight per feature after normalization. Use > 0
+            to prevent degenerate single-variable solutions (e.g. 0.05 ensures
+            no feature is completely zeroed out). Default 0.0 preserves
+            backward compatibility.
+
+    Returns:
+        Dict with all values >= 0 and summing to 1.0.
+        If all coefficients are zero or negative, returns equal weights.
+    """
+    # Clamp negatives to zero
+    clamped = {k: max(0.0, v) for k, v in coefficients.items()}
+
+    total = sum(clamped.values())
+    if total == 0:
+        # All zeros → equal weights
+        n = len(clamped)
+        if n == 0:
+            return {}
+        equal = 1.0 / n
+        return {k: equal for k in clamped}
+
+    # Normalize to sum to 1.0
+    normalized = {k: v / total for k, v in clamped.items()}
+
+    # Apply minimum weight floor if specified
+    if min_weight > 0 and len(normalized) > 1:
+        # Ensure no feature is below the floor
+        n_features = len(normalized)
+        max_floor = 1.0 / n_features  # can't have floor > equal weight
+        floor = min(min_weight, max_floor)
+
+        below_floor = {k: v for k, v in normalized.items() if v < floor}
+        if below_floor:
+            # Redistribute: set below-floor features to floor, reduce others proportionally
+            deficit = sum(floor - v for v in below_floor.values())
+            above_floor = {k: v for k, v in normalized.items() if v >= floor}
+            above_total = sum(above_floor.values())
+            if above_total > deficit:
+                scale = (above_total - deficit) / above_total
+                normalized = {
+                    k: (floor if k in below_floor else v * scale)
+                    for k, v in normalized.items()
+                }
+            else:
+                # Edge case: can't redistribute enough — use equal weights
+                equal = 1.0 / n_features
+                normalized = {k: equal for k in normalized}
+
+    return normalized
+
+
+def recombine_component_weights(
+    hitting_coeffs: dict,
+    baserunning_coeffs: dict,
+    defense_coeff: float,
+    recombination: dict,
+) -> dict:
+    """Recombine component-level regression weights into a unified profile.
+
+    Scales each component's normalized coefficients by the position-specific
+    domain share (offense, defense, baserunning), then normalizes the final
+    weights to sum to 1.0.
+
+    Speed appears in both the hitting and baserunning components — its total
+    weight is the sum of its contribution from each domain.
+
+    Args:
+        hitting_coeffs: Normalized hitting regression coefficients
+            (e.g. ``{"contact": 0.25, "gap": 0.13, ..., "speed": 0.15}``).
+            Must sum to 1.0.
+        baserunning_coeffs: Normalized baserunning regression coefficients
+            (e.g. ``{"speed": 0.50, "steal": 0.30, "stl_rt": 0.20}``).
+            Must sum to 1.0.
+        defense_coeff: Defense coefficient (always 1.0 for a single-feature
+            regression). Scaled by the defense share.
+        recombination: Position-specific domain shares dict with keys
+            ``"offense"``, ``"defense"``, ``"baserunning"`` summing to 1.0.
+
+    Returns:
+        Dict with unified weights for all tools plus ``"defense"``,
+        all non-negative and summing to 1.0 (±0.01).
+    """
+    offense_share = recombination.get("offense", 0.0)
+    defense_share = recombination.get("defense", 0.0)
+    baserunning_share = recombination.get("baserunning", 0.0)
+
+    # Start with hitting coefficients scaled by offense share
+    final: dict[str, float] = {}
+    for key, coeff in hitting_coeffs.items():
+        final[key] = coeff * offense_share
+
+    # Add baserunning coefficients scaled by baserunning share
+    # Speed appears in both — accumulate
+    for key, coeff in baserunning_coeffs.items():
+        final[key] = final.get(key, 0.0) + coeff * baserunning_share
+
+    # Defense gets the defense share directly
+    final["defense"] = defense_coeff * defense_share
+
+    # Normalize to sum to 1.0
+    total = sum(final.values())
+    if total > 0:
+        final = {k: v / total for k, v in final.items()}
+    else:
+        # Fallback: equal weights
+        n = len(final)
+        if n > 0:
+            equal = 1.0 / n
+            final = {k: equal for k in final}
+
+    return final
+
+# ---------------------------------------------------------------------------
+# Batch pipeline entry point — ONLY function with side effects (DB reads/writes)
+# ---------------------------------------------------------------------------
+
+# DB column → player_utils expected key mapping (mirrors calibrate._KEY_MAP)
+_KEY_MAP = {
+    "pot_c": "PotC", "pot_ss": "PotSS", "pot_second_b": "Pot2B",
+    "pot_third_b": "Pot3B", "pot_first_b": "Pot1B", "pot_lf": "PotLF",
+    "pot_cf": "PotCF", "pot_rf": "PotRF",
+    "c": "C", "ss": "SS", "second_b": "2B", "third_b": "3B",
+    "first_b": "1B", "lf": "LF", "cf": "CF", "rf": "RF",
+    "stm": "Stm", "ovr": "Ovr", "pot": "Pot",
+    "pot_fst": "PotFst", "pot_snk": "PotSnk", "pot_crv": "PotCrv",
+    "pot_sld": "PotSld", "pot_chg": "PotChg", "pot_splt": "PotSplt",
+    "pot_cutt": "PotCutt", "pot_cir_chg": "PotCirChg", "pot_scr": "PotScr",
+    "pot_frk": "PotFrk", "pot_kncrv": "PotKncrv", "pot_knbl": "PotKnbl",
+}
+
+# Pitch DB columns and their corresponding potential columns
+_PITCH_COLS = ["fst", "snk", "crv", "sld", "chg", "splt", "cutt",
+               "cir_chg", "scr", "frk", "kncrv", "knbl"]
+
+# Role ID → role string for assign_bucket
+_ROLE_MAP = {11: "starter", 12: "reliever", 13: "closer"}
+
+
+def _build_player_dict(row: dict) -> dict:
+    """Build a player dict suitable for assign_bucket() from a DB row.
+
+    Maps DB column names to the keys expected by player_utils functions
+    (PotC, PotSS, Stm, etc.) and sets Pos, _role, Age.
+    """
+    p = dict(row)
+    p["Pos"] = str(p.get("pos") or "")
+    role_int = p.get("role") or 0
+    p["_role"] = _ROLE_MAP.get(role_int, "")
+    p["Age"] = p.get("age", 99)
+    for db_key, api_key in _KEY_MAP.items():
+        if db_key in p:
+            v = p[db_key]
+            if isinstance(v, (int, float)):
+                p[api_key] = v
+            elif v is not None and str(v).lstrip("-").isdigit():
+                p[api_key] = int(v)
+            else:
+                p[api_key] = 0
+    return p
+
+
+def _extract_hitter_tools(row: dict, norm_fn) -> dict[str, int | None]:
+    """Extract and normalize hitter tool ratings from a DB row.
+
+    Handles L/R splits: when both _l and _r variants exist, computes
+    weighted average (60% vs-RHP, 40% vs-LHP). Falls back to overall.
+
+    Returns dict with keys: contact, gap, power, eye, speed, steal, stl_rt.
+
+    Note: avoid_k (Ks rating) is excluded. Contact is a composite of BABIP
+    and K-avoidance in the OOTP engine, so including both double-counts
+    the K-avoidance signal.
+    """
+    tool_map = {
+        "contact": ("cntct", "cntct_r", "cntct_l"),
+        "gap": ("gap", "gap_r", "gap_l"),
+        "power": ("pow", "pow_r", "pow_l"),
+        "eye": ("eye", "eye_r", "eye_l"),
+    }
+    tools: dict[str, int | None] = {}
+    for key, (overall_col, r_col, l_col) in tool_map.items():
+        r_val = norm_fn(row.get(r_col))
+        l_val = norm_fn(row.get(l_col))
+        if r_val is not None and l_val is not None:
+            tools[key] = round(r_val * 0.6 + l_val * 0.4)
+        else:
+            tools[key] = norm_fn(row.get(overall_col))
+
+    tools["speed"] = norm_fn(row.get("speed"))
+    tools["steal"] = norm_fn(row.get("steal"))
+    tools["stl_rt"] = norm_fn(row.get("stl_rt"))
+    return tools
+
+
+def _extract_potential_hitter_tools(row: dict, norm_fn) -> dict[str, int | None]:
+    """Extract potential hitter tool ratings from a DB row."""
+    return {
+        "contact": norm_fn(row.get("pot_cntct")),
+        "gap": norm_fn(row.get("pot_gap")),
+        "power": norm_fn(row.get("pot_pow")),
+        "eye": norm_fn(row.get("pot_eye")),
+        "speed": norm_fn(row.get("speed")),  # speed doesn't have a pot_ variant
+        "steal": norm_fn(row.get("steal")),
+        "stl_rt": norm_fn(row.get("stl_rt")),
+    }
+
+
+def _extract_pitcher_tools(row: dict, norm_fn) -> dict[str, int | None]:
+    """Extract and normalize pitcher tool ratings from a DB row.
+
+    Includes stuff L/R splits for platoon balance detection.
+    """
+    tools: dict[str, int | None] = {}
+    tools["stuff"] = norm_fn(row.get("stf"))
+    tools["movement"] = norm_fn(row.get("mov"))
+    tools["control"] = norm_fn(row.get("ctrl"))
+
+    # L/R splits for platoon balance penalty
+    tools["stuff_l"] = norm_fn(row.get("stf_l"))
+    tools["stuff_r"] = norm_fn(row.get("stf_r"))
+    return tools
+
+
+def _extract_potential_pitcher_tools(row: dict, norm_fn) -> dict[str, int | None]:
+    """Extract potential pitcher tool ratings from a DB row."""
+    return {
+        "stuff": norm_fn(row.get("pot_stf")),
+        "movement": norm_fn(row.get("pot_mov")),
+        "control": norm_fn(row.get("pot_ctrl")),
+    }
+
+
+def _extract_arsenal(row: dict, norm_fn) -> dict[str, int]:
+    """Extract pitch arsenal from a DB row. Returns {pitch_name: normalized_rating}."""
+    arsenal: dict[str, int] = {}
+    for col in _PITCH_COLS:
+        raw = row.get(col)
+        val = norm_fn(raw)
+        if val is not None:
+            arsenal[col] = val
+    return arsenal
+
+
+def _extract_defense_tools(row: dict) -> dict[str, int | None]:
+    """Extract raw defensive tool ratings from a DB row.
+
+    Maps DB column names to the keys expected by DEFENSIVE_WEIGHTS
+    (CFrm, CBlk, CArm, IFR, IFE, IFA, TDP, OFR, OFE, OFA).
+    """
+    return {
+        "CFrm": row.get("c_frm"),
+        "CBlk": row.get("c_blk"),
+        "CArm": row.get("c_arm"),
+        "IFR": row.get("ifr"),
+        "IFE": row.get("ife"),
+        "IFA": row.get("ifa"),
+        "TDP": row.get("tdp"),
+        "OFR": row.get("ofr"),
+        "OFE": row.get("ofe"),
+        "OFA": row.get("ofa"),
+        "LF": row.get("lf"),
+        "RF": row.get("rf"),
+    }
+
+
+def _get_def_weights_for_bucket(bucket: str) -> dict[str, float]:
+    """Return DEFENSIVE_WEIGHTS for a bucket, importing from fv_model."""
+    from fv_model import DEFENSIVE_WEIGHTS
+    if bucket == "COF":
+        # Use the better of LF/RF weights — compute both in compute_composite_hitter
+        # For COF, we pass both COF_LF and COF_RF and let the caller pick max
+        # But for weight selection, we use COF_LF as the representative set
+        return DEFENSIVE_WEIGHTS.get("COF_LF", {})
+    return DEFENSIVE_WEIGHTS.get(bucket, {})
+
+
+def _compute_defensive_score_for_bucket(
+    defense_tools: dict, bucket: str, norm_fn
+) -> float:
+    """Compute weighted defensive score for a bucket using fv_model.defensive_score.
+
+    This mirrors the approach in fv_model.py but works with our extracted tools.
+    """
+    from fv_model import DEFENSIVE_WEIGHTS
+
+    def _n(val):
+        return norm_fn(val) or 0
+
+    if bucket == "COF":
+        lf = sum(
+            _n(defense_tools.get(f, 0) or 0) * w
+            for f, w in DEFENSIVE_WEIGHTS.get("COF_LF", {}).items()
+        )
+        rf = sum(
+            _n(defense_tools.get(f, 0) or 0) * w
+            for f, w in DEFENSIVE_WEIGHTS.get("COF_RF", {}).items()
+        )
+        return max(lf, rf)
+
+    weights = DEFENSIVE_WEIGHTS.get(bucket)
+    if not weights:
+        return 0.0
+    return sum(_n(defense_tools.get(f, 0) or 0) * w for f, w in weights.items())
+
+
+def _load_qualifying_stat_seasons(
+    conn: sqlite3.Connection,
+    player_id: int,
+    is_pitcher: bool,
+) -> list[dict]:
+    """Load qualifying stat seasons for an MLB player, most recent first.
+
+    Hitters: AB >= 130, split_id=1
+    Pitchers: IP >= 40 (SP) or IP >= 20 (RP), split_id=1
+
+    Returns list of dicts with year, obp, slg (hitters) or ip, k, bb, hra, hp (pitchers).
+    """
+    if is_pitcher:
+        rows = conn.execute("""
+            SELECT year, ip, k, bb, hra, hp, gs
+            FROM pitching_stats
+            WHERE player_id = ? AND split_id = 1
+              AND ((gs > 3 AND ip >= 40) OR (gs <= 3 AND ip >= 20))
+            ORDER BY year DESC
+        """, (player_id,)).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT year, obp, slg, ab
+            FROM batting_stats
+            WHERE player_id = ? AND split_id = 1 AND ab >= 130
+            ORDER BY year DESC
+        """, (player_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _compute_stat_signal(
+    stat_seasons: list[dict],
+    is_pitcher: bool,
+    lg_obp: float,
+    lg_slg: float,
+    lg_era: float,
+) -> list[float]:
+    """Convert qualifying stat seasons to 20-80 scale values.
+
+    Hitters: OPS+ = 100 × (OBP/lgOBP + SLG/lgSLG - 1) → stat_to_2080()
+    Pitchers: FIP → inverted to FIP- equivalent → stat_to_2080()
+
+    Returns list of 20-80 values, most recent first.
+    """
+    result: list[float] = []
+    for season in stat_seasons:
+        if is_pitcher:
+            ip = season.get("ip") or 0
+            if ip <= 0:
+                continue
+            hra = season.get("hra") or 0
+            bb = season.get("bb") or 0
+            hp = season.get("hp") or 0
+            k = season.get("k") or 0
+            fip = (13.0 * hra + 3.0 * (bb + hp) - 2.0 * k) / ip + lg_era
+            # Convert FIP to a "plus" stat: lower FIP = better
+            # FIP- = FIP / lgERA × 100; invert so higher = better
+            if lg_era > 0:
+                fip_minus = (fip / lg_era) * 100.0
+                # Invert: 200 - fip_minus gives us a "higher is better" stat
+                # where 100 = league average
+                stat_plus = 200.0 - fip_minus
+            else:
+                stat_plus = 100.0
+        else:
+            obp = season.get("obp") or 0
+            slg = season.get("slg") or 0
+            if lg_obp <= 0 or lg_slg <= 0:
+                continue
+            stat_plus = 100.0 * (obp / lg_obp + slg / lg_slg - 1.0)
+
+        result.append(pitcher_stat_to_2080(stat_plus) if is_pitcher else stat_to_2080(stat_plus))
+    return result
+
+
+def _load_league_averages(league_dir: Path) -> tuple[float, float, float]:
+    """Load league averages for stat normalization.
+
+    Returns (lg_obp, lg_slg, lg_era).
+    """
+    try:
+        with open(league_dir / "config" / "league_averages.json") as f:
+            avgs = json.load(f)
+        lg_obp = avgs.get("batting", {}).get("obp", 0.320)
+        lg_slg = avgs.get("batting", {}).get("slg", 0.420)
+        lg_era = avgs.get("pitching", {}).get("era", 4.50)
+        return lg_obp, lg_slg, lg_era
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return 0.320, 0.420, 4.50
+
+
+def run(
+    league_dir: Path | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Compute Composite_Score, Ceiling_Score, and Tool_Only_Score for all players.
+
+    This is the **only** function in the module with side effects (DB reads/writes).
+    All computation is delegated to pure functions.
+
+    Args:
+        league_dir: Path to the league data directory. When ``None``, resolved
+            via ``league_context.get_league_dir()``.
+        conn: SQLite connection. When ``None``, created via ``db.get_conn()``.
+
+    Side effects:
+        - Reads from ``ratings``, ``players``, ``batting_stats``, ``pitching_stats``
+        - Writes ``composite_score``, ``ceiling_score``, ``tool_only_score``,
+          ``secondary_composite`` to the ``ratings`` table
+        - Writes ``composite_score``, ``ceiling_score`` to ``ratings_history``
+          for the current snapshot date
+
+    Error handling:
+        - Players with no tool ratings are skipped
+        - Players with partial tools get partial scores (confidence="partial")
+        - On failure, all writes are rolled back
+    """
+    # -- Resolve dependencies via injection or defaults --
+    if league_dir is None:
+        from league_context import get_league_dir as _get_league_dir
+        league_dir = _get_league_dir()
+
+    own_conn = False
+    if conn is None:
+        import db as _db
+        conn = _db.get_conn(league_dir)
+        own_conn = True
+
+    try:
+        _run_impl(conn, league_dir)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        if own_conn:
+            conn.close()
+
+
+def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
+    """Internal implementation of the batch evaluation pipeline."""
+    from ratings import norm as _norm
+    from player_utils import assign_bucket as _assign_bucket
+    from fv_model import DEFENSIVE_WEIGHTS
+
+    # -- Load tool weights --
+    weights = load_tool_weights(league_dir)
+    hitter_weights = weights.get("hitter", DEFAULT_TOOL_WEIGHTS["hitter"])
+    pitcher_weights = weights.get("pitcher", DEFAULT_TOOL_WEIGHTS["pitcher"])
+
+    # -- Load carrying tool config --
+    ct_config = load_carrying_tool_config(league_dir)
+
+    # -- Load league averages for MLB stat blending --
+    lg_obp, lg_slg, lg_era = _load_league_averages(league_dir)
+
+    # -- Load stat-based two-way set from war_model --
+    # This is the ground truth for players with qualifying seasons in both
+    # batting and pitching. Falls back to empty set if unavailable.
+    stat_two_way: set = set()
+    try:
+        from league_config import config as _lc
+        game_date = _lc.game_date
+        if game_date:
+            from war_model import load_stat_history as _load_stat_history
+            _, _, stat_two_way = _load_stat_history(conn, game_date)
+    except Exception as exc:
+        log.warning("Could not load stat-based two-way set: %s — falling back to tool-based detection only", exc)
+
+    # -- Query all players with their latest ratings --
+    rows = conn.execute("""
+        SELECT r.*, p.age, p.pos, p.role, p.level, p.player_id as pid
+        FROM ratings r
+        JOIN players p ON r.player_id = p.player_id
+        WHERE r.snapshot_date = (SELECT MAX(snapshot_date) FROM ratings)
+    """).fetchall()
+
+    if not rows:
+        return
+
+    snapshot_date = rows[0]["snapshot_date"]
+
+    # -- Ensure positional context columns exist (idempotent migration) --
+    _existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(ratings)").fetchall()}
+    for _col, _typ in [("positional_percentile", "REAL"), ("positional_median", "INTEGER")]:
+        if _col not in _existing_cols:
+            conn.execute(f"ALTER TABLE ratings ADD COLUMN {_col} {_typ}")
+
+    # -- Pass 1: Compute all scores and collect MLB hitter offensive grades --
+    ratings_updates: list[tuple] = []
+    history_updates: list[tuple] = []
+
+    # Collect MLB hitter offensive grades by position bucket for median computation
+    mlb_offensive_grades: dict[str, list[int]] = {}
+
+    # Store per-player info needed for Pass 2 (positional context enrichment)
+    # Each entry: (index_into_ratings_updates, bucket, offensive_grade, is_mlb,
+    #              is_pitcher, tool_only_score, ovr, components_dict)
+    pass2_hitter_info: list[dict] = []
+
+    for row in rows:
+        row_dict = dict(row)
+        player_id = row_dict["player_id"]
+
+        # Build player dict for assign_bucket
+        p = _build_player_dict(row_dict)
+        pos = p.get("pos") or ""
+        role_int = p.get("role") or 0
+        is_pitcher = (
+            str(pos) == "1"
+            or p.get("_role") in ("starter", "reliever", "closer")
+        )
+
+        # Determine bucket
+        try:
+            bucket = _assign_bucket(p, use_pot=False)
+        except Exception:
+            bucket = "COF" if not is_pitcher else "SP"
+
+        # Extract tools
+        hitter_tools = _extract_hitter_tools(row_dict, _norm)
+        pitcher_tools = _extract_pitcher_tools(row_dict, _norm)
+        potential_hitter_tools = _extract_potential_hitter_tools(row_dict, _norm)
+        potential_pitcher_tools = _extract_potential_pitcher_tools(row_dict, _norm)
+        defense_tools = _extract_defense_tools(row_dict)
+        arsenal = _extract_arsenal(row_dict, _norm)
+        stamina = _norm(row_dict.get("stm")) or 50
+
+        # Check if player has any tool ratings at all
+        if is_pitcher:
+            has_tools = any(
+                v is not None
+                for v in (pitcher_tools.get("stuff"), pitcher_tools.get("movement"),
+                          pitcher_tools.get("control"))
+            )
+        else:
+            has_tools = any(
+                v is not None
+                for k, v in hitter_tools.items()
+                if k in ("contact", "gap", "power", "eye")
+            )
+
+        if not has_tools:
+            continue  # skip players with no tool ratings
+
+        # Determine confidence
+        if is_pitcher:
+            all_present = all(
+                pitcher_tools.get(k) is not None
+                for k in ("stuff", "movement", "control")
+            )
+        else:
+            all_present = all(
+                hitter_tools.get(k) is not None
+                for k in ("contact", "gap", "power", "eye")
+            )
+        confidence = "full" if all_present else "partial"
+
+        # -- Detect two-way player --
+        two_way_hitting = {
+            k: v for k, v in hitter_tools.items()
+            if v is not None
+        }
+        two_way_pitching = {
+            k: v for k, v in pitcher_tools.items()
+            if k in ("stuff", "movement", "control") and v is not None
+        }
+        two_way = is_two_way_player(
+            {**two_way_hitting, **two_way_pitching},
+            is_pitcher=is_pitcher,
+            stat_two_way_set=stat_two_way,
+            player_id=player_id,
+        )
+
+        # -- Compute scores --
+        composite_score: int
+        ceiling_score: int
+        tool_only_score: int
+        secondary_composite: int | None = None
+
+        # Component scores (populated per branch)
+        offensive_grade: int | None = None
+        baserunning_value: int | None = None
+        defensive_value: int | None = None
+        durability_score: int | None = None
+
+        # Component ceilings (populated per branch)
+        offensive_ceiling: int | None = None
+        baserunning_ceiling: int | None = None
+        defensive_ceiling: int | None = None
+
+        # Carrying tool bonus (populated per branch for hitters)
+        ct_bonus: float = 0.0
+        ct_breakdown: list[dict] = []
+        ceiling_ct_bonus: float = 0.0
+        ceiling_ct_breakdown: list[dict] = []
+
+        if two_way:
+            # Get weights for hitter bucket
+            hitter_bucket = bucket if bucket not in ("SP", "RP") else "COF"
+            h_weights = hitter_weights.get(hitter_bucket, hitter_weights.get("COF", {}))
+            # Get weights for pitcher role
+            pitcher_role = bucket if bucket in ("SP", "RP") else "SP"
+            p_weights = pitcher_weights.get(pitcher_role, pitcher_weights.get("SP", {}))
+
+            def_weights = _get_def_weights_for_bucket(hitter_bucket)
+
+            two_way_result = compute_two_way_scores(
+                hitting_tools=hitter_tools,
+                pitching_tools=pitcher_tools,
+                hitter_weights=h_weights,
+                pitcher_weights=p_weights,
+                defense=defense_tools,
+                def_weights=def_weights,
+                arsenal=arsenal,
+                stamina=stamina,
+                role=pitcher_role,
+            )
+
+            composite_score = two_way_result["primary_composite"]
+            secondary_composite = two_way_result["secondary_composite"]
+            tool_only_score = composite_score  # pre-blend for two-way
+
+            # Ceiling: compute for both roles, take higher
+            player_age = row_dict.get("age") or 25
+            player_pot = row_dict.get("pot")
+            h_ceiling = compute_ceiling(
+                potential_hitter_tools, h_weights, two_way_result["hitter_composite"],
+                accuracy=row_dict.get("acc") or "A",
+                work_ethic=row_dict.get("wrk_ethic") or "N",
+                defense=defense_tools,
+                def_weights=def_weights,
+                age=player_age,
+                pot=player_pot,
+            )
+            p_ceiling = compute_ceiling(
+                potential_pitcher_tools, p_weights, two_way_result["pitcher_composite"],
+                accuracy=row_dict.get("acc") or "A",
+                work_ethic=row_dict.get("wrk_ethic") or "N",
+                is_pitcher=True,
+                arsenal=arsenal,
+                stamina=stamina,
+                role=pitcher_role,
+                age=player_age,
+                pot=player_pot,
+            )
+
+            ceiling_score = max(h_ceiling, p_ceiling)
+
+            # Component scores for two-way: compute hitter components
+            offensive_grade = compute_offensive_grade(hitter_tools, h_weights)
+            baserunning_value = compute_baserunning_value(hitter_tools, h_weights)
+            defensive_value = compute_defensive_value(defense_tools, def_weights)
+
+            # Apply carrying tool bonus to offensive grade (two-way hitter side)
+            raw_off = _offensive_grade_raw(hitter_tools, h_weights)
+            if raw_off is not None:
+                offensive_grade, ct_bonus, ct_breakdown = apply_carrying_tool_bonus(
+                    raw_off, hitter_tools, hitter_bucket, ct_config,
+                )
+
+            # Recompute hitter composite with enhanced offensive grade for two-way
+            if ct_bonus > 0:
+                recombo = weights.get("recombination", DEFAULT_TOOL_WEIGHTS["recombination"])
+                bucket_recombo = recombo.get(hitter_bucket, recombo.get("COF", {}))
+                enhanced_hitter_composite = derive_composite_from_components(
+                    offensive_grade, baserunning_value, defensive_value,
+                    bucket_recombo,
+                )
+                # Re-derive primary/secondary with enhanced hitter composite
+                pitcher_composite = two_way_result["pitcher_composite"]
+                if enhanced_hitter_composite >= pitcher_composite:
+                    composite_score = enhanced_hitter_composite
+                    secondary_composite = pitcher_composite
+                else:
+                    composite_score = pitcher_composite
+                    secondary_composite = enhanced_hitter_composite
+                tool_only_score = composite_score
+
+            # Component ceilings for two-way (hitter side)
+            current_components = {
+                "offensive_grade": offensive_grade,
+                "baserunning_value": baserunning_value,
+                "defensive_value": defensive_value,
+            }
+            ceilings = compute_component_ceilings(
+                potential_hitter_tools, h_weights, current_components,
+                defense=defense_tools, def_weights=def_weights,
+                age=player_age,
+                ct_config=ct_config, position=hitter_bucket,
+            )
+            offensive_ceiling = ceilings.get("offensive_ceiling")
+            baserunning_ceiling = ceilings.get("baserunning_ceiling")
+            defensive_ceiling = ceilings.get("defensive_ceiling")
+            ceiling_ct_bonus = ceilings.get("ceiling_carrying_tool_bonus", 0.0)
+            ceiling_ct_breakdown = ceilings.get("ceiling_carrying_tool_breakdown", [])
+
+            # Boost ceiling_score by the ceiling carrying tool bonus (Req 6.5)
+            if ceiling_ct_bonus > 0:
+                ceiling_score = max(20, min(80, ceiling_score + round(ceiling_ct_bonus)))
+
+        elif is_pitcher:
+            role = bucket if bucket in ("SP", "RP") else "SP"
+            p_weights = pitcher_weights.get(role, pitcher_weights.get("SP", {}))
+
+            tool_only_score = compute_composite_pitcher(
+                pitcher_tools, p_weights, arsenal, stamina, role,
+            )
+            composite_score = tool_only_score
+
+            # Ceiling
+            player_age = row_dict.get("age") or 25
+            ceiling_score = compute_ceiling(
+                potential_pitcher_tools, p_weights,
+                composite_score,
+                accuracy=row_dict.get("acc") or "A",
+                work_ethic=row_dict.get("wrk_ethic") or "N",
+                is_pitcher=True,
+                arsenal=arsenal,
+                stamina=stamina,
+                role=role,
+                age=player_age,
+                pot=row_dict.get("pot"),
+            )
+
+            # Component scores for pitchers:
+            # pitching composite stored as offensive_grade (primary skill component)
+            offensive_grade = tool_only_score
+            # durability for SP only
+            durability_score = compute_durability_score(stamina, role)
+
+            # Component ceilings for pitchers
+            current_components = {"offensive_grade": offensive_grade}
+            ceilings = compute_component_ceilings(
+                potential_pitcher_tools, p_weights, current_components,
+                is_pitcher=True, arsenal=arsenal, stamina=stamina, role=role,
+                age=player_age,
+            )
+            offensive_ceiling = ceilings.get("offensive_ceiling")
+            baserunning_ceiling = ceilings.get("baserunning_ceiling")
+            defensive_ceiling = ceilings.get("defensive_ceiling")
+
+        else:
+            # Hitter
+            h_weights = hitter_weights.get(bucket, hitter_weights.get("COF", {}))
+            def_weights = _get_def_weights_for_bucket(bucket)
+
+            tool_only_score = compute_composite_hitter(
+                hitter_tools, h_weights, defense_tools, def_weights,
+            )
+            composite_score = tool_only_score
+
+            # Ceiling
+            player_age = row_dict.get("age") or 25
+            ceiling_score = compute_ceiling(
+                potential_hitter_tools, h_weights,
+                composite_score,
+                accuracy=row_dict.get("acc") or "A",
+                work_ethic=row_dict.get("wrk_ethic") or "N",
+                defense=defense_tools,
+                def_weights=def_weights,
+                age=player_age,
+                pot=row_dict.get("pot"),
+            )
+
+            # Component scores for hitters
+            offensive_grade = compute_offensive_grade(hitter_tools, h_weights)
+            baserunning_value = compute_baserunning_value(hitter_tools, h_weights)
+            defensive_value = compute_defensive_value(defense_tools, def_weights)
+
+            # Apply carrying tool bonus to offensive grade
+            raw_off = _offensive_grade_raw(hitter_tools, h_weights)
+            if raw_off is not None:
+                offensive_grade, ct_bonus, ct_breakdown = apply_carrying_tool_bonus(
+                    raw_off, hitter_tools, bucket, ct_config,
+                )
+
+            # Recompute composite with enhanced offensive grade (carrying tool
+            # bonus flows through the offensive component only — Req 7.1, 7.2)
+            if ct_bonus > 0:
+                recombo = weights.get("recombination", DEFAULT_TOOL_WEIGHTS["recombination"])
+                bucket_recombo = recombo.get(bucket, recombo.get("COF", {}))
+                composite_score = derive_composite_from_components(
+                    offensive_grade, baserunning_value, defensive_value,
+                    bucket_recombo,
+                )
+                tool_only_score = composite_score
+
+            # Component ceilings for hitters
+            current_components = {
+                "offensive_grade": offensive_grade,
+                "baserunning_value": baserunning_value,
+                "defensive_value": defensive_value,
+            }
+            ceilings = compute_component_ceilings(
+                potential_hitter_tools, h_weights, current_components,
+                defense=defense_tools, def_weights=def_weights,
+                age=player_age,
+                ct_config=ct_config, position=bucket,
+            )
+            offensive_ceiling = ceilings.get("offensive_ceiling")
+            baserunning_ceiling = ceilings.get("baserunning_ceiling")
+            defensive_ceiling = ceilings.get("defensive_ceiling")
+            ceiling_ct_bonus = ceilings.get("ceiling_carrying_tool_bonus", 0.0)
+            ceiling_ct_breakdown = ceilings.get("ceiling_carrying_tool_breakdown", [])
+
+            # Boost ceiling_score by the ceiling carrying tool bonus (Req 6.5)
+            if ceiling_ct_bonus > 0:
+                ceiling_score = max(20, min(80, ceiling_score + round(ceiling_ct_bonus)))
+
+        # -- MLB stat blending --
+        level = row_dict.get("level")
+        is_mlb = (level == "1" or level == 1)
+        if is_mlb:
+            stat_seasons = _load_qualifying_stat_seasons(conn, player_id, is_pitcher)
+            if stat_seasons:
+                stat_2080_values = _compute_stat_signal(
+                    stat_seasons, is_pitcher, lg_obp, lg_slg, lg_era,
+                )
+                if stat_2080_values:
+                    peak_age = 27 if is_pitcher else 28
+                    player_age = row_dict.get("age") or 28
+                    composite_score = compute_composite_mlb(
+                        tool_only_score, stat_2080_values,
+                        peak_age=peak_age, player_age=player_age,
+                        is_pitcher=is_pitcher,
+                    )
+
+        # Ensure ceiling >= composite after stat blending
+        ceiling_score = max(ceiling_score, composite_score)
+
+        # -- Divergence detection with component context (Pass 1 — no positional context yet) --
+        ovr = row_dict.get("ovr")
+        components_dict = {
+            "offensive_grade": offensive_grade,
+            "baserunning_value": baserunning_value,
+            "defensive_value": defensive_value,
+        }
+        divergence = detect_divergence(tool_only_score, ovr, components=components_dict)
+
+        # Collect MLB hitter offensive grades for positional median computation
+        is_hitter = not is_pitcher
+        if is_mlb and is_hitter and offensive_grade is not None:
+            mlb_offensive_grades.setdefault(bucket, []).append(offensive_grade)
+
+        # Collect update tuples (positional_percentile and positional_median
+        # are None initially — Pass 2 will fill them in for qualifying hitters)
+        positional_percentile: float | None = None
+        positional_median: int | None = None
+
+        ratings_updates.append((
+            composite_score, ceiling_score, tool_only_score, secondary_composite,
+            offensive_grade, baserunning_value, defensive_value,
+            durability_score, offensive_ceiling,
+            positional_percentile, positional_median,
+            player_id, snapshot_date,
+        ))
+        history_updates.append((
+            composite_score, ceiling_score,
+            offensive_grade, baserunning_value, defensive_value,
+            durability_score, offensive_ceiling,
+            player_id, snapshot_date,
+        ))
+
+        # Store info for Pass 2 divergence enrichment (hitters only)
+        if is_hitter and offensive_grade is not None:
+            pass2_hitter_info.append({
+                "index": len(ratings_updates) - 1,
+                "bucket": bucket,
+                "offensive_grade": offensive_grade,
+                "is_mlb": is_mlb,
+                "tool_only_score": tool_only_score,
+                "ovr": ovr,
+                "components_dict": components_dict,
+            })
+
+    # -- Median computation (between Pass 1 and Pass 2) --
+    positional_medians = compute_positional_medians(mlb_offensive_grades)
+
+    # -- Pass 2: Enrich divergence reports with positional context --
+    for info in pass2_hitter_info:
+        idx = info["index"]
+        bucket = info["bucket"]
+        off_grade = info["offensive_grade"]
+        ovr = info["ovr"]
+
+        # Compute positional percentile for this hitter
+        pct = compute_positional_percentile(
+            off_grade, bucket, positional_medians, mlb_offensive_grades,
+        )
+
+        # Get the median for this bucket (if available)
+        bucket_stats = positional_medians.get(bucket)
+        pos_median = bucket_stats["median"] if bucket_stats else None
+
+        # Store positional context in the ratings update tuple
+        if pct is not None or pos_median is not None:
+            old_tuple = ratings_updates[idx]
+            # Replace positional_percentile (index 9) and positional_median (index 10)
+            ratings_updates[idx] = (
+                old_tuple[0], old_tuple[1], old_tuple[2], old_tuple[3],
+                old_tuple[4], old_tuple[5], old_tuple[6],
+                old_tuple[7], old_tuple[8],
+                pct, pos_median,
+                old_tuple[11], old_tuple[12],
+            )
+
+        # Re-run divergence detection with positional context for hitters
+        # that had divergence in Pass 1
+        divergence = detect_divergence(
+            info["tool_only_score"], ovr, components=info["components_dict"],
+        )
+        if divergence and divergence.get("type") != "agreement" and pct is not None:
+            positional_ctx = {
+                "percentile": pct,
+                "position": bucket,
+                "median": pos_median,
+            }
+            detect_divergence(
+                info["tool_only_score"], ovr,
+                components=info["components_dict"],
+                positional_context=positional_ctx,
+            )
+
+    # -- Batch write to ratings table --
+    conn.executemany("""
+        UPDATE ratings
+        SET composite_score = ?, ceiling_score = ?, tool_only_score = ?,
+            secondary_composite = ?,
+            offensive_grade = ?, baserunning_value = ?, defensive_value = ?,
+            durability_score = ?, offensive_ceiling = ?,
+            positional_percentile = ?, positional_median = ?
+        WHERE player_id = ? AND snapshot_date = ?
+    """, ratings_updates)
+
+    # -- Write to ratings_history for current snapshot --
+    # First check if ratings_history has the composite_score column
+    try:
+        hist_cols = {r[1] for r in conn.execute("PRAGMA table_info(ratings_history)").fetchall()}
+        if "composite_score" in hist_cols:
+            conn.executemany("""
+                UPDATE ratings_history
+                SET composite_score = ?, ceiling_score = ?,
+                    offensive_grade = ?, baserunning_value = ?, defensive_value = ?,
+                    durability_score = ?, offensive_ceiling = ?
+                WHERE player_id = ? AND snapshot_date = ?
+            """, history_updates)
+    except Exception:
+        pass  # ratings_history may not exist or may not have the columns yet
+
+    conn.commit()

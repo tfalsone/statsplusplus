@@ -24,6 +24,12 @@ import db as _db
 from league_context import get_league_dir
 from league_config import config as _cfg
 from player_utils import assign_bucket
+from ratings import norm
+from fv_model import defensive_score, DEFENSIVE_WEIGHTS
+from evaluation_engine import (
+    derive_tool_weights, normalize_coefficients, recombine_component_weights,
+    DEFAULT_TOOL_WEIGHTS,
+)
 from constants import (OVR_TO_WAR, FV_TO_PEAK_WAR, FV_TO_PEAK_WAR_RP,
                         ARB_PCT, SCARCITY_MULT, MIN_REGRESSION_N, CALIBRATION_YEARS,
                         DEFAULT_DOLLARS_PER_WAR, DEFAULT_MINIMUM_SALARY)
@@ -79,6 +85,340 @@ def _bucket_player(row, role_map):
             v = p[db_key]
             p[api_key] = v if isinstance(v, (int, float)) else (int(v) if str(v).lstrip('-').isdigit() else 0)
     return assign_bucket(p, use_pot=False)
+
+
+# ---------------------------------------------------------------------------
+# Step 0: Component-level tool weight regression
+# ---------------------------------------------------------------------------
+
+def _calibrate_tool_weights(conn, game_year, role_map):
+    """Derive per-position tool weights from component-level regressions.
+
+    Runs separate regressions per value domain:
+    - Hitting tools (incl. speed) → WAR (total player value)
+    - Baserunning tools (speed, steal, stl_rt) → SB metrics
+    - Fielding composite → ZR (defensive value)
+    - Pitching tools → FIP (defense-independent pitching)
+
+    Then recombines using position-specific domain shares.
+
+    Returns dict matching tool_weights.json schema, or None if all regressions fail.
+    """
+    year_lo = game_year - CALIBRATION_YEARS - 1  # exclusive lower bound
+    year_hi = game_year - 1  # inclusive upper bound
+
+    # Load league averages for OPS+ computation
+    league_dir = get_league_dir()
+    try:
+        with open(league_dir / "config" / "league_averages.json") as f:
+            avgs = json.load(f)
+        lg_obp = avgs.get("batting", {}).get("obp", 0.320)
+        lg_slg = avgs.get("batting", {}).get("slg", 0.420)
+        lg_era = avgs.get("pitching", {}).get("era", 4.50)
+    except (FileNotFoundError, json.JSONDecodeError):
+        lg_obp, lg_slg, lg_era = 0.320, 0.420, 4.50
+
+    # ---------------------------------------------------------------
+    # Hitting regression: WAR ~ contact + gap + power + eye
+    # Per hitter bucket, AB >= 300, split_id=1
+    #
+    # Regresses directly against WAR rather than OPS+. WAR captures total
+    # player value including positional adjustment, which produces weights
+    # that better predict actual contribution.
+    #
+    # Note: speed is excluded from the hitting regression. Speed contributes
+    # to WAR through baserunning (stolen bases, advancement), not through
+    # hitting. Including it here double-counts its value since it also
+    # appears in the baserunning regression. The recombination step gives
+    # speed its proper weight via the baserunning component.
+    #
+    # Note: avoid_k (Ks rating) is excluded. Contact is a composite of
+    # BABIP and K-avoidance in the OOTP engine, so including both Contact
+    # and Avoid_K double-counts the K-avoidance signal (r=0.78 collinearity).
+    # Contact alone carries the full bat-to-ball signal.
+    # ---------------------------------------------------------------
+    hitter_rows = conn.execute("""
+        SELECT r.player_id, r.cntct, r.gap, r.pow, r.eye, r.ks, r.speed,
+               r.steal, r.stl_rt,
+               r.pot_c, r.pot_ss, r.pot_second_b, r.pot_third_b, r.pot_first_b,
+               r.pot_lf, r.pot_cf, r.pot_rf,
+               r.c, r.ss, r.second_b, r.third_b, r.first_b, r.lf, r.cf, r.rf,
+               r.stm, r.ovr, r.pot,
+               r.pot_fst, r.pot_snk, r.pot_crv, r.pot_sld, r.pot_chg,
+               r.pot_splt, r.pot_cutt, r.pot_cir_chg, r.pot_scr, r.pot_frk,
+               r.pot_kncrv, r.pot_knbl,
+               p.age, p.pos, p.role,
+               bs.war, bs.obp, bs.slg, bs.sb, bs.cs
+        FROM latest_ratings r
+        JOIN players p ON r.player_id = p.player_id
+        JOIN batting_stats bs ON bs.player_id = p.player_id
+        WHERE p.level = 1 AND bs.split_id = 1
+          AND bs.year > ? AND bs.year <= ? AND bs.ab >= 300
+    """, (year_lo, year_hi)).fetchall()
+
+    # Bucket hitter rows — target is WAR
+    hitting_data = defaultdict(lambda: ([], []))  # bucket -> (tool_ratings, war)
+    baserunning_data = ([], [])  # pooled: (tool_ratings, sb_rate)
+
+    for r in hitter_rows:
+        bucket = _bucket_player(r, role_map)
+        if bucket not in HITTER_BUCKETS:
+            continue
+
+        # Normalize tools to 20-80 scale
+        contact = norm(r["cntct"])
+        gap = norm(r["gap"])
+        power = norm(r["pow"])
+        eye = norm(r["eye"])
+        speed = norm(r["speed"])
+
+        if any(v is None for v in (contact, gap, power, eye)):
+            continue
+
+        # Use WAR as the regression target
+        war = r["war"]
+        if war is None:
+            continue
+
+        tool_dict = {
+            "contact": contact, "gap": gap, "power": power,
+            "eye": eye,
+        }
+        hitting_data[bucket][0].append(tool_dict)
+        hitting_data[bucket][1].append(float(war))
+
+        # Baserunning data (pooled across all hitter buckets)
+        steal_tool = norm(r["steal"])
+        stl_rt = norm(r["stl_rt"])
+        sb = r["sb"] or 0
+        cs = r["cs"] or 0
+        if steal_tool is not None and stl_rt is not None and (sb + cs) >= 5:
+            sb_rate = sb / (sb + cs)
+            baserunning_data[0].append({
+                "speed": speed, "steal": steal_tool, "stl_rt": stl_rt,
+            })
+            baserunning_data[1].append(sb_rate)
+
+    # ---------------------------------------------------------------
+    # Fielding regression: ZR ~ defensive_composite, per bucket, IP >= 400
+    # ---------------------------------------------------------------
+    fielding_data = defaultdict(lambda: ([], []))  # bucket -> (composites, zr)
+
+    # We need to join fielding_stats with ratings to get defensive tools
+    fielding_rows = conn.execute("""
+        SELECT r.player_id,
+               r.c_frm, r.c_blk, r.c_arm,
+               r.ifr, r.ife, r.ifa, r.tdp,
+               r.ofr, r.ofe, r.ofa,
+               r.pot_c, r.pot_ss, r.pot_second_b, r.pot_third_b, r.pot_first_b,
+               r.pot_lf, r.pot_cf, r.pot_rf,
+               r.c, r.ss, r.second_b, r.third_b, r.first_b, r.lf, r.cf, r.rf,
+               r.stm, r.ovr, r.pot,
+               r.pot_fst, r.pot_snk, r.pot_crv, r.pot_sld, r.pot_chg,
+               r.pot_splt, r.pot_cutt, r.pot_cir_chg, r.pot_scr, r.pot_frk,
+               r.pot_kncrv, r.pot_knbl,
+               p.age, p.pos, p.role,
+               fs.zr, fs.ip
+        FROM latest_ratings r
+        JOIN players p ON r.player_id = p.player_id
+        JOIN fielding_stats fs ON fs.player_id = p.player_id
+        WHERE p.level = 1 AND fs.ip >= 400
+          AND fs.year > ? AND fs.year <= ?
+    """, (year_lo, year_hi)).fetchall()
+
+    for r in fielding_rows:
+        bucket = _bucket_player(r, role_map)
+        if bucket not in HITTER_BUCKETS or bucket == "1B":
+            continue  # 1B excluded from fielding regression
+
+        # Build a player dict for defensive_score()
+        p = dict(r)
+        for db_key, api_key in _KEY_MAP.items():
+            if db_key in p:
+                v = p[db_key]
+                p[api_key] = v if isinstance(v, (int, float)) else 0
+
+        # Map defensive tool column names to the keys expected by fv_model
+        p["CFrm"] = r["c_frm"] or 0
+        p["CBlk"] = r["c_blk"] or 0
+        p["CArm"] = r["c_arm"] or 0
+        p["IFR"] = r["ifr"] or 0
+        p["IFE"] = r["ife"] or 0
+        p["IFA"] = r["ifa"] or 0
+        p["TDP"] = r["tdp"] or 0
+        p["OFR"] = r["ofr"] or 0
+        p["OFE"] = r["ofe"] or 0
+        p["OFA"] = r["ofa"] or 0
+        p["LF"] = r["lf"] or 0
+        p["RF"] = r["rf"] or 0
+
+        def_composite = defensive_score(p, bucket)
+        zr = r["zr"]
+        if zr is not None and def_composite > 0:
+            fielding_data[bucket][0].append({"defense": def_composite})
+            fielding_data[bucket][1].append(float(zr))
+
+    # ---------------------------------------------------------------
+    # Pitcher regression: FIP ~ stuff + movement + control + arsenal
+    # Per role: SP (IP >= 40), RP (IP >= 20, GS <= 3)
+    # ---------------------------------------------------------------
+    pitcher_rows = conn.execute("""
+        SELECT r.player_id, r.stf, r.mov, r.ctrl,
+               r.fst, r.snk, r.crv, r.sld, r.chg, r.splt, r.cutt,
+               r.cir_chg, r.scr, r.frk, r.kncrv, r.knbl,
+               r.pot_c, r.pot_ss, r.pot_second_b, r.pot_third_b, r.pot_first_b,
+               r.pot_lf, r.pot_cf, r.pot_rf,
+               r.c, r.ss, r.second_b, r.third_b, r.first_b, r.lf, r.cf, r.rf,
+               r.stm, r.ovr, r.pot,
+               r.pot_fst, r.pot_snk, r.pot_crv, r.pot_sld, r.pot_chg,
+               r.pot_splt, r.pot_cutt, r.pot_cir_chg, r.pot_scr, r.pot_frk,
+               r.pot_kncrv, r.pot_knbl,
+               p.age, p.pos, p.role,
+               ps.ip, ps.k, ps.bb, ps.hra, ps.hp, ps.gs
+        FROM latest_ratings r
+        JOIN players p ON r.player_id = p.player_id
+        JOIN pitching_stats ps ON ps.player_id = p.player_id
+        WHERE p.level = 1 AND ps.split_id = 1
+          AND ps.year > ? AND ps.year <= ?
+          AND ((p.role IN (12,13) AND ps.ip >= 20 AND ps.gs <= 3)
+               OR (COALESCE(p.role,0) NOT IN (12,13) AND ps.ip >= 40))
+    """, (year_lo, year_hi)).fetchall()
+
+    pitching_data = defaultdict(lambda: ([], []))  # role -> (tool_ratings, neg_fip)
+
+    # Compute league FIP constant: C_FIP = lgERA - lgFIP_raw
+    # We approximate from league averages
+    c_fip = lg_era  # simplified: FIP constant ≈ league ERA when league FIP ≈ league ERA
+
+    for r in pitcher_rows:
+        bucket = _bucket_player(r, role_map)
+        if bucket not in PITCHER_BUCKETS:
+            continue
+
+        stuff = norm(r["stf"])
+        movement = norm(r["mov"])
+        control = norm(r["ctrl"])
+        if any(v is None for v in (stuff, movement, control)):
+            continue
+
+        ip = r["ip"] or 0
+        if ip <= 0:
+            continue
+
+        # Compute FIP: (13*HR + 3*(BB+HBP) - 2*K) / IP + C_FIP
+        hra = r["hra"] or 0
+        bb = r["bb"] or 0
+        hp = r["hp"] or 0
+        k = r["k"] or 0
+        fip = (13.0 * hra + 3.0 * (bb + hp) - 2.0 * k) / ip + c_fip
+
+        # Arsenal quality: count of pitches rated 45+ (on raw scale)
+        pitch_cols = ["fst", "snk", "crv", "sld", "chg", "splt", "cutt",
+                      "cir_chg", "scr", "frk", "kncrv", "knbl"]
+        pitch_ratings = [norm(r[col]) for col in pitch_cols if r[col] and r[col] > 0]
+        arsenal_quality = sum(1 for pr in pitch_ratings if pr is not None and pr >= 45)
+
+        # Use negative FIP as target (higher is better, matching tool direction)
+        tool_dict = {
+            "stuff": stuff, "movement": movement,
+            "control": control, "arsenal": arsenal_quality,
+        }
+        pitching_data[bucket][0].append(tool_dict)
+        pitching_data[bucket][1].append(-fip)
+
+    # ---------------------------------------------------------------
+    # Run regressions and build weight profiles
+    # ---------------------------------------------------------------
+    result_hitter = {}
+    result_pitcher = {}
+    calibration_n = {}
+    calibration_r2 = {}
+
+    for bucket in HITTER_BUCKETS:
+        tool_ratings, targets = hitting_data[bucket]
+        hitting_raw = derive_tool_weights(tool_ratings, targets, min_n=MIN_REGRESSION_N)
+
+        br_ratings, br_targets = baserunning_data
+        baserunning_raw = derive_tool_weights(br_ratings, br_targets, min_n=MIN_REGRESSION_N)
+
+        fld_ratings, fld_targets = fielding_data.get(bucket, ([], []))
+        # Fielding is single-feature, so we just check if we have enough data
+        fielding_ok = len(fld_ratings) >= MIN_REGRESSION_N
+
+        recombo = DEFAULT_TOOL_WEIGHTS.get("recombination", {}).get(bucket, {
+            "offense": 0.65, "defense": 0.25, "baserunning": 0.10,
+        })
+
+        # Normalize each component's coefficients
+        if hitting_raw is not None:
+            hitting_norm = normalize_coefficients(hitting_raw, min_weight=0.10)
+        else:
+            # Fall back to default hitting weights (extract offensive tools only)
+            default_w = DEFAULT_TOOL_WEIGHTS["hitter"].get(bucket, {})
+            hitting_norm = {}
+            for k in ("contact", "gap", "power", "eye"):
+                hitting_norm[k] = default_w.get(k, 0.0)
+            total = sum(hitting_norm.values())
+            if total > 0:
+                hitting_norm = {k: v / total for k, v in hitting_norm.items()}
+
+        if baserunning_raw is not None:
+            baserunning_norm = normalize_coefficients(baserunning_raw)
+        else:
+            baserunning_norm = {"speed": 0.50, "steal": 0.30, "stl_rt": 0.20}
+
+        defense_coeff = 1.0  # single-feature regression always yields 1.0
+
+        # Recombine into unified weights
+        unified = recombine_component_weights(
+            hitting_norm, baserunning_norm, defense_coeff, recombo,
+        )
+        result_hitter[bucket] = {k: round(v, 4) for k, v in unified.items()}
+
+        # Track metadata
+        calibration_n[bucket] = len(tool_ratings)
+        bucket_r2 = {}
+        if hitting_raw is not None:
+            # Approximate R² from the best feature correlation
+            best_r2 = max(abs(v) for v in hitting_raw.values()) if hitting_raw else 0
+            bucket_r2["hitting"] = round(best_r2, 3)
+        if baserunning_raw is not None:
+            best_br_r2 = max(abs(v) for v in baserunning_raw.values()) if baserunning_raw else 0
+            bucket_r2["baserunning"] = round(best_br_r2, 3)
+        if fielding_ok:
+            bucket_r2["fielding"] = round(0.10, 3)  # placeholder — single-feature
+        calibration_r2[bucket] = bucket_r2
+
+    for role in PITCHER_BUCKETS:
+        tool_ratings, targets = pitching_data[role]
+        pitching_raw = derive_tool_weights(tool_ratings, targets, min_n=MIN_REGRESSION_N)
+
+        if pitching_raw is not None:
+            # Use minimum weight floor for pitchers to prevent degenerate
+            # single-variable solutions (e.g. RP movement=0.99).
+            # Floor of 0.05 ensures stuff/movement/control each get at least 5%.
+            result_pitcher[role] = {k: round(v, 4) for k, v in normalize_coefficients(pitching_raw, min_weight=0.05).items()}
+        else:
+            result_pitcher[role] = dict(DEFAULT_TOOL_WEIGHTS["pitcher"].get(role, {}))
+
+        calibration_n[role] = len(tool_ratings)
+        if pitching_raw is not None:
+            best_r2 = max(abs(v) for v in pitching_raw.values()) if pitching_raw else 0
+            calibration_r2[role] = {"pitching": round(best_r2, 3)}
+
+    # Build output
+    tool_weights = {
+        "version": 1,
+        "source": "calibrated",
+        "calibration_date": f"{game_year}-01-01",
+        "calibration_n": calibration_n,
+        "calibration_r2": calibration_r2,
+        "hitter": result_hitter,
+        "pitcher": result_pitcher,
+        "recombination": DEFAULT_TOOL_WEIGHTS.get("recombination", {}),
+    }
+
+    return tool_weights
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +520,103 @@ def _build_ovr_to_war_table(regressions):
                 table[bucket] = {row[0]: row[1] for row in OVR_TO_WAR}
 
     return table
+
+
+# ---------------------------------------------------------------------------
+# COMPOSITE_TO_WAR regression (runs in calibrate pass 2)
+# ---------------------------------------------------------------------------
+
+def _calibrate_composite_to_war(conn, game_year, role_map):
+    """Run Composite_Score→WAR regression per position bucket.
+
+    Same methodology as _calibrate_ovr_to_war() but reads composite_score
+    column instead of ovr. Falls back gracefully when composite_score data
+    is insufficient (first run before evaluation engine has populated scores).
+
+    Returns (regressions, bucket_data) or (None, None) when insufficient data.
+    """
+    year_lo = game_year - CALIBRATION_YEARS - 1
+    year_hi = game_year - 1
+
+    # Check if composite_score data exists at all
+    check = conn.execute(
+        "SELECT COUNT(*) FROM latest_ratings WHERE composite_score IS NOT NULL"
+    ).fetchone()[0]
+    if check < MIN_REGRESSION_N:
+        return None, None
+
+    # Hitters
+    hitter_rows = conn.execute("""
+        SELECT r.player_id, r.composite_score, r.pot, p.age, p.pos, p.role,
+               r.pot_c, r.pot_ss, r.pot_second_b, r.pot_third_b, r.pot_first_b,
+               r.pot_lf, r.pot_cf, r.pot_rf,
+               r.c, r.ss, r.second_b, r.third_b, r.first_b, r.lf, r.cf, r.rf,
+               r.stm, r.ovr,
+               r.pot_fst, r.pot_snk, r.pot_crv, r.pot_sld, r.pot_chg,
+               r.pot_splt, r.pot_cutt, r.pot_cir_chg, r.pot_scr, r.pot_frk,
+               r.pot_kncrv, r.pot_knbl,
+               bs.war
+        FROM latest_ratings r
+        JOIN players p ON r.player_id = p.player_id
+        JOIN batting_stats bs ON bs.player_id = p.player_id
+        WHERE p.level = 1 AND bs.split_id = 1
+          AND bs.year > ? AND bs.year <= ? AND bs.ab >= 300
+          AND r.composite_score IS NOT NULL
+    """, (year_lo, year_hi)).fetchall()
+
+    # Pitchers
+    pitcher_rows = conn.execute("""
+        SELECT r.player_id, r.composite_score, r.pot, p.age, p.pos, p.role,
+               r.stm,
+               r.pot_fst, r.pot_snk, r.pot_crv, r.pot_sld, r.pot_chg,
+               r.pot_splt, r.pot_cutt, r.pot_cir_chg, r.pot_scr, r.pot_frk,
+               r.pot_kncrv, r.pot_knbl,
+               (ps.war + COALESCE(ps.ra9war, ps.war)) / 2.0 as war,
+               ps.gs, ps.ip
+        FROM latest_ratings r
+        JOIN players p ON r.player_id = p.player_id
+        JOIN pitching_stats ps ON ps.player_id = p.player_id
+        WHERE p.level = 1 AND ps.split_id = 1
+          AND ps.year > ? AND ps.year <= ?
+          AND r.composite_score IS NOT NULL
+          AND ((p.role IN (12,13) AND ps.ip >= 20 AND ps.gs <= 3)
+               OR (COALESCE(p.role,0) NOT IN (12,13) AND ps.ip >= 40))
+    """, (year_lo, year_hi)).fetchall()
+
+    bucket_data = defaultdict(list)
+    for r in hitter_rows:
+        bucket = _bucket_player(r, role_map)
+        bucket_data[bucket].append((r["composite_score"], r["war"]))
+    for r in pitcher_rows:
+        bucket = _bucket_player(r, role_map)
+        bucket_data[bucket].append((r["composite_score"], r["war"]))
+
+    # Check if we have enough total data
+    total_data = sum(len(v) for v in bucket_data.values())
+    if total_data < MIN_REGRESSION_N:
+        return None, None
+
+    # Run regression per bucket; fall back to grouped for small samples
+    all_hitter_data = []
+    for b in HITTER_BUCKETS:
+        all_hitter_data.extend(bucket_data.get(b, []))
+
+    regressions = {}
+    for bucket in list(HITTER_BUCKETS) + list(PITCHER_BUCKETS):
+        data = bucket_data.get(bucket, [])
+        if len(data) >= MIN_REGRESSION_N:
+            result = _linreg([d[0] for d in data], [d[1] for d in data])
+            if result:
+                regressions[bucket] = result
+                continue
+        # Fall back to grouped hitter regression
+        if bucket in HITTER_BUCKETS and len(all_hitter_data) >= MIN_REGRESSION_N:
+            result = _linreg([d[0] for d in all_hitter_data],
+                             [d[1] for d in all_hitter_data])
+            if result:
+                regressions[bucket] = (*result[:3], f"grouped({len(all_hitter_data)})")
+
+    return regressions, bucket_data
 
 
 # ---------------------------------------------------------------------------
@@ -405,6 +842,159 @@ def _calibrate_scarcity(conn, game_date):
 
 
 # ---------------------------------------------------------------------------
+# Step 5b: Carrying tool calibration
+# ---------------------------------------------------------------------------
+
+# Offensive tools eligible for carrying tool analysis (speed excluded per Req 8.5)
+_OFFENSIVE_TOOLS = ("contact", "gap", "power", "eye")
+# DB column names corresponding to each offensive tool
+_TOOL_DB_COLS = {"contact": "cntct", "gap": "gap", "power": "pow", "eye": "eye"}
+# Minimum qualifying players with 65+ grade for a position/tool combo (Req 8.4)
+_MIN_CARRYING_TOOL_N = 10
+
+
+def _calibrate_carrying_tools(conn, game_year, role_map):
+    """Derive carrying tool parameters from WAR regression data.
+
+    For each position/tool combination:
+    1. Compute mean WAR for players with 65+ grade in that tool.
+    2. Compute mean WAR for all players at that position.
+    3. WAR premium = difference.
+    4. Compute scarcity percentage (% of players with 65+ grade).
+
+    Excludes speed at all positions. Excludes combinations with fewer
+    than 10 qualifying players.
+
+    Args:
+        conn: SQLite connection.
+        game_year: Current game year.
+        role_map: Role mapping dict.
+
+    Returns:
+        Carrying tool config dict, or None if insufficient data.
+    """
+    year_lo = game_year - CALIBRATION_YEARS - 1  # exclusive lower bound
+    year_hi = game_year - 1  # inclusive upper bound
+
+    rows = conn.execute("""
+        SELECT r.player_id, r.cntct, r.gap, r.pow, r.eye,
+               r.pot_c, r.pot_ss, r.pot_second_b, r.pot_third_b, r.pot_first_b,
+               r.pot_lf, r.pot_cf, r.pot_rf,
+               r.c, r.ss, r.second_b, r.third_b, r.first_b, r.lf, r.cf, r.rf,
+               r.stm, r.ovr, r.pot,
+               r.pot_fst, r.pot_snk, r.pot_crv, r.pot_sld, r.pot_chg,
+               r.pot_splt, r.pot_cutt, r.pot_cir_chg, r.pot_scr, r.pot_frk,
+               r.pot_kncrv, r.pot_knbl,
+               p.age, p.pos, p.role,
+               bs.war
+        FROM latest_ratings r
+        JOIN players p ON r.player_id = p.player_id
+        JOIN batting_stats bs ON bs.player_id = p.player_id
+        WHERE p.level = 1 AND bs.split_id = 1
+          AND bs.year > ? AND bs.year <= ? AND bs.ab >= 300
+    """, (year_lo, year_hi)).fetchall()
+
+    # Group players by position bucket, collecting tool grades and WAR
+    # bucket -> list of {"contact": int, "gap": int, ..., "war": float}
+    bucket_players = defaultdict(list)
+    for r in rows:
+        bucket = _bucket_player(r, role_map)
+        if bucket not in HITTER_BUCKETS:
+            continue
+
+        contact = norm(r["cntct"])
+        gap = norm(r["gap"])
+        power = norm(r["pow"])
+        eye = norm(r["eye"])
+        war = r["war"]
+
+        if war is None:
+            continue
+
+        bucket_players[bucket].append({
+            "contact": contact,
+            "gap": gap,
+            "power": power,
+            "eye": eye,
+            "war": float(war),
+        })
+
+    # For each position/tool combo, compute WAR premium and scarcity
+    positions_config = {}
+    total_combos = 0
+
+    for bucket in HITTER_BUCKETS:
+        players = bucket_players.get(bucket, [])
+        if not players:
+            continue
+
+        # Position mean WAR (all players at this position)
+        all_wars = [p["war"] for p in players]
+        pos_mean_war = sum(all_wars) / len(all_wars)
+        total_at_pos = len(players)
+
+        carrying_tools = {}
+        for tool in _OFFENSIVE_TOOLS:
+            # Players with 65+ grade in this tool
+            qualified = [p for p in players
+                         if p[tool] is not None and p[tool] >= 65]
+            n_qualified = len(qualified)
+
+            if n_qualified < _MIN_CARRYING_TOOL_N:
+                continue
+
+            # Mean WAR for players with 65+ grade
+            tool_mean_war = sum(p["war"] for p in qualified) / n_qualified
+
+            # WAR premium = difference from position mean
+            war_premium = tool_mean_war - pos_mean_war
+
+            # Skip if premium is zero or negative (tool doesn't help)
+            if war_premium <= 0:
+                continue
+
+            # Scarcity: % of players at position with 65+ grade
+            scarcity_pct = n_qualified / total_at_pos
+
+            # Convert raw WAR premium to war_premium_factor
+            # Factor = raw_war_premium / 5.0 (scaling to 20-80 scouting scale)
+            war_premium_factor = round(war_premium / 5.0, 2)
+
+            carrying_tools[tool] = {
+                "war_premium_factor": war_premium_factor,
+                "_calibration": {
+                    "n_qualified": n_qualified,
+                    "n_total": total_at_pos,
+                    "war_premium_raw": round(war_premium, 3),
+                    "scarcity_pct": round(scarcity_pct, 3),
+                    "tool_mean_war": round(tool_mean_war, 3),
+                    "pos_mean_war": round(pos_mean_war, 3),
+                },
+            }
+            total_combos += 1
+
+        if carrying_tools:
+            positions_config[bucket] = {"carrying_tools": carrying_tools}
+
+    if total_combos == 0:
+        return None
+
+    config = {
+        "version": 1,
+        "source": "calibrated",
+        "positions": positions_config,
+        "scarcity_schedule": [
+            {"threshold": 65, "multiplier": 1.0},
+            {"threshold": 70, "multiplier": 1.5},
+            {"threshold": 75, "multiplier": 2.0},
+            {"threshold": 80, "multiplier": 3.0},
+        ],
+    }
+
+    return config
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -426,6 +1016,30 @@ def calibrate(dry_run=False):
     print(f"Calibrating model weights for game date {game_date}")
     print(f"  Using {CALIBRATION_YEARS} years of data ({game_year - CALIBRATION_YEARS}-{game_year - 1})")
     print(f"  $/WAR: ${dpw:,.0f}")
+    print()
+
+    # Step 0: Tool weight regression (NEW)
+    print("=== Tool Weight Regression (Step 0) ===")
+    tool_weights = _calibrate_tool_weights(conn, game_year, role_map)
+    if tool_weights:
+        for bucket in list(HITTER_BUCKETS):
+            n = tool_weights.get("calibration_n", {}).get(bucket, 0)
+            r2_info = tool_weights.get("calibration_r2", {}).get(bucket, {})
+            r2_str = ", ".join(f"{k}={v:.3f}" for k, v in r2_info.items()) if r2_info else "defaults"
+            print(f"  {bucket:<4} N={n:<5} R²: {r2_str}")
+        for role in PITCHER_BUCKETS:
+            n = tool_weights.get("calibration_n", {}).get(role, 0)
+            r2_info = tool_weights.get("calibration_r2", {}).get(role, {})
+            r2_str = ", ".join(f"{k}={v:.3f}" for k, v in r2_info.items()) if r2_info else "defaults"
+            print(f"  {role:<4} N={n:<5} R²: {r2_str}")
+
+        if not dry_run:
+            tw_path = league_dir / "config" / "tool_weights.json"
+            with open(tw_path, "w") as f:
+                json.dump(tool_weights, f, indent=2)
+            print(f"  Wrote {tw_path}")
+    else:
+        print("  No tool weight data available — using defaults")
     print()
 
     # Step 1: OVR_TO_WAR
@@ -491,6 +1105,65 @@ def calibrate(dry_run=False):
     print(f"\n=== PAP_SCALE ===")
     print(f"  N={len(yr1_rows)}  scale=${pap_scale/1e6:.1f}M")
 
+    # Step: COMPOSITE_TO_WAR regression (skipped on first run)
+    print("\n=== COMPOSITE_TO_WAR Regression ===")
+    conn3 = _db.get_conn(league_dir)
+    comp_regressions, comp_bucket_data = _calibrate_composite_to_war(conn3, game_year, role_map)
+    conn3.close()
+
+    composite_ovr_table = None
+    comp_hitter_fv = None
+    comp_hitter_fv_tables = None
+    comp_sp_fv = None
+    comp_rp_fv = None
+
+    if comp_regressions is not None:
+        composite_ovr_table = _build_ovr_to_war_table(comp_regressions)
+        for bucket in list(HITTER_BUCKETS) + list(PITCHER_BUCKETS):
+            reg = comp_regressions.get(bucket)
+            if reg:
+                n_str = reg[3] if isinstance(reg[3], str) else reg[3]
+                print(f"  {bucket:<4} N={n_str:<5} slope={reg[0]:.4f} R²={reg[2]:.3f}  "
+                      f"WAR@50={composite_ovr_table[bucket][50]:.2f}  @60={composite_ovr_table[bucket][60]:.2f}  "
+                      f"@70={composite_ovr_table[bucket][70]:.2f}")
+            else:
+                print(f"  {bucket:<4} (using OVR_TO_WAR fallback)")
+
+        # Derive FV_TO_PEAK_WAR_COMPOSITE tables
+        comp_hitter_fv, comp_hitter_fv_tables, comp_sp_fv, comp_rp_fv = _derive_fv_to_peak_war(composite_ovr_table)
+    else:
+        print("  Skipped — composite_score data insufficient (first run)")
+
+    # Step 6: Carrying tool calibration
+    print("\n=== CARRYING_TOOL_CONFIG ===")
+    conn4 = _db.get_conn(league_dir)
+    ct_config = _calibrate_carrying_tools(conn4, game_year, role_map)
+    conn4.close()
+
+    if ct_config is not None:
+        positions = ct_config["positions"]
+        for bucket in HITTER_BUCKETS:
+            pos_data = positions.get(bucket)
+            if pos_data:
+                tools_info = []
+                for tool, tool_data in pos_data["carrying_tools"].items():
+                    cal = tool_data.get("_calibration", {})
+                    n_q = cal.get("n_qualified", "?")
+                    factor = tool_data["war_premium_factor"]
+                    scarcity_pct = cal.get("scarcity_pct", 0)
+                    tools_info.append(f"{tool}(f={factor:.2f}, N={n_q}, sc={scarcity_pct:.1%})")
+                print(f"  {bucket:<4} {', '.join(tools_info)}")
+            else:
+                print(f"  {bucket:<4} (no qualifying tools)")
+
+        if not dry_run:
+            ct_path = league_dir / "config" / "carrying_tool_config.json"
+            with open(ct_path, "w") as f:
+                json.dump(ct_config, f, indent=2)
+            print(f"  Wrote {ct_path}")
+    else:
+        print("  No carrying tool data available — using defaults")
+
     # Build output
     # OVR_TO_WAR stored as position-specific dicts for flexibility
     weights = {
@@ -508,6 +1181,24 @@ def calibrate(dry_run=False):
                           (scarcity if scarcity else SCARCITY_MULT).items()},
         "PAP_SCALE": pap_scale,
     }
+
+    # Add COMPOSITE_TO_WAR tables when available
+    if composite_ovr_table is not None:
+        weights["COMPOSITE_TO_WAR"] = {
+            bucket: {str(k): v for k, v in tbl.items()}
+            for bucket, tbl in composite_ovr_table.items()
+        }
+    if comp_hitter_fv is not None:
+        weights["FV_TO_PEAK_WAR_COMPOSITE"] = {str(k): v for k, v in comp_hitter_fv.items()}
+    if comp_hitter_fv_tables is not None:
+        weights["FV_TO_PEAK_WAR_COMPOSITE_BY_POS"] = {
+            bucket: {str(k): v for k, v in tbl.items()}
+            for bucket, tbl in comp_hitter_fv_tables.items()
+        }
+    if comp_sp_fv is not None:
+        weights["FV_TO_PEAK_WAR_COMPOSITE_SP"] = {str(k): v for k, v in comp_sp_fv.items()}
+    if comp_rp_fv is not None:
+        weights["FV_TO_PEAK_WAR_COMPOSITE_RP"] = {str(k): v for k, v in comp_rp_fv.items()}
 
     if dry_run:
         print("\n=== DRY RUN — would write: ===")

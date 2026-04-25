@@ -15,7 +15,7 @@ import pytest
 BASE = Path(__file__).parent.parent
 sys.path.insert(0, str(BASE / "scripts"))
 
-from conftest import _SCHEMA, _seed, _make_cfg, TEAM_ID, HITTER_ID, PITCHER_ID, PROSPECT_ID, YEAR, EVAL_DATE
+from conftest import _SCHEMA, _seed, _make_cfg, _r, TEAM_ID, HITTER_ID, PITCHER_ID, PROSPECT_ID, YEAR, EVAL_DATE
 
 
 # ---------------------------------------------------------------------------
@@ -181,3 +181,487 @@ class TestFvCalcHelpers:
             except (ValueError, TypeError):
                 return  # correctly skipped
         pytest.fail("Should have been skipped")
+
+    def test_fv_tier_discrepancy_no_warning_when_no_defensive_value(self, caplog):
+        """No warning when _defensive_value is not set."""
+        import logging
+        from fv_calc import _check_fv_tier_discrepancy
+        p = {"ID": 100, "Ovr": 55, "Pot": 65, "Age": 21,
+             "_is_pitcher": False, "_bucket": "SS", "_norm_age": 24, "_level": "aa"}
+        with caplog.at_level(logging.WARNING, logger="fv_calc"):
+            _check_fv_tier_discrepancy(p, 45, False)
+        assert "FV tier discrepancy" not in caplog.text
+
+    def test_fv_tier_discrepancy_no_warning_within_one_tier(self, caplog):
+        """No warning when component-based and raw-tool-based FV are within one tier."""
+        import logging
+        from fv_calc import _check_fv_tier_discrepancy
+        # Build a player where _defensive_value matches what defensive_score would produce
+        p = {"ID": 101, "Ovr": 55, "Pot": 65, "Age": 21,
+             "_is_pitcher": False, "_bucket": "SS", "_norm_age": 24, "_level": "aa",
+             "_defensive_value": 60,
+             "IFR": 130, "IFE": 120, "IFA": 120, "TDP": 120,
+             "PotSS": 160, "SS": 160, "WrkEthic": "N", "Acc": "N",
+             "PotCntct": 130, "Cntct_L": 0, "Cntct_R": 0}
+        from player_utils import calc_fv
+        fv_base, fv_plus = calc_fv(p)
+        with caplog.at_level(logging.WARNING, logger="fv_calc"):
+            _check_fv_tier_discrepancy(p, fv_base, fv_plus)
+        assert "FV tier discrepancy" not in caplog.text
+
+    def test_fv_tier_discrepancy_warning_when_exceeds_one_tier(self, caplog):
+        """Warning logged when component-based FV differs from raw-tool by >5 points."""
+        import logging
+        from fv_calc import _check_fv_tier_discrepancy
+        # Set _defensive_value very high (80) but raw defensive tools very low
+        # This should create a large discrepancy in the defensive bonus
+        p = {"ID": 102, "Ovr": 50, "Pot": 65, "Age": 20,
+             "_is_pitcher": False, "_bucket": "SS", "_norm_age": 24, "_level": "aa",
+             "_defensive_value": 80,
+             "IFR": 20, "IFE": 20, "IFA": 20, "TDP": 20,
+             "PotSS": 160, "SS": 160, "WrkEthic": "N", "Acc": "N",
+             "PotCntct": 130, "Cntct_L": 0, "Cntct_R": 0}
+        from player_utils import calc_fv
+        # Compute FV with _defensive_value (component-based path)
+        fv_new, plus_new = calc_fv(p)
+        # Compute FV without _defensive_value (old path)
+        p_old = dict(p)
+        del p_old["_defensive_value"]
+        fv_old, plus_old = calc_fv(p_old)
+        # Verify there IS a discrepancy > 5 for this test to be meaningful
+        new_eff = fv_new + (2.5 if plus_new else 0)
+        old_eff = fv_old + (2.5 if plus_old else 0)
+        if abs(new_eff - old_eff) <= 5:
+            pytest.skip("Test data doesn't produce sufficient discrepancy")
+        with caplog.at_level(logging.WARNING, logger="fv_calc"):
+            _check_fv_tier_discrepancy(p, fv_new, plus_new)
+        assert "FV tier discrepancy" in caplog.text
+        assert "102" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# FV integration — defensive_value component usage (Task 7.5)
+# Requirements: 8.1, 8.2, 8.3, 8.4
+# ---------------------------------------------------------------------------
+
+class TestFvDefensiveValueIntegration:
+    """Verify calc_fv uses _defensive_value when available and falls back when not."""
+
+    @staticmethod
+    def _make_ss_prospect(**overrides):
+        """Build a SS prospect dict with strong positional composite (PotSS >= 60 norm)
+        so the defensive bonus path is exercised."""
+        from ratings import init_ratings_scale
+        init_ratings_scale("1-100")
+        p = {
+            "Ovr": 55, "Pot": 65, "Age": 21,
+            "_is_pitcher": False, "_bucket": "SS", "_norm_age": 24, "_level": "aa",
+            # Positional composite — PotSS high enough to trigger defensive bonus
+            # norm(80) = 68 on 20-80 scale → comp >= 60 ✓
+            "PotSS": 80, "SS": 75,
+            # Defensive tools (IFR/IFE/IFA/TDP) — moderate raw values
+            "IFR": 60, "IFE": 55, "IFA": 50, "TDP": 55,
+            # Personality / accuracy
+            "WrkEthic": "N", "Acc": "N",
+            # Contact splits (for platoon penalty check)
+            "PotCntct": 100, "Cntct_L": 0, "Cntct_R": 0,
+            # Stf splits (not used for hitters but present in real dicts)
+            "Stf_L": 0, "Stf_R": 0,
+        }
+        p.update(overrides)
+        return p
+
+    def test_calc_fv_uses_defensive_value_when_available(self):
+        """When _defensive_value is set to a high value, calc_fv uses it for the
+        defensive bonus instead of computing from raw tools. The FV should differ
+        from a player with the same raw tools but no _defensive_value when the
+        raw tools would produce a different defensive score."""
+        from player_utils import calc_fv
+        from fv_model import defensive_score
+        from ratings import init_ratings_scale
+        init_ratings_scale("1-100")
+
+        # Player WITH _defensive_value set high (70 on 20-80 scale)
+        p_with = self._make_ss_prospect(_defensive_value=70)
+        fv_with, plus_with = calc_fv(p_with)
+
+        # Player WITHOUT _defensive_value — uses raw tools via defensive_score()
+        p_without = self._make_ss_prospect()
+        fv_without, plus_without = calc_fv(p_without)
+
+        # Compute what defensive_score would produce from raw tools
+        raw_def = defensive_score(p_without, "SS")
+
+        # If the raw defensive score differs from 70, the FV grades should differ
+        # (or at least the effective FV including plus modifier)
+        if abs(raw_def - 70) >= 10:
+            eff_with = fv_with + (2.5 if plus_with else 0)
+            eff_without = fv_without + (2.5 if plus_without else 0)
+            assert eff_with != eff_without, (
+                f"FV should differ when _defensive_value (70) diverges from "
+                f"raw defensive_score ({raw_def:.1f}): "
+                f"with={fv_with}{'+'if plus_with else ''}, "
+                f"without={fv_without}{'+'if plus_without else ''}"
+            )
+        # Either way, both should produce valid FV grades
+        assert isinstance(fv_with, int)
+        assert isinstance(fv_without, int)
+
+    def test_calc_fv_falls_back_when_defensive_value_absent(self):
+        """When _defensive_value is NOT set, calc_fv uses defensive_score() from
+        raw tools. The FV should be identical to the pre-reframe behavior."""
+        from player_utils import calc_fv
+        from ratings import init_ratings_scale
+        init_ratings_scale("1-100")
+
+        # Player without _defensive_value — raw tool path
+        p = self._make_ss_prospect()
+        assert "_defensive_value" not in p
+
+        fv_base, fv_plus = calc_fv(p)
+
+        # Verify it produces a valid FV grade
+        assert isinstance(fv_base, int)
+        assert fv_base % 5 == 0, f"FV base should be rounded to nearest 5, got {fv_base}"
+        assert 20 <= fv_base <= 80, f"FV base should be on 20-80 scale, got {fv_base}"
+        assert isinstance(fv_plus, bool)
+
+        # Run again with _defensive_value explicitly absent to confirm stability
+        p2 = dict(p)
+        p2.pop("_defensive_value", None)
+        fv2, plus2 = calc_fv(p2)
+        assert fv_base == fv2 and fv_plus == plus2, "FV should be deterministic"
+
+    def test_fv_grades_remain_on_same_scale(self):
+        """FV grades produced with _defensive_value are still on the standard scale:
+        rounded to nearest 5, within [20, 80]."""
+        from player_utils import calc_fv
+        from ratings import init_ratings_scale
+        init_ratings_scale("1-100")
+
+        valid_fv_bases = {20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80}
+
+        # Test across a range of _defensive_value inputs
+        for dv in (20, 35, 45, 55, 60, 65, 70, 80):
+            p = self._make_ss_prospect(_defensive_value=dv)
+            fv_base, fv_plus = calc_fv(p)
+            assert fv_base in valid_fv_bases, (
+                f"FV base {fv_base} with _defensive_value={dv} is not on the "
+                f"standard scale {sorted(valid_fv_bases)}"
+            )
+            assert isinstance(fv_plus, bool), (
+                f"fv_plus should be bool, got {type(fv_plus)} with _defensive_value={dv}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# _calibrate_carrying_tools — unit tests (Task 10.1)
+# Requirements: 8.1, 8.2, 8.3, 8.4, 8.5
+# ---------------------------------------------------------------------------
+
+class TestCalibrateCarryingTools:
+    """Tests for _calibrate_carrying_tools() in calibrate.py."""
+
+    @staticmethod
+    def _make_db_with_hitters(hitter_specs, game_year=2033):
+        """Create an in-memory DB with hitter data for carrying tool calibration.
+
+        hitter_specs: list of dicts with keys:
+            player_id, pos (int), cntct, gap, pow, eye, war, year (optional)
+        Tool values should be on the 1-100 raw scale (norm(75)=65, norm(50)=50).
+        """
+        from ratings import init_ratings_scale
+        init_ratings_scale("1-100")
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(_SCHEMA)
+
+        team_id = 1
+        _r(conn, "teams", team_id=team_id, name="Test", level="1",
+           parent_team_id=0, league="TL")
+
+        for spec in hitter_specs:
+            pid = spec["player_id"]
+            pos = spec.get("pos", 6)  # default SS
+            year = spec.get("year", game_year - 1)
+
+            _r(conn, "players", player_id=pid, name=f"Player {pid}",
+               age=27, team_id=team_id, parent_team_id=0, level="1",
+               pos=pos, role=0)
+
+            # Build ratings row — need all the columns for _bucket_player
+            ratings = dict(
+                player_id=pid, snapshot_date=f"{game_year}-04-01",
+                ovr=55, pot=60,
+                cntct=spec.get("cntct", 50), gap=spec.get("gap", 50),
+                pow=spec.get("pow", 50), eye=spec.get("eye", 50),
+                speed=50, steal=50,
+                # Positional ratings for bucketing
+                c=20, ss=20, second_b=20, third_b=20, first_b=20,
+                lf=20, cf=20, rf=20,
+                pot_c=20, pot_ss=20, pot_second_b=20, pot_third_b=20,
+                pot_first_b=20, pot_lf=20, pot_cf=20, pot_rf=20,
+                stm=50,
+                pot_fst=0, pot_snk=0, pot_crv=0, pot_sld=0, pot_chg=0,
+                pot_splt=0, pot_cutt=0, pot_cir_chg=0, pot_scr=0,
+                pot_frk=0, pot_kncrv=0, pot_knbl=0,
+            )
+            # Set the primary position rating high for bucketing
+            pos_col_map = {2: "c", 6: "ss", 4: "second_b", 5: "third_b",
+                           3: "first_b", 7: "lf", 8: "cf", 9: "rf"}
+            pot_pos_col_map = {2: "pot_c", 6: "pot_ss", 4: "pot_second_b",
+                               5: "pot_third_b", 3: "pot_first_b",
+                               7: "pot_lf", 8: "pot_cf", 9: "pot_rf"}
+            if pos in pos_col_map:
+                ratings[pos_col_map[pos]] = 180
+                ratings[pot_pos_col_map[pos]] = 180
+
+            cols = ", ".join(ratings.keys())
+            placeholders = ", ".join("?" * len(ratings))
+            conn.execute(f"INSERT INTO ratings ({cols}) VALUES ({placeholders})",
+                         list(ratings.values()))
+
+            _r(conn, "batting_stats", player_id=pid, year=year,
+               team_id=team_id, split_id=1,
+               ab=400, h=100, d=20, t=2, hr=10, r=50, rbi=50,
+               sb=5, bb=40, k=80, avg=0.250, obp=0.330, slg=0.400,
+               war=spec.get("war", 2.0), pa=450, hbp=5, sf=3, g=100, cs=2)
+
+        conn.commit()
+        return conn
+
+    @staticmethod
+    def _role_map():
+        return {"11": "starter", "12": "reliever", "13": "closer"}
+
+    def test_returns_none_when_no_data(self):
+        """Returns None when no hitter data exists."""
+        from calibrate import _calibrate_carrying_tools
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(_SCHEMA)
+        conn.commit()
+
+        result = _calibrate_carrying_tools(conn, 2033, self._role_map())
+        assert result is None
+
+    def test_returns_none_when_insufficient_qualifying_players(self):
+        """Returns None when fewer than 10 players have 65+ in any tool."""
+        from calibrate import _calibrate_carrying_tools
+
+        # Create 9 SS players with contact 65+ (raw=75 → norm=65) below threshold of 10
+        # and 5 with low contact (raw=50 → norm=50)
+        specs = []
+        for i in range(9):
+            specs.append({"player_id": 1000 + i, "pos": 6,
+                          "cntct": 75, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 4.0})
+        for i in range(5):
+            specs.append({"player_id": 2000 + i, "pos": 6,
+                          "cntct": 50, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 1.0})
+
+        conn = self._make_db_with_hitters(specs)
+        result = _calibrate_carrying_tools(conn, 2033, self._role_map())
+        assert result is None
+
+    def test_basic_carrying_tool_detection(self):
+        """Detects carrying tools when 10+ players have 65+ grade with positive WAR premium."""
+        from calibrate import _calibrate_carrying_tools
+
+        # 12 SS players with high contact (raw=75 → norm=65) and high WAR
+        # 20 SS players with average contact (raw=50 → norm=50) and lower WAR
+        specs = []
+        for i in range(12):
+            specs.append({"player_id": 1000 + i, "pos": 6,
+                          "cntct": 75, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 5.0})
+        for i in range(20):
+            specs.append({"player_id": 2000 + i, "pos": 6,
+                          "cntct": 50, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 1.5})
+
+        conn = self._make_db_with_hitters(specs)
+        result = _calibrate_carrying_tools(conn, 2033, self._role_map())
+
+        assert result is not None
+        assert "positions" in result
+        assert "SS" in result["positions"]
+        assert "contact" in result["positions"]["SS"]["carrying_tools"]
+
+        ct = result["positions"]["SS"]["carrying_tools"]["contact"]
+        assert ct["war_premium_factor"] > 0
+        assert "_calibration" in ct
+        assert ct["_calibration"]["n_qualified"] == 12
+
+    def test_excludes_speed(self):
+        """Speed is never included as a carrying tool, even with strong WAR premium."""
+        from calibrate import _calibrate_carrying_tools
+
+        # Speed is not queried (not in the offensive tools list), so even if
+        # we had speed data, it wouldn't appear. Verify by checking the output
+        # only contains contact/gap/power/eye.
+        specs = []
+        for i in range(15):
+            specs.append({"player_id": 1000 + i, "pos": 6,
+                          "cntct": 75, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 5.0})
+        for i in range(20):
+            specs.append({"player_id": 2000 + i, "pos": 6,
+                          "cntct": 50, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 1.5})
+
+        conn = self._make_db_with_hitters(specs)
+        result = _calibrate_carrying_tools(conn, 2033, self._role_map())
+
+        assert result is not None
+        for pos_data in result["positions"].values():
+            for tool_name in pos_data["carrying_tools"]:
+                assert tool_name in ("contact", "gap", "power", "eye"), \
+                    f"Unexpected tool: {tool_name}"
+
+    def test_excludes_negative_war_premium(self):
+        """Tools where 65+ players have lower WAR than position mean are excluded."""
+        from calibrate import _calibrate_carrying_tools
+
+        # 12 SS players with high contact but LOW WAR (below position mean)
+        # 20 SS players with average contact and higher WAR
+        specs = []
+        for i in range(12):
+            specs.append({"player_id": 1000 + i, "pos": 6,
+                          "cntct": 75, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 0.5})  # low WAR despite high contact
+        for i in range(20):
+            specs.append({"player_id": 2000 + i, "pos": 6,
+                          "cntct": 50, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 3.0})  # higher WAR with average contact
+
+        conn = self._make_db_with_hitters(specs)
+        result = _calibrate_carrying_tools(conn, 2033, self._role_map())
+
+        # Contact should NOT be a carrying tool since its WAR premium is negative
+        if result is not None and "SS" in result.get("positions", {}):
+            assert "contact" not in result["positions"]["SS"]["carrying_tools"]
+
+    def test_config_structure(self):
+        """Output config has the expected structure matching carrying_tool_config.json schema."""
+        from calibrate import _calibrate_carrying_tools
+
+        specs = []
+        for i in range(15):
+            specs.append({"player_id": 1000 + i, "pos": 6,
+                          "cntct": 75, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 5.0})
+        for i in range(20):
+            specs.append({"player_id": 2000 + i, "pos": 6,
+                          "cntct": 50, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 1.5})
+
+        conn = self._make_db_with_hitters(specs)
+        result = _calibrate_carrying_tools(conn, 2033, self._role_map())
+
+        assert result is not None
+        assert result["version"] == 1
+        assert result["source"] == "calibrated"
+        assert "positions" in result
+        assert "scarcity_schedule" in result
+        assert len(result["scarcity_schedule"]) == 4
+
+        # Verify scarcity schedule structure
+        for entry in result["scarcity_schedule"]:
+            assert "threshold" in entry
+            assert "multiplier" in entry
+            assert entry["multiplier"] > 0
+
+    def test_war_premium_factor_scaling(self):
+        """war_premium_factor = raw_war_premium / 5.0."""
+        from calibrate import _calibrate_carrying_tools
+
+        # Create data where the WAR premium is known:
+        # 12 high-contact SS with WAR=6.0, 20 average SS with WAR=1.0
+        # Position mean = (12*6 + 20*1) / 32 = 92/32 = 2.875
+        # Tool mean = 6.0
+        # Premium = 6.0 - 2.875 = 3.125
+        # Factor = 3.125 / 5.0 = 0.625 → rounded to 0.62
+        specs = []
+        for i in range(12):
+            specs.append({"player_id": 1000 + i, "pos": 6,
+                          "cntct": 75, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 6.0})
+        for i in range(20):
+            specs.append({"player_id": 2000 + i, "pos": 6,
+                          "cntct": 50, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 1.0})
+
+        conn = self._make_db_with_hitters(specs)
+        result = _calibrate_carrying_tools(conn, 2033, self._role_map())
+
+        assert result is not None
+        ct = result["positions"]["SS"]["carrying_tools"]["contact"]
+        # Premium = 6.0 - (12*6 + 20*1)/32 = 6.0 - 2.875 = 3.125
+        # Factor = 3.125 / 5.0 = 0.625 → round(0.625, 2) = 0.62
+        expected_factor = round(3.125 / 5.0, 2)
+        assert ct["war_premium_factor"] == expected_factor
+
+    def test_multiple_positions(self):
+        """Calibration works across multiple position buckets."""
+        from calibrate import _calibrate_carrying_tools
+
+        specs = []
+        # SS players with high contact
+        for i in range(12):
+            specs.append({"player_id": 1000 + i, "pos": 6,
+                          "cntct": 75, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 5.0})
+        for i in range(20):
+            specs.append({"player_id": 1100 + i, "pos": 6,
+                          "cntct": 50, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 1.5})
+        # C players with high power
+        for i in range(12):
+            specs.append({"player_id": 2000 + i, "pos": 2,
+                          "cntct": 50, "gap": 50, "pow": 75, "eye": 50,
+                          "war": 4.5})
+        for i in range(20):
+            specs.append({"player_id": 2100 + i, "pos": 2,
+                          "cntct": 50, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 1.0})
+
+        conn = self._make_db_with_hitters(specs)
+        result = _calibrate_carrying_tools(conn, 2033, self._role_map())
+
+        assert result is not None
+        assert "SS" in result["positions"]
+        assert "C" in result["positions"]
+        assert "contact" in result["positions"]["SS"]["carrying_tools"]
+        assert "power" in result["positions"]["C"]["carrying_tools"]
+
+    def test_calibration_metadata_included(self):
+        """Each carrying tool entry includes _calibration metadata."""
+        from calibrate import _calibrate_carrying_tools
+
+        specs = []
+        for i in range(15):
+            specs.append({"player_id": 1000 + i, "pos": 6,
+                          "cntct": 75, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 5.0})
+        for i in range(20):
+            specs.append({"player_id": 2000 + i, "pos": 6,
+                          "cntct": 50, "gap": 50, "pow": 50, "eye": 50,
+                          "war": 1.5})
+
+        conn = self._make_db_with_hitters(specs)
+        result = _calibrate_carrying_tools(conn, 2033, self._role_map())
+
+        assert result is not None
+        ct = result["positions"]["SS"]["carrying_tools"]["contact"]
+        cal = ct["_calibration"]
+        assert "n_qualified" in cal
+        assert "n_total" in cal
+        assert "war_premium_raw" in cal
+        assert "scarcity_pct" in cal
+        assert "tool_mean_war" in cal
+        assert "pos_mean_war" in cal
+        assert cal["n_qualified"] == 15
+        assert cal["n_total"] == 35

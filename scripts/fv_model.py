@@ -19,6 +19,14 @@ from ratings import norm, norm_floor
 # Constants
 # ---------------------------------------------------------------------------
 
+# Positional access premium parameters — premium positions where adequate
+# defense enables a positional value premium that scales with offensive grade.
+POSITIONAL_ACCESS = {
+    "SS": {"access_threshold": 50, "base_premium": 2.0, "offense_scale": 0.06},
+    "C":  {"access_threshold": 50, "base_premium": 1.5, "offense_scale": 0.05},
+    "CF": {"access_threshold": 50, "base_premium": 1.5, "offense_scale": 0.05},
+}
+
 # Positional defensive weights — position-specific importance of each tool.
 DEFENSIVE_WEIGHTS = {
     "C":      {"CFrm": 0.45, "CBlk": 0.35, "CArm": 0.20},
@@ -108,6 +116,38 @@ def _pos_composite(p, bucket, age):
 
 
 # ---------------------------------------------------------------------------
+# Positional access premium
+# ---------------------------------------------------------------------------
+
+def positional_access_premium(bucket, offensive_grade, defensive_value, access_threshold=50):
+    """Compute the positional value premium for premium positions.
+
+    At premium positions (SS, C, CF), adequate defense (>= threshold) enables
+    a positional value premium that scales with offensive grade. Higher offense
+    at a premium position with adequate defense produces a larger premium.
+
+    For non-premium positions, returns 0.
+
+    Args:
+        bucket: Position bucket.
+        offensive_grade: The player's offensive grade (20-80).
+        defensive_value: The player's defensive value (20-80).
+        access_threshold: Minimum defensive value to qualify for positional access.
+
+    Returns:
+        Premium value as a float (added to FV before rounding).
+    """
+    params = POSITIONAL_ACCESS.get(bucket)
+    if params is None:
+        return 0.0
+    if defensive_value < access_threshold:
+        return 0.0
+    base_premium = params["base_premium"]
+    offense_scale = params["offense_scale"]
+    return base_premium + (offensive_grade - 40) * offense_scale
+
+
+# ---------------------------------------------------------------------------
 # FV calculation
 # ---------------------------------------------------------------------------
 
@@ -130,8 +170,22 @@ def calc_fv(p):
 
     if pot >= 45:
         comp = _pos_composite(p, bucket, age) or 0
-        if comp >= 60:
-            wt = defensive_score(p, bucket)
+        off_grade = p.get("_offensive_grade")
+        # Premium positions with offensive grade available: use positional access
+        if bucket in POSITIONAL_ACCESS and off_grade is not None:
+            if p.get("_defensive_value") is not None:
+                dv = p["_defensive_value"]
+            else:
+                dv = defensive_score(p, bucket)
+            premium = positional_access_premium(bucket, off_grade, dv)
+            if premium > 0:
+                fv = min(fv + premium, pot)
+        elif comp >= 60:
+            # Non-premium positions or no offensive grade: existing defensive bonus
+            if p.get("_defensive_value") is not None:
+                wt = p["_defensive_value"]
+            else:
+                wt = defensive_score(p, bucket)
             if comp >= 70:
                 db = 3 if wt >= 65 else 2 if wt >= 55 else 1
             else:

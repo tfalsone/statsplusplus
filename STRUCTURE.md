@@ -16,7 +16,8 @@ statsplusplus/
 │       │   ├── state.json                      # Current game date, year, my_team_id
 │       │   ├── league_settings.json            # Team names/abbr, divisions, role/pos/level maps, financial settings
 │       │   ├── league_averages.json            # League-wide batting/pitching averages + $/WAR
-│       │   └── model_weights.json              # Calibrated valuation tables (OVR_TO_WAR, FV, ARB, scarcity)
+│       │   ├── model_weights.json              # Calibrated valuation tables (OVR_TO_WAR, COMPOSITE_TO_WAR, FV, ARB, scarcity)
+│       │   └── tool_weights.json               # Per-league calibrated tool weights (component regression coefficients)
 │       ├── history/
 │       │   ├── prospects.json                  # Scouting summaries + FV history (keyed by player_id)
 │       │   └── roster_notes.json               # MLB player summaries (keyed by player_id)
@@ -33,11 +34,12 @@ statsplusplus/
 │   ├── data.py                 # Data access layer (typed query functions)
 │   ├── player_utils.py         # Shared utilities (bucketing, display helpers, league settings, PAP). Re-exports from ratings/fv_model/war_model.
 │   ├── fv_model.py             # Prospect FV grade calculation (calc_fv, dev_weight, defensive_score)
-│   ├── war_model.py            # WAR projection and stat history (peak_war_from_ovr, aging_mult, load_stat_history, stat_peak_war)
+│   ├── war_model.py            # WAR projection and stat history (peak_war_from_score, aging_mult, load_stat_history, stat_peak_war)
 │   ├── arb_model.py            # Arb salary and service time estimation (arb_salary, estimate_service_time, estimate_control)
 │   ├── refresh.py              # API → DB pipeline (full league refresh)
 │   ├── fv_calc.py              # Batch FV + surplus computation (prospect_fv, player_surplus)
-│   ├── calibrate.py            # League-specific model calibration (OVR_TO_WAR, FV, ARB, scarcity)
+│   ├── evaluation_engine.py     # Custom player evaluation (Composite_Score, Ceiling_Score from tool ratings)
+│   ├── calibrate.py            # League-specific model calibration (tool weights, OVR_TO_WAR, COMPOSITE_TO_WAR, FV, ARB, scarcity)
 │   ├── projections.py          # Player projections for depth chart planning
 │   ├── contract_value.py       # MLB contract surplus/deficit breakdown
 │   ├── prospect_value.py       # Prospect surplus calculator
@@ -81,6 +83,7 @@ statsplusplus/
 │   ├── test_queries.py         # Integration tests for web/queries.py (league-level queries)
 │   ├── test_team_queries.py    # Integration tests for web/team_queries.py
 │   ├── test_player_queries.py  # Integration tests for web/player_queries.py
+│   ├── test_evaluation_engine.py # Evaluation engine unit + property tests (Hypothesis)
 │   └── test_scripts.py         # Unit/smoke tests for scripts layer (assign_bucket edge cases, calibrate, fv_calc)
 │
 └── docs/                       # Design docs, analysis guides, changelog

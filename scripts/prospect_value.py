@@ -64,6 +64,11 @@ def _age_adjusted_discount(level, age):
 
 def _certainty_mult(ovr, pot):
     """Adjust surplus based on how much ceiling is already realized.
+
+    Accepts composite_score/ceiling_score (same formula, different inputs).
+    When called with composite_score and ceiling_score, realization measures
+    how much of the ceiling is already achieved.
+
     Realization ~1.0 (maxed out) = neutral (no bonus — proximity already
     rewarded by dev discount and time value).
     Realization ~0.5 = neutral. Realization ~0.3 = -8% to -15% (raw, high variance).
@@ -88,6 +93,10 @@ def _market_value(war, dpw, lg_min):
 
 def _scarcity_mult(fv, bucket=None, def_rating=None):
     """Interpolate scarcity multiplier from SCARCITY_MULT table.
+
+    Uses ceiling_score instead of pot for scarcity lookup when composite
+    scores are active. The fv parameter receives pot (or ceiling_score)
+    from the caller.
     
     Position-adjusted: premium positions get a Pot shift (higher effective Pot
     = scarcer). For defense-dependent positions (CF/SS/C/2B/3B), the shift

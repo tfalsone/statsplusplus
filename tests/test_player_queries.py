@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 from unittest.mock import patch
 import player_queries
 from conftest import TEAM_ID, HITTER_ID, PITCHER_ID, PROSPECT_ID, YEAR
+from player_queries import _build_evaluation_data
 
 # Stub out heavy optional dependencies that aren't needed for shape tests
 _STUB_PATCHES = [
@@ -132,3 +133,100 @@ def test_get_player_prospect_no_bat_stats():
 def test_get_player_missing_returns_none():
     result = player_queries.get_player(99999)
     assert result is None
+
+
+# ── _build_evaluation_data — component scores ────────────────────────────────
+
+def test_build_evaluation_data_extracts_component_scores():
+    """Component score fields are extracted from a ratings row dict."""
+    rd = {
+        "composite_score": 56, "ceiling_score": 62,
+        "tool_only_score": 54, "secondary_composite": None,
+        "ovr": 55, "pot": 60,
+        "offensive_grade": 55, "baserunning_value": 50,
+        "defensive_value": 45, "durability_score": None,
+        "offensive_ceiling": 60,
+    }
+    result = _build_evaluation_data(rd, is_pitcher=False, norm_fn=lambda x: x)
+    assert result["offensive_grade"] == 55
+    assert result["baserunning_value"] == 50
+    assert result["defensive_value"] == 45
+    assert result["durability_score"] is None
+    assert result["offensive_ceiling"] == 60
+
+
+def test_build_evaluation_data_none_when_components_missing():
+    """Legacy ratings row without component columns returns None for all component fields."""
+    rd = {
+        "composite_score": 56, "ceiling_score": 62,
+        "tool_only_score": 54, "secondary_composite": None,
+        "ovr": 55, "pot": 60,
+    }
+    result = _build_evaluation_data(rd, is_pitcher=False, norm_fn=lambda x: x)
+    assert result["offensive_grade"] is None
+    assert result["baserunning_value"] is None
+    assert result["defensive_value"] is None
+    assert result["durability_score"] is None
+    assert result["offensive_ceiling"] is None
+
+
+# ── _build_evaluation_data — positional context fields ────────────────────────
+
+def test_build_evaluation_data_includes_positional_context_defaults():
+    """Positional context fields default to zero/None when no data available."""
+    rd = {
+        "composite_score": 56, "ceiling_score": 62,
+        "tool_only_score": 54, "secondary_composite": None,
+        "ovr": 55, "pot": 60,
+        "offensive_grade": 55, "baserunning_value": 50,
+        "defensive_value": 45, "durability_score": None,
+        "offensive_ceiling": 60,
+    }
+    result = _build_evaluation_data(rd, is_pitcher=False, norm_fn=lambda x: x)
+    assert result["carrying_tool_bonus"] == 0.0
+    assert result["carrying_tool_breakdown"] == []
+    assert result["positional_percentile"] is None
+    assert result["positional_median"] is None
+
+
+def test_build_evaluation_data_reads_positional_percentile_from_rd():
+    """Positional percentile and median are read from the ratings row dict."""
+    rd = {
+        "composite_score": 56, "ceiling_score": 62,
+        "tool_only_score": 54, "secondary_composite": None,
+        "ovr": 55, "pot": 60,
+        "offensive_grade": 55, "baserunning_value": 50,
+        "defensive_value": 45, "durability_score": None,
+        "offensive_ceiling": 60,
+        "positional_percentile": 72.5,
+        "positional_median": 48,
+    }
+    result = _build_evaluation_data(rd, is_pitcher=False, norm_fn=lambda x: x)
+    assert result["positional_percentile"] == 72.5
+    assert result["positional_median"] == 48
+
+
+def test_build_evaluation_data_empty_rd_returns_positional_defaults():
+    """When rd is None, positional context fields are at defaults."""
+    result = _build_evaluation_data(None, is_pitcher=False, norm_fn=lambda x: x)
+    assert result["carrying_tool_bonus"] == 0.0
+    assert result["carrying_tool_breakdown"] == []
+    assert result["positional_percentile"] is None
+    assert result["positional_median"] is None
+
+
+def test_build_evaluation_data_pitcher_skips_carrying_tool_bonus():
+    """Pitchers should not get carrying tool bonus even with position_bucket."""
+    rd = {
+        "composite_score": 56, "ceiling_score": 62,
+        "tool_only_score": 54, "secondary_composite": None,
+        "ovr": 55, "pot": 60,
+        "offensive_grade": 55, "baserunning_value": None,
+        "defensive_value": None, "durability_score": 50,
+        "offensive_ceiling": 60,
+        "cntct": 70, "gap": 65, "pow": 70, "eye": 65,
+    }
+    result = _build_evaluation_data(rd, is_pitcher=True, norm_fn=lambda x: x,
+                                    position_bucket="SS")
+    assert result["carrying_tool_bonus"] == 0.0
+    assert result["carrying_tool_breakdown"] == []

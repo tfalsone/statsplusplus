@@ -11,7 +11,9 @@ with authoritative values when it runs.
 Usage: python3 scripts/fv_calc.py
 """
 
-import json, os, sys
+import json, logging, os, sys
+
+logger = logging.getLogger(__name__)
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(BASE, "scripts"))
@@ -31,6 +33,7 @@ RATINGS_SQL = """
     SELECT r.player_id AS ID,
            p.name AS Name, p.age AS Age, p.team_id, p.parent_team_id, p.level, p.pos, p.role,
            r.ovr AS Ovr, r.pot AS Pot,
+           r.composite_score, r.ceiling_score, r.secondary_composite,
            r.cntct AS Cntct, r.gap AS Gap, r.pow AS Pow, r.eye AS Eye, r.ks AS Ks,
            r.speed AS Speed, r.steal AS Steal,
            r.stf AS Stf, r.mov AS Mov, r.ctrl AS Ctrl, r.ctrl_r AS Ctrl_R, r.ctrl_l AS Ctrl_L,
@@ -55,7 +58,9 @@ RATINGS_SQL = """
            r.stf_l AS Stf_L, r.stf_r AS Stf_R,
            r.int_ AS Int, r.wrk_ethic AS WrkEthic, r.greed AS Greed,
            r.loy AS Loy, r.lead AS Lead, r.acc AS Acc,
-           r.league_id AS LeagueId
+           r.league_id AS LeagueId,
+           r.offensive_grade, r.baserunning_value, r.defensive_value,
+           r.durability_score, r.offensive_ceiling
     FROM ratings r
     JOIN players p ON r.player_id = p.player_id
     WHERE r.snapshot_date = (
@@ -63,6 +68,32 @@ RATINGS_SQL = """
     )
 """
 
+
+
+def _check_fv_tier_discrepancy(p, fv_base, fv_plus):
+    """Log a warning when the component-based defensive bonus produces an FV
+    grade differing from the old defensive_score() path by more than one FV
+    tier (5 FV points).  Only runs when ``_defensive_value`` was used."""
+    if p.get("_defensive_value") is None:
+        return
+    # Compute FV using the old path (without _defensive_value)
+    p_old = dict(p)
+    del p_old["_defensive_value"]
+    fv_old, plus_old = calc_fv(p_old)
+
+    # Effective FV values (base + 2.5 when plus modifier is set)
+    fv_new_eff = fv_base + (2.5 if fv_plus else 0)
+    fv_old_eff = fv_old + (2.5 if plus_old else 0)
+
+    if abs(fv_new_eff - fv_old_eff) > 5:
+        logger.warning(
+            "FV tier discrepancy for player %s: component-based=%d%s, "
+            "raw-tool-based=%d%s (defensive_value=%s)",
+            p.get("ID", "?"),
+            fv_base, "+" if fv_plus else "",
+            fv_old, "+" if plus_old else "",
+            p["_defensive_value"],
+        )
 
 
 def run():
@@ -75,6 +106,17 @@ def run():
     with open(state_path) as f:
         game_date = json.load(f)["game_date"]
     role_map = {str(k): v for k, v in _cfg.role_map.items()}
+
+    # Check use_custom_scores flag from league_settings.json (default: True)
+    settings_path = league_dir / "config" / "league_settings.json"
+    use_custom_scores = True
+    if settings_path.exists():
+        try:
+            with open(settings_path) as f:
+                settings = json.load(f)
+            use_custom_scores = settings.get("use_custom_scores", True)
+        except (json.JSONDecodeError, OSError):
+            pass
 
     # Pre-load stat history once for batch contract_value calls
     from player_utils import load_stat_history
@@ -99,6 +141,30 @@ def run():
         pid   = p["ID"]
         age   = p["Age"]
         level = p["level"]
+
+        # When use_custom_scores is enabled, prefer composite_score/ceiling_score
+        # over OVR/POT. Fall back to OVR/POT when composite scores are NULL.
+        if use_custom_scores:
+            # For two-way players, use combined_value as the effective Composite_Score
+            if p.get("secondary_composite") is not None:
+                from evaluation_engine import compute_combined_value
+                primary = p.get("composite_score") or p.get("Ovr") or 0
+                secondary = p.get("secondary_composite") or 0
+                combined = compute_combined_value(primary, secondary)
+                p["Ovr"] = combined
+            else:
+                p["Ovr"] = p.get("composite_score") or p.get("Ovr") or 0
+            p["Pot"] = p.get("ceiling_score") or p.get("Pot") or 0
+            # Pass pre-computed defensive component through to calc_fv
+            # so it can use it directly instead of re-deriving from raw tools
+            if p.get("defensive_value") is not None:
+                p["_defensive_value"] = p["defensive_value"]
+            # Pass offensive grade through for positional access premium
+            if p.get("offensive_grade") is not None:
+                p["_offensive_grade"] = p["offensive_grade"]
+        else:
+            p["Ovr"] = p.get("Ovr") or 0
+            p["Pot"] = p.get("Pot") or 0
 
         # Skip rows with malformed ratings data (empty strings from API)
         ovr_raw = p.get("Ovr", 0)
@@ -143,6 +209,7 @@ def run():
                 p["_norm_age"] = LEVEL_NORM_AGE["aaa"]
                 p["_level"] = "aaa"
                 fv_base, fv_plus = calc_fv(p)
+                _check_fv_tier_discrepancy(p, fv_base, fv_plus)
                 fv_str = f"{fv_base}+" if fv_plus else str(fv_base)
                 if bucket == "RP":
                     raw_pot = p["Pot"]
@@ -166,6 +233,7 @@ def run():
             p["_norm_age"] = LEVEL_NORM_AGE[level_key]
             p["_level"] = level_key
             fv_base, fv_plus = calc_fv(p)
+            _check_fv_tier_discrepancy(p, fv_base, fv_plus)
             fv_str = f"{fv_base}+" if fv_plus else str(fv_base)
             level_label = LEVEL_INT_LABEL.get(int(level), str(level))
 

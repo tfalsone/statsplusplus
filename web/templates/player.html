@@ -498,10 +498,59 @@
     <span class="value">{{ p.age }}</span>
   </div>
   {% if p.ratings %}
+  {% if p.composite_score %}
+  {% if p.offensive_grade %}
+  <div class="summary-item summary-item-wide">
+    <span class="label">Component Scores</span>
+    <span class="value component-scores">
+      {% if p.is_pitcher %}
+      <span class="component-entry"><span class="component-label">Pitching</span>{{ grade(p.offensive_grade, p.offensive_ceiling) }}</span>
+      {% if p.durability_score %}<span class="component-entry"><span class="component-label">Durability</span>{{ grade(p.durability_score) }}</span>{% endif %}
+      {% else %}
+      <span class="component-entry"><span class="component-label">Offense</span>{{ grade(p.offensive_grade, p.offensive_ceiling) }}</span>
+      {% if p.baserunning_value %}<span class="component-entry"><span class="component-label">Baserunning</span>{{ grade(p.baserunning_value) }}</span>{% endif %}
+      {% if p.defensive_value %}<span class="component-entry"><span class="component-label">Def</span>{{ grade(p.defensive_value) }}</span>{% endif %}
+      {% endif %}
+    </span>
+    <span class="value component-secondary">Composite: <span class="ovr-color" data-g="{{ p.composite_score }}">{{ p.composite_score }}</span> / Ceiling: <span class="ovr-color" data-g="{{ p.ceiling_score }}">{{ p.ceiling_score }}</span>{% if p.carrying_tool_bonus %} <span style="color:#4caf50; font-size:11px" title="Carrying tool bonus: {% for b in p.carrying_tool_breakdown %}{{ b.tool|title }}: +{{ '%.1f'|format(b.bonus) }}{% if not loop.last %}, {% endif %}{% endfor %}">+{{ "%.1f"|format(p.carrying_tool_bonus) }} CT</span>{% endif %}{% if p.positional_percentile is not none and p.valuation and p.valuation.bucket %} <span style="color:var(--text-dim); font-size:11px">· {{ p.positional_percentile|round|int }}th pctile {{ p.valuation.bucket }}</span>{% endif %}</span>
+  </div>
+  {% else %}
+  <div class="summary-item">
+    <span class="label">Comp / Ceil</span>
+    <span class="value"><span class="ovr-color" data-g="{{ p.composite_score }}">{{ p.composite_score }}</span> / <span class="ovr-color" data-g="{{ p.ceiling_score }}">{{ p.ceiling_score }}</span></span>
+  </div>
+  {% endif %}
+  {% if p.ratings.ovr and p.ratings.pot %}
+  <div class="summary-item">
+    <span class="label">Ovr / Pot</span>
+    <span class="value">
+      <span class="ovr-color" data-g="{{ p.ratings.ovr }}">{{ p.ratings.ovr }}</span> / <span class="ovr-color" data-g="{{ p.ratings.pot }}">{{ p.ratings.pot }}</span>
+      {% if p.divergence %}
+        {% if p.divergence.type == 'hidden_gem' %}<span class="divergence-badge divergence-gem" title="Hidden Gem: tools {{ p.divergence.magnitude }}+ above OVR">+{{ p.divergence.magnitude }}</span>
+        {% elif p.divergence.type == 'landmine' %}<span class="divergence-badge divergence-mine" title="Landmine: tools {{ p.divergence.magnitude|abs }} below OVR">{{ p.divergence.magnitude }}</span>
+        {% endif %}
+        {% if p.divergence.component_context %}
+        <span class="divergence-context">{% set top = p.divergence.component_context[0] %}{% if top.component == 'offensive_grade' %}offense{% elif top.component == 'baserunning_value' %}baserunning{% elif top.component == 'defensive_value' %}defense{% endif %}-driven</span>
+        {% endif %}
+        {% if p.divergence.positional_context %}
+        <span class="divergence-context" title="{{ p.divergence.positional_context.annotation }}">{{ p.divergence.positional_context.percentile|round|int }}th pctile {{ p.divergence.positional_context.position }}</span>
+        {% endif %}
+      {% endif %}
+    </span>
+  </div>
+  {% endif %}
+  {% else %}
   <div class="summary-item">
     <span class="label">Ovr / Pot</span>
     <span class="value"><span class="ovr-color" data-g="{{ p.ratings.ovr }}">{{ p.ratings.ovr }}</span> / <span class="ovr-color" data-g="{{ p.ratings.pot }}">{{ p.ratings.pot }}</span></span>
   </div>
+  {% endif %}
+  {% if p.two_way_scores %}
+  <div class="summary-item">
+    <span class="label">Combined</span>
+    <span class="value"><span class="ovr-color" data-g="{{ p.two_way_scores.combined_value }}">{{ p.two_way_scores.combined_value }}</span></span>
+  </div>
+  {% endif %}
   {% if p.ratings.height %}
   <div class="summary-item">
     <span class="label">Ht / B-T</span>
@@ -542,6 +591,107 @@
 
 {% set has_stats = p.bat_stats or p.pit_stats %}
 
+{# Tool profile panel — archetype, carrying tools, red-flag tools #}
+{% macro tool_profile_panel() %}
+{% if p.archetype or p.carrying_tools or p.red_flag_tools or p.carrying_tool_bonus or p.positional_percentile is not none %}
+<div class="panel">
+  <h2>Tool Profile</h2>
+  {% if p.archetype and p.archetype != 'unclassified' %}
+  <div style="margin-bottom:8px"><span class="char-pill char-pill-n" style="text-transform:capitalize">{{ p.archetype|replace('-', ' ')|replace('_', ' ') }}</span></div>
+  {% endif %}
+  {% if p.carrying_tool_bonus %}
+  <div style="margin-bottom:6px; font-size:12px">
+    <span style="color:var(--text-dim)">Carrying Tool Bonus:</span>
+    <span style="color:#4caf50; font-weight:600; margin-left:4px">+{{ "%.1f"|format(p.carrying_tool_bonus) }}</span>
+    <span style="color:var(--text-dim); margin-left:4px">({% for b in p.carrying_tool_breakdown %}{{ b.tool|title }}: +{{ "%.1f"|format(b.bonus) }}{% if not loop.last %}, {% endif %}{% endfor %})</span>
+  </div>
+  {% endif %}
+  {% if p.positional_percentile is not none and p.valuation and p.valuation.bucket %}
+  <div style="margin-bottom:6px; font-size:12px">
+    <span style="color:var(--text-dim)">Positional Context:</span>
+    <span style="font-weight:600; margin-left:4px; {% if p.positional_percentile >= 60 %}color:#4caf50{% elif p.positional_percentile <= 25 %}color:#f44336{% else %}color:var(--text){% endif %}">{{ p.positional_percentile|round|int }}th percentile for {{ p.valuation.bucket }}</span>
+    {% if p.positional_median is not none %}<span style="color:var(--text-dim); margin-left:4px">(median: {{ p.positional_median }})</span>{% endif %}
+  </div>
+  {% endif %}
+  {% if p.valuation and p.valuation.type == "prospect" and p.valuation.bucket in ("SS", "C", "CF") and p.defensive_value is not none %}
+  <div style="margin-bottom:6px; font-size:12px">
+    <span style="color:var(--text-dim)">Positional Access:</span>
+    {% if p.defensive_value >= 50 %}
+    <span style="color:#4caf50; font-weight:600; margin-left:4px">✓ Holds {{ p.valuation.bucket }}</span>
+    <span style="color:var(--text-dim); margin-left:4px">(def {{ p.defensive_value }} ≥ 50 threshold)</span>
+    {% else %}
+    <span style="color:#ff9800; font-weight:600; margin-left:4px">⚠ At risk at {{ p.valuation.bucket }}</span>
+    <span style="color:var(--text-dim); margin-left:4px">(def {{ p.defensive_value }} < 50 threshold)</span>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if p.carrying_tools %}
+  <div style="margin-bottom:6px; font-size:12px">
+    <span style="color:var(--text-dim)">Carrying:</span>
+    {% for t in p.carrying_tools %}<span style="color:#4caf50; font-weight:600; margin-left:4px">{{ t|replace('_', ' ')|title }}</span>{% if not loop.last %},{% endif %}{% endfor %}
+  </div>
+  {% endif %}
+  {% if p.red_flag_tools %}
+  <div style="font-size:12px">
+    <span style="color:var(--text-dim)">Red Flag:</span>
+    {% for t in p.red_flag_tools %}<span style="color:#f44336; font-weight:600; margin-left:4px">{{ t|replace('_', ' ')|title }}</span>{% if not loop.last %},{% endif %}{% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{# Development tracking panel — snapshot deltas #}
+{% macro dev_tracking_panel() %}
+{% if p.snapshot_deltas %}
+<div class="panel">
+  <h2>Development Tracking
+    {% if p.snapshot_deltas.is_riser %}<span class="divergence-badge divergence-gem" style="font-size:10px; margin-left:6px">▲ Riser</span>{% endif %}
+    {% if p.snapshot_deltas.reduced_ceiling %}<span class="divergence-badge divergence-mine" style="font-size:10px; margin-left:6px">▼ Reduced Ceiling</span>{% endif %}
+  </h2>
+  {% if p.snapshot_deltas.composite_delta != 0 or p.snapshot_deltas.ceiling_delta != 0 %}
+  <div style="margin-bottom:8px; font-size:12px">
+    {% if p.snapshot_deltas.composite_delta != 0 %}
+    <span style="color:var(--text-dim)">Composite:</span>
+    <span class="{% if p.snapshot_deltas.composite_delta > 0 %}pos{% elif p.snapshot_deltas.composite_delta < 0 %}neg{% endif %}">{{ "%+d"|format(p.snapshot_deltas.composite_delta) }}</span>
+    {% endif %}
+    {% if p.snapshot_deltas.ceiling_delta != 0 %}
+    <span style="color:var(--text-dim); margin-left:8px">Ceiling:</span>
+    <span class="{% if p.snapshot_deltas.ceiling_delta > 0 %}pos{% elif p.snapshot_deltas.ceiling_delta < 0 %}neg{% endif %}">{{ "%+d"|format(p.snapshot_deltas.ceiling_delta) }}</span>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if p.snapshot_deltas.offensive_delta != 0 or p.snapshot_deltas.baserunning_delta != 0 or p.snapshot_deltas.defensive_delta != 0 %}
+  <div style="margin-bottom:8px; font-size:12px">
+    {% for comp_label, comp_key, comp_delta in [('Offense', 'offensive', p.snapshot_deltas.offensive_delta), ('Baserunning', 'baserunning', p.snapshot_deltas.baserunning_delta), ('Defense', 'defensive', p.snapshot_deltas.defensive_delta)] %}
+    {% if comp_delta != 0 %}
+    <span style="color:var(--text-dim){% if loop.index > 1 %}; margin-left:8px{% endif %}">{{ comp_label }}:</span>
+    <span class="{% if comp_delta > 0 %}pos{% elif comp_delta < 0 %}neg{% endif %}"{% if p.snapshot_deltas.top_component_change == comp_key %} style="font-weight:600"{% endif %}>{{ "%+d"|format(comp_delta) }}</span>
+    {% endif %}
+    {% endfor %}
+    {% if p.snapshot_deltas.top_component_change %}
+    <span style="color:var(--text-dim); margin-left:8px; font-size:11px">({{ p.snapshot_deltas.top_component_change }} biggest Δ)</span>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if p.snapshot_deltas.tool_deltas %}
+  <table class="grade-table" style="font-size:12px">
+    <tbody>
+      {% for tool, delta in p.snapshot_deltas.tool_deltas.items() %}
+      {% if delta != 0 and tool not in ('composite_score', 'ceiling_score', 'tool_only_score', 'secondary_composite', 'ovr', 'pot') %}
+      <tr>
+        <td>{{ tool|replace('_', ' ')|title }}</td>
+        <td class="{% if delta > 0 %}pos{% elif delta < 0 %}neg{% endif %}">{{ "%+d"|format(delta) }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
 {# ═══════════════════════════════════════════════════════════════════════ #}
 {# MLB PLAYERS — tabbed layout                                           #}
 {# ═══════════════════════════════════════════════════════════════════════ #}
@@ -559,7 +709,9 @@
   <div class="columns">
     <div class="panel-stack">
       {{ ratings_panel() }}
+      {{ tool_profile_panel() }}
       {{ character_panel() }}
+      {{ dev_tracking_panel() }}
     </div>
     <div class="panel-stack">
       {{ scouting_panel() }}
@@ -778,7 +930,9 @@
   <div class="columns">
     <div class="panel-stack">
       {{ ratings_panel() }}
+      {{ tool_profile_panel() }}
       {{ character_panel() }}
+      {{ dev_tracking_panel() }}
     </div>
     <div class="panel-stack">
       {{ scouting_panel() }}

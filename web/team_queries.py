@@ -251,9 +251,11 @@ def get_roster(team_id=None):
 
     players = conn.execute("""
         SELECT p.player_id, p.name, p.age, p.pos, p.role,
-               ps.ovr, ps.surplus, ps.bucket
+               ps.ovr, ps.surplus, ps.bucket,
+               r.composite_score
         FROM players p
         LEFT JOIN player_surplus ps ON p.player_id=ps.player_id AND ps.eval_date=?
+        LEFT JOIN latest_ratings r ON p.player_id=r.player_id
         WHERE p.team_id=? AND p.level='1'
     """, (ed, tid)).fetchall()
 
@@ -276,10 +278,11 @@ def get_roster(team_id=None):
     mlb_pids = {row[0] for row in players if row[0] in bat or row[0] in pit}
 
     hitters, pitchers = [], []
-    for pid, name, age, pos, role, ovr, surplus, bucket in players:
+    for pid, name, age, pos, role, ovr, surplus, bucket, comp_score in players:
         if pid not in mlb_pids:
             continue
-        base = {"pid": pid, "name": name, "age": age, "ovr": ovr or 0,
+        _display_ovr = comp_score if comp_score is not None else (ovr or 0)
+        base = {"pid": pid, "name": name, "age": age, "ovr": _display_ovr,
                 "surplus": round(surplus / 1e6, 1) if surplus else 0}
         if role in (11, 12, 13):
             s = pit.get(pid, (None, None, None, None))
@@ -313,18 +316,22 @@ def get_roster_hitters(team_id=None):
     # Position players
     players = conn.execute("""
         SELECT p.player_id, p.name, p.age, p.pos, p.role,
-               ps.ovr, ps.surplus, ps.surplus_yr1
+               ps.ovr, ps.surplus, ps.surplus_yr1,
+               r.composite_score
         FROM players p
         LEFT JOIN player_surplus ps ON p.player_id=ps.player_id AND ps.eval_date=?
+        LEFT JOIN latest_ratings r ON p.player_id=r.player_id
         WHERE p.team_id=? AND p.level='1' AND COALESCE(p.role,0) NOT IN (11,12,13)
     """, (ed, tid)).fetchall()
 
     # Two-way pitchers with meaningful batting (PA >= 30)
     twp = conn.execute("""
         SELECT p.player_id, p.name, p.age, p.pos, p.role,
-               ps.ovr, ps.surplus, ps.surplus_yr1
+               ps.ovr, ps.surplus, ps.surplus_yr1,
+               r.composite_score
         FROM players p
         LEFT JOIN player_surplus ps ON p.player_id=ps.player_id AND ps.eval_date=?
+        LEFT JOIN latest_ratings r ON p.player_id=r.player_id
         JOIN batting_stats b ON b.player_id=p.player_id AND b.year=? AND b.split_id=1 AND b.pa>=30
         WHERE p.team_id=? AND p.level='1' AND p.role IN (11,12,13)
     """, (ed, year, tid)).fetchall()
@@ -388,9 +395,10 @@ def get_roster_hitters(team_id=None):
             pos = pos_map().get(p["pos"], "?")
         s1 = splits.get(1)
         war = s1["war"] if s1 and s1["war"] is not None else None
+        _display_ovr = p["composite_score"] if p["composite_score"] is not None else (p["ovr"] or 0)
         result.append({
             "pid": pid, "name": p["name"], "age": p["age"],
-            "ovr": p["ovr"] or 0, "pos": pos,
+            "ovr": _display_ovr, "pos": pos,
             "pos_order": pos_order().get(pos, 99),
             "surplus": round(p["surplus_yr1"] / 1e6, 1) if p["surplus_yr1"] else 0,
             "pap": calc_pap(war, salaries.get(pid, 0), team_g, dpw),
@@ -415,9 +423,11 @@ def get_roster_pitchers(team_id=None):
 
     players = conn.execute("""
         SELECT p.player_id, p.name, p.age, p.pos, p.role,
-               ps.ovr, ps.surplus, ps.surplus_yr1
+               ps.ovr, ps.surplus, ps.surplus_yr1,
+               r.composite_score
         FROM players p
         LEFT JOIN player_surplus ps ON p.player_id=ps.player_id AND ps.eval_date=?
+        LEFT JOIN latest_ratings r ON p.player_id=r.player_id
         WHERE p.team_id=? AND p.level='1' AND p.role IN (11,12,13)
     """, (ed, tid)).fetchall()
 
@@ -473,9 +483,10 @@ def get_roster_pitchers(team_id=None):
         role_str = ROLE_MAP.get(p["role"], "P")
         s1 = splits.get(1)
         war = s1["war"] if s1 and s1["war"] is not None else None
+        _display_ovr = p["composite_score"] if p["composite_score"] is not None else (p["ovr"] or 0)
         result.append({
             "pid": pid, "name": p["name"], "age": p["age"],
-            "ovr": p["ovr"] or 0, "role": role_str,
+            "ovr": _display_ovr, "role": role_str,
             "role_order": pos_order().get(role_str, 99),
             "surplus": round(p["surplus_yr1"] / 1e6, 1) if p["surplus_yr1"] else 0,
             "pap": calc_pap(war, salaries.get(pid, 0), team_g, dpw),
@@ -501,9 +512,11 @@ def get_farm(team_id=None):
     ed = conn.execute("SELECT MAX(eval_date) FROM prospect_fv").fetchone()[0]
 
     rows = conn.execute("""
-        SELECT p.name, p.age, p.level, pf.fv, pf.fv_str, pf.bucket, pf.prospect_surplus, p.player_id, p.pos
+        SELECT p.name, p.age, p.level, pf.fv, pf.fv_str, pf.bucket, pf.prospect_surplus, p.player_id, p.pos,
+               r.composite_score, r.ceiling_score
         FROM prospect_fv pf
         JOIN players p ON pf.player_id=p.player_id
+        LEFT JOIN latest_ratings r ON pf.player_id=r.player_id
         WHERE pf.eval_date=? AND (p.parent_team_id=? OR (p.team_id=? AND p.level='1'))
         ORDER BY pf.fv DESC, p.age ASC
     """, (ed, tid, tid)).fetchall()
@@ -519,7 +532,8 @@ def get_farm(team_id=None):
              "bucket": _display_pos(r[5], r[8]),
              "pos_order": pos_order().get(_display_pos(r[5], r[8]), 99),
              "surplus": round(r[6] / 1e6, 1) if r[6] else 0,
-             "pid": r[7]}
+             "pid": r[7],
+             "composite_score": r[9], "ceiling_score": r[10]}
             for i, r in enumerate(rows)]
 
 

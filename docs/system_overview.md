@@ -20,8 +20,27 @@ refresh.py ───────────────────────
           league_averages.json, state.json                                      │
      │                                                                          │
      ▼                                                                          │
+calibrate.py (pass 1) ──────────────────────────────────────────────────────── │
+  Reads:  ratings, batting_stats, pitching_stats, fielding_stats                │
+  Writes: config/tool_weights.json (component regression), model_weights.json   │
+     │                                                                          │
+     ▼                                                                          │
+evaluation_engine.py ───────────────────────────────────────────────────────── │
+  Reads:  ratings, players, batting_stats, pitching_stats, tool_weights.json    │
+  Writes: ratings (composite_score, ceiling_score, tool_only_score,             │
+          secondary_composite, offensive_grade, baserunning_value,              │
+          defensive_value, durability_score, offensive_ceiling),                │
+          ratings_history                                                       │
+     │                                                                          │
+     ▼                                                                          │
+calibrate.py (pass 2) ──────────────────────────────────────────────────────── │
+  Reads:  ratings (composite_score), batting_stats, pitching_stats              │
+  Writes: model_weights.json (COMPOSITE_TO_WAR tables)                          │
+     │                                                                          │
+     ▼                                                                          │
 fv_calc.py ─────────────────────────────────────────────────────────────────── │
-  Reads:  players, ratings, batting_stats, pitching_stats, contracts            │
+  Reads:  players, ratings (composite_score/ceiling_score), batting_stats,      │
+          pitching_stats, contracts                                             │
   Writes: prospect_fv, player_surplus                                           │
      │                                                                          │
      ├──► farm_analysis.py         (prospect_fv → tmp/farm_scaffold)            │
@@ -53,7 +72,8 @@ All other analysis scripts are read-only against the DB.
 | Script | Lines | Purpose |
 |---|---|---|
 | `refresh.py` | 280 | Pulls data from StatsPlus API into DB (all teams). |
-| `fv_calc.py` | 142 | Computes FV for all prospects + surplus for all MLB players. ~8s runtime. |
+| `fv_calc.py` | 142 | Computes FV for all prospects + surplus for all MLB players. Uses composite_score/ceiling_score when available, falls back to OVR/POT. ~8s runtime. |
+| `evaluation_engine.py` | ~2350 | Custom player evaluation — computes Composite_Score, Ceiling_Score, Tool_Only_Score from tool ratings. Non-linear piecewise tool transform, WAR-derived recombination shares, asymmetric pitcher stat blend, SP innings-volume adjustment. Component-level scores (offensive_grade, baserunning_value, defensive_value, durability_score) and component ceilings. Component-level regression for weight derivation. Two-way player handling. Age-weighted ceiling blend, POT soft cap. Pure functions + batch pipeline. |
 | `farm_analysis.py` | 691 | Angels farm scaffold — ranked prospects, grade tables, FV history, dev signals. |
 | `roster_analysis.py` | 515 | Angels MLB roster scaffold — player cards, stat lines, contract info, surplus. |
 | `prospect_query.py` | 220 | League-wide prospect rankings and farm system comparisons. |

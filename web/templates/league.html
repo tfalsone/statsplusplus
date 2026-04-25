@@ -367,9 +367,9 @@ POS_ORDER.forEach(p => { const o = document.createElement('option'); o.value = p
 let currentMode = 'top100';
 
 const COLS = {
-  top100:   ['#','Player','Position','Team','Level','ETA','Age','Ht','B/T','FV','Surplus'],
-  team:     ['#','Player','Position','Level','ETA','Age','Ht','B/T','FV','Surplus'],
-  position: ['#','Player','Team','Level','ETA','Age','Ht','B/T','FV','Surplus'],
+  top100:   ['#','Player','Position','Team','Level','ETA','Age','Ht','B/T','FV','Comp','Surplus'],
+  team:     ['#','Player','Position','Level','ETA','Age','Ht','B/T','FV','Comp','Surplus'],
+  position: ['#','Player','Team','Level','ETA','Age','Ht','B/T','FV','Comp','Surplus'],
 };
 const LEFT_COLS = new Set(['Player','Team','Level']);
 
@@ -397,6 +397,7 @@ function renderProspects(list, maxRows, singleTeam) {
     c += `<td class="${etaCls}">${p.eta}</td><td>${p.age}</td>`;
     c += `<td class="ht-cell">${p.height}</td><td>${p.bats}/${p.throws}</td>`;
     c += `<td>${fvBadge(p.fv, p.fv_str)}</td>`;
+    c += `<td>${p.composite_score || '—'}</td>`;
     c += `<td class="surplus-cell"><span class="surplus-track"><span class="surplus-bar" style="width:${surpPct}%"></span><span class="surplus-val">$${p.surplus}M</span></span></td>`;
     return `<tr${hl}>${c}</tr>`;
   }).join('');
@@ -541,6 +542,7 @@ function renderPanel(d) {
       <span class="panel-grade-label">OVR</span><span class="panel-grade-val">${d.ovr}</span>
       <span class="panel-grade-label">POT</span><span class="panel-grade-val">${d.pot}</span>
     </div>
+    ${d.composite_score ? '<div class="panel-grade-row"><span class="panel-grade-label">Comp</span><span class="panel-grade-val">' + d.composite_score + '</span><span class="panel-grade-label">Ceil</span><span class="panel-grade-val">' + (d.ceiling_score || '—') + '</span></div>' : ''}
     <div class="panel-grade-row">
       <span class="panel-grade-label">FV</span><span class="panel-grade-val ${fvClass(d.fv)}">${d.fv_str}</span>
       <span class="panel-grade-label">ETA</span><span class="panel-grade-val">${d.eta}</span>

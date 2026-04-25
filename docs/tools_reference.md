@@ -202,14 +202,19 @@ python3 scripts/refresh.py state <game_date> [year]  # Manual state override
 
 ### `scripts/calibrate.py`
 
-Derives league-specific valuation tables from actual data. Produces
-`config/model_weights.json` with position-specific OVR→WAR, FV→WAR, arb
-percentages, and scarcity curve. Runs automatically during refresh.
+Derives league-specific valuation tables and tool weights from actual data. Produces
+`config/model_weights.json` (OVR→WAR, COMPOSITE→WAR, FV→WAR, arb, scarcity) and
+`config/tool_weights.json` (component-level regression weights per position). Runs
+automatically during refresh.
 
 ```bash
-python3 scripts/calibrate.py           # Write model_weights.json
+python3 scripts/calibrate.py           # Write model_weights.json + tool_weights.json
 python3 scripts/calibrate.py --dry-run # Show results without writing
 ```
+
+Two-pass execution during refresh:
+- **Pass 1** (before evaluation engine): tool weight regression (hitting→WAR, baserunning→SB metrics, fielding→ZR, pitching→FIP) + OVR_TO_WAR. Hitting regression uses WAR as target (not OPS+) and excludes `avoid_k` (collinear with contact) and `speed` (contributes via baserunning only). Min weight floor: 0.10 for hitters, 0.05 for pitchers.
+- **Pass 2** (after evaluation engine): COMPOSITE_TO_WAR regression using freshly computed composite scores
 
 ---
 
@@ -217,6 +222,50 @@ python3 scripts/calibrate.py --dry-run # Show results without writing
 
 These scripts double as importable modules. Use from Python when you need structured
 data rather than CLI text output.
+
+### `evaluation_engine`
+
+Custom player evaluation — computes Composite_Score, Ceiling_Score, and Tool_Only_Score
+from individual tool ratings. All computation functions are pure (no side effects).
+The `run()` entry point is the only function with DB access.
+
+```python
+from evaluation_engine import (
+    compute_composite_hitter,   # Hitter score from tool ratings + positional weights
+    compute_composite_pitcher,  # Pitcher score from tool ratings + arsenal + stamina
+    compute_composite_mlb,      # Stat-blended score for MLB players
+    compute_ceiling,            # Ceiling score from potential tool ratings
+    compute_tool_only_score,    # Pre-stat-blend score (for divergence detection)
+    compute_offensive_grade,    # Offensive component (contact/gap/power/eye only)
+    compute_baserunning_value,  # Baserunning component (speed/steal/stl_rt)
+    compute_defensive_value,    # Defensive component (positional defensive tools)
+    compute_durability_score,   # Durability component (SP stamina)
+    compute_component_ceilings, # Component-level ceilings from potential tools
+    derive_composite_from_components,  # Verify decomposition is lossless (inverse of composite)
+    stat_to_2080,               # Convert league-normalized stat (OPS+) to 20-80 scale
+    pitcher_stat_to_2080,       # Asymmetric pitcher stat conversion (steeper above-avg slope)
+    _tool_transform,            # Non-linear piecewise tool transformation (exported for tests)
+    detect_divergence,          # Compare tool_only_score vs OVR → hidden_gem/landmine/agreement
+    classify_archetype,         # Tool profile archetype (contact-first, power-over-hit, etc.)
+    identify_carrying_tools,    # Tools rated 15+ above composite
+    identify_red_flag_tools,    # Tools rated 15+ below composite
+    compute_snapshot_deltas,    # Tool-level deltas between two rating snapshots (riser/reduced ceiling flags)
+    is_two_way_player,          # Detect two-way players (both hitting + pitching tools)
+    compute_two_way_scores,     # Dual scoring for two-way players
+    compute_combined_value,     # Combined value from primary + secondary role scores
+    derive_tool_weights,        # Per-feature r² regression for tool weight derivation
+    normalize_coefficients,     # Clamp negatives, normalize to sum 1.0, optional min_weight floor
+    recombine_component_weights,# Merge hitting/baserunning/fielding weights by position
+    load_tool_weights,          # Load per-league tool_weights.json (or defaults)
+    validate_tool_weights,      # Validate a tool-weights config dict (weight sums, types)
+    run,                        # Batch pipeline: compute all scores, write to DB
+)
+```
+
+Pipeline integration: runs after `calibrate.py` pass 1 and before `fv_calc.py`.
+Scores are written to `ratings` table (`composite_score`, `ceiling_score`, `tool_only_score`,
+`secondary_composite`, `offensive_grade`, `baserunning_value`, `defensive_value`,
+`durability_score`, `offensive_ceiling`) and `ratings_history` for development tracking.
 
 ### `ratings`
 
@@ -243,9 +292,10 @@ fv_base, fv_plus = calc_fv(player_dict)   # player_dict needs Ovr, Pot, Age, _bu
 WAR projection and stat history loading.
 
 ```python
-from war_model import peak_war_from_ovr, aging_mult, load_stat_history, stat_peak_war
-peak_war_from_ovr(60, 'SP')          # → float
-aging_mult(33, 'SP')                 # → float (multiplier on peak WAR)
+from war_model import peak_war_from_score, aging_mult, load_stat_history, stat_peak_war
+peak_war_from_score(60, 'SP')         # → float (uses COMPOSITE_TO_WAR when available, falls back to OVR_TO_WAR)
+peak_war_from_ovr(60, 'SP')           # → float (backward-compatible alias)
+aging_mult(33, 'SP')                  # → float (multiplier on peak WAR)
 bat_hist, pit_hist, two_way = load_stat_history(conn, game_date)
 war = stat_peak_war(pid, 'SP', bat_hist, pit_hist)
 ```
@@ -401,6 +451,8 @@ Import with `sys.path.insert(0, 'web')`. All are read-only against the DB.
 | `config/state.json` | Current game date, year, my_team_id |
 | `config/league_settings.json` | Division structure, team maps, rating thresholds |
 | `config/league_averages.json` | League-wide batting/pitching averages, $/WAR |
+| `config/model_weights.json` | Calibrated valuation tables (OVR_TO_WAR, COMPOSITE_TO_WAR, FV, ARB, scarcity) |
+| `config/tool_weights.json` | Per-league calibrated tool weights from component regression (hitting→WAR, baserunning→SB, fielding→ZR, pitching→FIP). Source: `calibrated` or `default`. Includes R² and sample size per bucket. Hitting regression excludes `avoid_k` and `speed`. |
 | `history/prospects.json` | Scouting summaries + FV history by player_id |
 | `history/roster_notes.json` | MLB player summaries by player_id |
 | `reports/<year>/*.md` | Published farm reports, roster analyses, org overviews |

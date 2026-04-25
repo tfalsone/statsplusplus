@@ -236,6 +236,19 @@ def _load_calibrated_ovr():
 
 OVR_TO_WAR_CALIBRATED = _load_calibrated_ovr()
 
+
+def _load_composite_to_war():
+    """Load position-specific COMPOSITE_TO_WAR from model_weights.json."""
+    w = _load_weights()
+    raw = w.get("COMPOSITE_TO_WAR")
+    if not raw or not isinstance(raw, dict):
+        return None
+    # Convert: {"SS": {"80": 7.83, ...}} -> {"SS": {80: 7.83, ...}}
+    return {bucket: {int(k): v for k, v in tbl.items()}
+            for bucket, tbl in raw.items() if isinstance(tbl, dict)}
+
+COMPOSITE_TO_WAR = _load_composite_to_war()
+
 # ---------------------------------------------------------------------------
 # 6. Aging curves
 # ---------------------------------------------------------------------------

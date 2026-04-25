@@ -64,11 +64,22 @@ CREATE TABLE IF NOT EXISTS ratings (
     prone TEXT, acc TEXT, league_id INTEGER,
     height INTEGER, bats TEXT, throws TEXT,
     stl_rt INTEGER, run INTEGER, sac_bunt INTEGER, bunt_hit INTEGER, hold INTEGER,
+    composite_score INTEGER, ceiling_score INTEGER, tool_only_score INTEGER, secondary_composite INTEGER,
+    offensive_grade INTEGER, baserunning_value INTEGER, defensive_value INTEGER,
+    durability_score INTEGER, offensive_ceiling INTEGER,
     PRIMARY KEY (player_id, snapshot_date)
 );
 CREATE VIEW IF NOT EXISTS latest_ratings AS
     SELECT * FROM ratings
     WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM ratings);
+CREATE TABLE IF NOT EXISTS ratings_history (
+    player_id INTEGER, snapshot_date TEXT,
+    composite_score INTEGER, ceiling_score INTEGER,
+    ovr INTEGER, pot INTEGER,
+    cntct INTEGER, gap INTEGER, pow INTEGER, eye INTEGER, ks INTEGER,
+    speed INTEGER, stf INTEGER, mov INTEGER, ctrl INTEGER,
+    PRIMARY KEY (player_id, snapshot_date)
+);
 CREATE TABLE IF NOT EXISTS contracts (
     player_id INTEGER PRIMARY KEY, team_id INTEGER, contract_team_id INTEGER,
     is_major INTEGER, season_year INTEGER, years INTEGER, current_year INTEGER,
@@ -167,13 +178,17 @@ def _r(conn, table, **kwargs):
     conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})", list(kwargs.values()))
 
 
-def _ratings(pid, is_pitcher=False):
+def _ratings(pid, is_pitcher=False, include_components=True):
     base = dict(
         player_id=pid, snapshot_date="2033-04-01",
         ovr=55 if not is_pitcher else 58,
         pot=60 if not is_pitcher else 65,
         league_id=1, height=183, bats="R", throws="R",
         int_="N", wrk_ethic="H", greed="N", loy="N", lead="N", acc="A",
+        composite_score=56 if not is_pitcher else 59,
+        ceiling_score=62 if not is_pitcher else 66,
+        tool_only_score=54 if not is_pitcher else 57,
+        secondary_composite=None,
     )
     if is_pitcher:
         base.update(stf=65, mov=60, ctrl=55, ctrl_r=55, ctrl_l=50, stm=55,
@@ -181,6 +196,8 @@ def _ratings(pid, is_pitcher=False):
                     fst=70, crv=55, sld=60, chg=50,
                     pot_fst=65, pot_crv=50, pot_sld=55, pot_chg=45,
                     stf_l=55, stf_r=60, mov_l=55, mov_r=60)
+        if include_components:
+            base.update(offensive_grade=59, durability_score=55, offensive_ceiling=66)
     else:
         base.update(cntct=55, gap=50, pow=50, eye=55, ks=50, speed=55, steal=50,
                     pot_cntct=55, pot_gap=60, pot_pow=55, pot_eye=55, pot_ks=50,
@@ -189,6 +206,9 @@ def _ratings(pid, is_pitcher=False):
                     ofa=50, ifa=50,
                     cntct_l=50, cntct_r=55, gap_l=45, gap_r=50,
                     pow_l=45, pow_r=50, eye_l=50, eye_r=55, ks_l=45, ks_r=50)
+        if include_components:
+            base.update(offensive_grade=55, baserunning_value=50, defensive_value=45,
+                        offensive_ceiling=60)
     return base
 
 
@@ -211,9 +231,9 @@ def _seed(conn):
         ", ".join("?" * len(_ratings(PITCHER_ID, True)))),
         list(_ratings(PITCHER_ID, True).values()))
     conn.execute("INSERT INTO ratings ({}) VALUES ({})".format(
-        ", ".join(_ratings(PROSPECT_ID).keys()),
-        ", ".join("?" * len(_ratings(PROSPECT_ID)))),
-        list(_ratings(PROSPECT_ID).values()))
+        ", ".join(_ratings(PROSPECT_ID, include_components=False).keys()),
+        ", ".join("?" * len(_ratings(PROSPECT_ID, include_components=False)))),
+        list(_ratings(PROSPECT_ID, include_components=False).values()))
 
     _r(conn, "contracts", player_id=HITTER_ID, team_id=TEAM_ID, contract_team_id=TEAM_ID,
        is_major=1, season_year=YEAR, years=3, current_year=0,

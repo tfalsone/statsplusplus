@@ -4,6 +4,94 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 47 (2026-04-19)
+
+### Evaluation Engine — Calibration & Composite Overhaul
+
+Major rework of the hitter and pitcher composite pipelines. Composite now beats OVR as a WAR predictor overall (r=0.679 vs 0.646, +0.034). Prospect inflation dramatically reduced. MiLB offset near zero.
+
+**Dropped `avoid_k` from hitting regression:**
+- Contact is a composite of BABIP + K-avoidance in the OOTP engine — including both Contact and Avoid_K double-counts the K-avoidance signal (r=0.78 collinearity)
+- Removed from regression features, default weights, tool extraction, confidence checks, and tests
+
+**Switched hitting regression target from OPS+ to WAR:**
+- WAR regression produces weights that better predict actual value
+- Fixes 2B bucket where OPS+ regression overweighted power and underweighted eye
+- Overall neutral-to-positive impact across all positions
+
+**Removed speed from hitting regression:**
+- Speed contributes to WAR through baserunning, not hitting
+- Including it in the hitting regression double-counted its value since it also appears in the baserunning regression
+- Speed still flows through the baserunning component via recombination
+
+**Enabled min_weight floor for hitter calibration:**
+- Hitter hitting regression: `min_weight=0.10` (prevents degenerate single-variable solutions)
+- Pitcher regression: `min_weight=0.05` (already existed)
+
+**Non-linear piecewise tool transformation (`_tool_transform`):**
+- Below 40: each point penalized 1.5× (a 30 contact is effectively 25)
+- 40-60: linear (1:1) — preserves MLB sensitivity
+- Above 60: each point rewarded 1.3× (a 70 power is effectively 73)
+- Replaces the old elite tool bonus (+0.5 per point above 60)
+- Applied to hitting tools (contact, gap, power, eye) and pitcher tools (stuff, movement, control)
+
+**Pitcher-specific stat-to-2080 conversion (`pitcher_stat_to_2080`):**
+- Asymmetric: steeper slope (0.45/pt) for above-average FIP, standard slope (0.30/pt) for below-average
+- Prevents stat blend from over-penalizing average SP while rewarding elite pitching
+
+**Increased SP innings-volume adjustment:**
+- Changed from +1/10pts above 50 (cap +3) to +1/5pts above 45 (cap +7)
+- Addresses the rate-stat vs counting-stat gap (Comp×IP correlates with WAR at r=0.70)
+
+**WAR-derived recombination shares:**
+- Defense shares dramatically reduced based on WAR regression data:
+  - C: 35%→15%, SS: 35%→5%, 2B: 25%→5%, 3B: 25%→0%, CF: 35%→10%, COF: 20%→0%, 1B: 15%→0%
+- Offense dominates WAR at every position; WAR already includes positional adjustment
+
+**API changes:**
+- `_tool_transform(val, midpoint, steepness)` — new function (piecewise non-linear transform)
+- `pitcher_stat_to_2080(stat_plus)` — new function (asymmetric pitcher stat conversion)
+- `compute_composite_hitter` — removed `bat_floor_threshold` parameter
+- `BAT_FLOOR_THRESHOLDS` — retained as reference data, no longer used in composite formula
+- Elite tool bonus removed from both hitter and pitcher composites (replaced by `_tool_transform`)
+
+**Results:**
+- EMLB: Composite beats OVR overall (r=0.679 vs 0.646, +0.034)
+- Prospect inflation dramatically reduced (Pauldo from +14 to -3 gap vs OVR)
+- MiLB offset near zero (EMLB: -0.9, VMLB: +3.7)
+- MLB distribution aligned (EMLB: +1.2, VMLB: +0.8)
+
+Files changed: `scripts/evaluation_engine.py`, `scripts/calibrate.py`, `tests/test_evaluation_engine.py`
+
+---
+
+## Session 46 (2026-04-19)
+
+### Custom Player Evaluation — Post-Implementation Tuning
+
+Ran the evaluation engine against the VMLB league (15,012 players, 20-80 scale) and identified three issues. All three fixed and documented in the design spec.
+
+**Two-way player detection overhaul:**
+- Original tool-based threshold (contact ≥ 35, power ≥ 30) flagged 9,649 of 15,012 players (64%) as two-way
+- Root cause: on 20-80 scale leagues, every player has all tools populated at 20+; no `is_pitcher` precondition meant hitters with default pitcher ratings qualified
+- Fix: tiered detection — (1) stat-based ground truth from `war_model.load_stat_history()`, (2) stat-based from season lists, (3) tool-based for prospects requiring `is_pitcher=True` + contact ≥ 45, power ≥ 40
+- Result: 56 two-way players (realistic)
+
+**Elite tool bonus for score compression:**
+- Composite scores were compressed to ~30-62 while OVR ranged 20-80
+- Root cause: weighted average of tools can't reach 80 unless every tool is 80; elite players have a mix of 55-70 tools
+- Fix: +0.5 per tool point above 60 (weighted by tool importance) in both `compute_composite_hitter()` and `compute_composite_pitcher()`
+- Result: top-end expanded by ~3-5 points for elite players
+
+**Systematic offset documented (not a bug):**
+- Composite averages +13 points above OVR for minor leaguers, but only +0.6 at MLB level
+- OVR factors in development/experience; composite measures raw tool quality
+- Documented as expected behavior in design spec with future tuning options
+
+Files changed: `scripts/evaluation_engine.py`, `tests/test_evaluation_engine.py`, `.kiro/specs/custom-player-evaluation/design.md`
+
+---
+
 ## Session 45 (2026-04-06)
 
 ### Trade Analyst Agent — Refinements

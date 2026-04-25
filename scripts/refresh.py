@@ -858,6 +858,19 @@ def _run_calibrate():
         log.warning("calibrate failed (using defaults): %s", last)
 
 
+def _run_evaluation_engine():
+    """Run evaluation_engine.py to compute composite scores for all players."""
+    log.info("── evaluation engine")
+    try:
+        league_dir = get_league_dir()
+        _db.init_schema(league_dir)  # ensure new columns exist before engine runs
+        from evaluation_engine import run as eval_run
+        eval_run(league_dir=league_dir)
+        log.info("  evaluation engine complete")
+    except Exception as e:
+        log.warning("evaluation engine failed (scores will be NULL): %s", e)
+
+
 def _run_fv_calc():
     """Run fv_calc.py as a subprocess to compute league-wide FV + surplus."""
     import subprocess
@@ -895,4 +908,5 @@ if __name__ == "__main__":
         update_state(game_date, year)
         if not skip_fv:
             _run_calibrate()
+            _run_evaluation_engine()
             _run_fv_calc()

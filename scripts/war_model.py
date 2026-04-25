@@ -43,13 +43,32 @@ def _interp_dict(tbl, ovr):
 # WAR projection
 # ---------------------------------------------------------------------------
 
-def peak_war_from_ovr(ovr, bucket):
-    """Project peak WAR/season from Ovr rating and positional bucket.
-    Uses calibrated position-specific tables when available, falls back to defaults."""
+def peak_war_from_score(score, bucket):
+    """Project peak WAR/season from a score (Composite_Score or OVR) and positional bucket.
+
+    Uses COMPOSITE_TO_WAR tables when available, falls back to calibrated
+    OVR_TO_WAR tables, then to default OVR_TO_WAR.
+
+    This is the canonical WAR projection function. Both Composite_Score and OVR
+    are on the 20-80 scale, so the same interpolation logic applies.
+    """
+    from constants import COMPOSITE_TO_WAR
+    # Prefer COMPOSITE_TO_WAR when available
+    if COMPOSITE_TO_WAR and bucket in COMPOSITE_TO_WAR:
+        return _interp_dict(COMPOSITE_TO_WAR[bucket], score)
+    # Fall back to calibrated OVR_TO_WAR
     if OVR_TO_WAR_CALIBRATED and bucket in OVR_TO_WAR_CALIBRATED:
-        return _interp_dict(OVR_TO_WAR_CALIBRATED[bucket], ovr)
+        return _interp_dict(OVR_TO_WAR_CALIBRATED[bucket], score)
     col = 2 if bucket == "SP" else (3 if bucket == "RP" else 1)
-    return _interp(OVR_TO_WAR, ovr, col)
+    return _interp(OVR_TO_WAR, score, col)
+
+
+def peak_war_from_ovr(ovr, bucket):
+    """Backward-compatible alias for peak_war_from_score().
+
+    Accepts either OVR or Composite_Score — both are on the 20-80 scale.
+    """
+    return peak_war_from_score(ovr, bucket)
 
 
 def aging_mult(age, bucket):

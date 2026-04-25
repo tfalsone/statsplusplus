@@ -21,6 +21,16 @@ app = Flask(__name__)
 app.json.sort_keys = False
 app.jinja_env.policies["json.dumps_kwargs"] = {"sort_keys": False}
 
+# Run DB schema migration on startup for all leagues (adds new columns if missing).
+# This is idempotent and fast (only ALTERs if columns are absent).
+try:
+    import db as _db_mod
+    for _ld in Path(_PROJECT_ROOT, "data").iterdir():
+        if _ld.is_dir() and (_ld / "league.db").exists():
+            _db_mod.init_schema(_ld)
+except Exception:
+    pass  # non-fatal on startup — queries will fail with clear error if schema is stale
+
 
 _EXEMPT_PREFIXES = ("/settings", "/onboard", "/switch-league", "/refresh",
                     "/static", "/api/test-connection", "/api/game-date",

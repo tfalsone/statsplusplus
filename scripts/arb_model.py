@@ -21,6 +21,9 @@ from constants import (
 def arb_salary(ovr, bucket, arb_year, prior_salary, min_sal):
     """Project arb salary for a given arb year (1-indexed).
 
+    The first argument (ovr) accepts either OVR or composite_score — both are
+    on the 20-80 scale and the exponential formula works identically with either.
+
     Uses RP-specific exponential model for RPs (calibrated from 35 RP arb contracts).
     Uses hitter/SP exponential base + annual raise model for all other positions.
 

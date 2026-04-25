@@ -87,7 +87,8 @@ def get_top_prospects(n=100):
         SELECT p.name, p.age, COALESCE(NULLIF(p.parent_team_id,0), p.team_id) as org_id,
                pf.fv, pf.fv_str, pf.bucket,
                pf.level, pf.prospect_surplus, p.pos, p.player_id,
-               r.height, r.bats, r.throws, r.ovr, r.pot
+               r.height, r.bats, r.throws, r.ovr, r.pot,
+               r.composite_score, r.ceiling_score
         FROM prospect_fv pf
         JOIN players p ON pf.player_id=p.player_id
         LEFT JOIN latest_ratings r ON pf.player_id=r.player_id
@@ -118,7 +119,8 @@ def get_top_prospects(n=100):
              "pid": r[9],
              "eta": _calc_eta(r[6], r[13], r[14]),
              "height": fmt_ht(r[10]),
-             "bats": r[11] or "", "throws": r[12] or ""}
+             "bats": r[11] or "", "throws": r[12] or "",
+             "composite_score": r[15], "ceiling_score": r[16]}
             for i, r in enumerate(rows)]
 
 
@@ -232,20 +234,22 @@ def search_players(query):
     rows = conn.execute("""
         SELECT p.player_id, p.name, p.age, p.level,
                COALESCE(NULLIF(p.parent_team_id,0), p.team_id) AS org_id,
-               r.ovr, pf.fv, COALESCE(pf.bucket, ps.bucket) AS bucket, p.pos
+               r.ovr, pf.fv, COALESCE(pf.bucket, ps.bucket) AS bucket, p.pos,
+               r.composite_score
         FROM players p
         LEFT JOIN latest_ratings r ON p.player_id = r.player_id
         LEFT JOIN prospect_fv pf ON p.player_id = pf.player_id
         LEFT JOIN player_surplus ps ON p.player_id = ps.player_id
         WHERE p.name LIKE ?
         ORDER BY (CASE WHEN p.level = '1' THEN 0 ELSE 1 END),
-                 COALESCE(r.ovr, 0) DESC
+                 COALESCE(r.composite_score, r.ovr, 0) DESC
         LIMIT 15
     """, (like,)).fetchall()
     return [{"pid": r[0], "name": r[1], "age": r[2],
              "level": _lm.get(str(r[3]), str(r[3])),
              "team": _abbr.get(r[4], "FA"),
-             "ovr": r[5], "fv": r[6],
+             "ovr": r[9] if r[9] is not None else r[5],
+             "fv": r[6],
              "pos": _display_pos(r[7], r[8]) if r[7] else _pm.get(str(r[8]), "?")}
             for r in rows]
 
@@ -264,7 +268,8 @@ def get_all_prospects():
         SELECT p.name, p.age, COALESCE(NULLIF(p.parent_team_id,0), p.team_id) as org_id,
                pf.fv, pf.fv_str, pf.bucket,
                pf.level, pf.prospect_surplus, p.pos, p.player_id,
-               r.height, r.bats, r.throws, r.ovr, r.pot
+               r.height, r.bats, r.throws, r.ovr, r.pot,
+               r.composite_score, r.ceiling_score
         FROM prospect_fv pf
         JOIN players p ON pf.player_id=p.player_id
         LEFT JOIN latest_ratings r ON pf.player_id=r.player_id
@@ -295,7 +300,8 @@ def get_all_prospects():
              "pid": r[9],
              "eta": _calc_eta(r[6], r[13], r[14]),
              "height": fmt_ht(r[10]),
-             "bats": r[11] or "", "throws": r[12] or ""}
+             "bats": r[11] or "", "throws": r[12] or "",
+             "composite_score": r[15], "ceiling_score": r[16]}
             for r in rows]
 
 
@@ -334,6 +340,8 @@ def get_prospect_summary(pid):
         "surplus": round(surplus / 1e6, 1) if surplus else 0,
         "eta": _calc_eta(level, ovr_val, pot_val),
         "ovr": ovr_val, "pot": pot_val,
+        "composite_score": rd.get("composite_score"),
+        "ceiling_score": rd.get("ceiling_score"),
         "height": _fmt_ht(rd.get("height")),
         "bats": rd.get("bats", ""), "throws": rd.get("throws", ""),
     }
@@ -464,15 +472,27 @@ def get_player_card(pid):
 
     _lm = level_map()
     _pos_str = {11:"SP",12:"RP",13:"CL"}.get(role) if is_pitcher else bucket
+    _composite = rd.get("composite_score")
+    _tool_only = rd.get("tool_only_score")
+    _ceiling = rd.get("ceiling_score")
     out = {
         "pid": pid, "name": name, "age": age, "bucket": bucket,
         "pos": _pos_str,
         "level": _lm.get(str(level), str(level)),
         "team": _abbr.get(org_id, "FA"),
         "ovr": rd.get("ovr"), "pot": rd.get("pot"),
+        "composite_score": _composite,
+        "ceiling_score": _ceiling,
         "height": _fmt_ht(rd.get("height")),
         "bats": rd.get("bats", ""), "throws": rd.get("throws", ""),
     }
+    # Divergence detection
+    if _tool_only is not None and rd.get("ovr") is not None:
+        try:
+            from evaluation_engine import detect_divergence
+            out["divergence"] = detect_divergence(_tool_only, rd.get("ovr"))
+        except Exception:
+            pass
     _build_tools(rd, is_pitcher, out)
 
     # Current season stats
@@ -813,7 +833,7 @@ def get_draft_pool():
             best_def = 20
             for pos_label, field in _def_fields:
                 v = ng(p.get(field) or 0)
-                if v > 20:
+                if v and v > 20:
                     defs[pos_label] = v
                     if v > best_def:
                         best_def = v

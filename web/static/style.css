@@ -144,6 +144,15 @@ main { padding: 16px 24px; }
 .summary-item.kpi-accent { border-left-color: var(--green); }
 .summary-item.kpi-win { border-left-color: #2ecc71; background: rgba(46, 204, 113, 0.08); }
 .summary-item.kpi-loss { border-left-color: #e74c3c; background: rgba(231, 76, 60, 0.08); }
+/* Component scores in summary bar */
+.summary-item-wide { min-width: 240px; }
+.component-scores { display: flex; gap: 10px; flex-wrap: wrap; font-size: 14px; font-weight: 400; }
+.component-entry { display: inline-flex; align-items: center; gap: 4px; }
+.component-entry .grade { height: 16px; min-width: 80px; }
+.component-entry .grade-label-chip { width: 38px; font-size: 10px; }
+.component-label { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+.component-secondary { font-size: 12px !important; font-weight: 400 !important; color: var(--text-dim); margin-top: 4px; }
+.component-secondary .ovr-color { font-weight: 600; }
 .kpi-divider { border: 0; border-top: 1px solid var(--border); margin: 0 0 16px; }
 
 /* Columns layout */
@@ -455,6 +464,12 @@ a.ext-link:hover { color: var(--green); }
 
 /* Ovr/Pot text coloring in header */
 .ovr-color { font-weight: 600; }
+
+/* Divergence badges */
+.divergence-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 3px; margin-left: 4px; vertical-align: middle; }
+.divergence-gem { background: rgba(76, 175, 80, 0.2); color: #4caf50; }
+.divergence-mine { background: rgba(244, 67, 54, 0.2); color: #f44336; }
+.divergence-context { display: inline-block; font-size: 9px; font-weight: 400; color: var(--text-dim); margin-left: 3px; vertical-align: middle; opacity: 0.8; }
 
 /* Stat leaders grid */
 .leaders-grid { display: flex; flex-direction: column; gap: 6px; }

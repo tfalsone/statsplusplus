@@ -63,13 +63,17 @@ def _resolve(conn, query):
         if db_key in rat:
             rat[api_key] = rat[db_key]
 
+    # Prefer composite_score/ceiling_score over OVR/POT when available
+    ovr = rat.get("composite_score") or rat.get("ovr") or 0
+    pot = rat.get("ceiling_score") or rat.get("pot") or 0
+
     p = conn.execute("SELECT role, pos FROM players WHERE player_id=?", (pid,)).fetchone()
     rat["_role"] = "starter"  if p and str(p["role"]) == "11" else \
                    "reliever" if p and str(p["role"]) in ("12","13") else "position_player"
     rat["Pos"] = str(p["pos"]) if p else "0"
 
     bucket = assign_bucket(rat, use_pot=False)
-    return pid, name, age, rat["ovr"], rat["pot"], bucket
+    return pid, name, age, ovr, pot, bucket
 
 
 def contract_value(player_id, retention_pct=0.0, _conn=None, _hist=None):

@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS ratings (
     league_id INTEGER,
     height INTEGER, bats TEXT, throws TEXT,
     stl_rt INTEGER, run INTEGER, sac_bunt INTEGER, bunt_hit INTEGER, hold INTEGER,
+    composite_score INTEGER, ceiling_score INTEGER, tool_only_score INTEGER, secondary_composite INTEGER,
     PRIMARY KEY (player_id, snapshot_date)
 );
 
@@ -283,6 +284,8 @@ CREATE TABLE IF NOT EXISTS ratings_history (
     pot_hra       INTEGER,
     pot_pbabip    INTEGER,
     prone         TEXT,
+    composite_score INTEGER,
+    ceiling_score   INTEGER,
     PRIMARY KEY (player_id, snapshot_date)
 );
 
@@ -330,6 +333,10 @@ def _migrate_ratings(conn: sqlite3.Connection):
         ("pbabip_r", "INTEGER", None),
         ("pot_pbabip", "INTEGER", None),
         ("prone", "TEXT", None),
+        ("composite_score", "INTEGER", None),
+        ("ceiling_score", "INTEGER", None),
+        ("tool_only_score", "INTEGER", None),
+        ("secondary_composite", "INTEGER", None),
     ]
     for col, typ, _ in new_cols:
         if col not in existing:
@@ -337,10 +344,58 @@ def _migrate_ratings(conn: sqlite3.Connection):
             conn.execute(f"ALTER TABLE ratings ADD COLUMN {col} {typ}")
 
 
+def _migrate_ratings_history(conn: sqlite3.Connection):
+    """Add columns introduced after the initial ratings_history schema."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(ratings_history)").fetchall()}
+    new_cols = [
+        ("composite_score", "INTEGER"),
+        ("ceiling_score", "INTEGER"),
+    ]
+    for col, typ in new_cols:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE ratings_history ADD COLUMN {col} {typ}")
+
+
+def _migrate_ratings_components(conn: sqlite3.Connection):
+    """Add component score columns to ratings and ratings_history."""
+    new_cols = [
+        ("offensive_grade", "INTEGER"),
+        ("baserunning_value", "INTEGER"),
+        ("defensive_value", "INTEGER"),
+        ("durability_score", "INTEGER"),
+        ("offensive_ceiling", "INTEGER"),
+    ]
+    for table in ("ratings", "ratings_history"):
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for col, typ in new_cols:
+            if col not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+
+
+def _migrate_positional_context(conn: sqlite3.Connection):
+    """Add positional context columns to ratings table.
+
+    Adds nullable ``positional_percentile`` (REAL) and
+    ``positional_median`` (INTEGER) columns used by the two-pass
+    evaluation pipeline to store per-player positional context.
+    """
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(ratings)").fetchall()}
+    new_cols = [
+        ("positional_percentile", "REAL"),
+        ("positional_median", "INTEGER"),
+    ]
+    for col, typ in new_cols:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE ratings ADD COLUMN {col} {typ}")
+
+
 def init_schema(league_dir: Path | None = None):
     with get_conn(league_dir) as conn:
         conn.executescript(SCHEMA)
         _migrate_ratings(conn)
+        _migrate_ratings_history(conn)
+        _migrate_ratings_components(conn)
+        _migrate_positional_context(conn)
         # player_surplus: add surplus_yr1 if missing
         ps_cols = {r[1] for r in conn.execute("PRAGMA table_info(player_surplus)").fetchall()}
         if "surplus_yr1" not in ps_cols:

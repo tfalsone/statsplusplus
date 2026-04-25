@@ -8,6 +8,14 @@ Open work items. Completed items are in `docs/changelog.md`.
 
 - [ ] **Additional ratings scales** — Support 1-20 scale (maps to 20-80 in increments of ~3). Currently only 1-100 and 20-80 are supported; auto-detection checks if any rating exceeds 80. **LOE: Low.**
 - [ ] **Snapshot test fragility** — `test_prospect_value.py` and `test_player_utils.py` use hardcoded expected values that drift every time `league_averages.json` changes (i.e. every refresh). Consider replacing with range assertions or mocking `dollar_per_war` to a fixed value so tests don't require manual updates after each refresh. **LOE: Low.**
+- [x] **Evaluation engine docs** — Add `evaluation_engine.py` to `docs/tools_reference.md` and `docs/system_overview.md`. Document the `run()` entry point, pure computation functions, and the batch pipeline integration in `refresh.py`. **LOE: Low.**
+
+---
+
+## Evaluation Engine Tuning
+
+- [ ] **Score compression further tuning** — The elite tool bonus (+0.5 per point above 60) expanded the top end by ~3-5 points but the composite still maxes at ~64 vs OVR 80. Options: increase the bonus multiplier, add a non-linear combination, or reduce the number of tools in the average. See design doc tuning notes. **LOE: Low-Medium.**
+- [ ] **Calibration on VMLB** — Run the full calibrate → evaluation_engine → fv_calc pipeline on VMLB to derive league-specific tool weights and COMPOSITE_TO_WAR tables. Currently using default weights. **LOE: Low.**
 
 ---
 

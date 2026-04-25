@@ -3,6 +3,10 @@ tests/test_player_utils.py — Unit tests for scripts/player_utils.py
 
 Covers: norm(), calc_fv(), peak_war_from_ovr(), aging_mult()
 All tests are pure math — no DB or API required.
+
+Note: peak_war_from_ovr() results depend on calibrated model weights loaded
+from model_weights.json. Tests use invariant/structural assertions rather than
+exact values to remain stable across recalibrations.
 """
 import sys
 from pathlib import Path
@@ -97,20 +101,28 @@ def test_calc_fv_rp_capped_at_50():
 # ---------------------------------------------------------------------------
 
 def test_peak_war_sp():
+    """SP at OVR 60 should produce reasonable WAR (2-4 range)."""
     from player_utils import peak_war_from_ovr
-    assert round(peak_war_from_ovr(60, 'SP'), 3) == 2.94
+    war = peak_war_from_ovr(60, 'SP')
+    assert 2.0 <= war <= 4.0
 
 def test_peak_war_rp():
+    """RP at OVR 55 should produce lower WAR than SP (RP cap)."""
     from player_utils import peak_war_from_ovr
-    assert round(peak_war_from_ovr(55, 'RP'), 3) == 0.93
+    war = peak_war_from_ovr(55, 'RP')
+    assert 0.5 <= war <= 1.5
 
 def test_peak_war_ss():
+    """SS at OVR 65 should produce premium-position WAR."""
     from player_utils import peak_war_from_ovr
-    assert round(peak_war_from_ovr(65, 'SS'), 3) == 5.17
+    war = peak_war_from_ovr(65, 'SS')
+    assert 4.0 <= war <= 6.0
 
 def test_peak_war_cof():
+    """COF at OVR 55 should produce moderate WAR."""
     from player_utils import peak_war_from_ovr
-    assert round(peak_war_from_ovr(55, 'COF'), 3) == 3.01
+    war = peak_war_from_ovr(55, 'COF')
+    assert 2.0 <= war <= 4.0
 
 def test_peak_war_monotonic():
     """Higher Ovr should always produce higher WAR for the same bucket."""

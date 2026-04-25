@@ -10,6 +10,172 @@ from web_league_context import get_db, get_cfg, team_abbr_map, team_names_map, l
 from constants import ROLE_MAP
 
 
+# ---------------------------------------------------------------------------
+# Evaluation data helper — extracts composite scores, divergence, archetype,
+# carrying/red-flag tools, and two-way info from a ratings row.
+# ---------------------------------------------------------------------------
+
+def _build_evaluation_data(rd: dict | None, is_pitcher: bool, norm_fn,
+                           position_bucket: str | None = None,
+                           league_dir=None) -> dict:
+    """Build evaluation engine data from a ratings row dict.
+
+    Extracts composite scores, runs divergence detection, classifies archetype,
+    identifies carrying/red-flag tools, computes two-way combined value, and
+    enriches with positional context (carrying tool bonus, positional percentile).
+
+    Args:
+        rd: Ratings row as a dict (or None).
+        is_pitcher: Whether the player is a pitcher.
+        norm_fn: Normalization function for raw tool grades.
+        position_bucket: Position bucket string (e.g. "SS", "C", "CF") for
+            carrying tool bonus computation.  When ``None``, positional context
+            is skipped.
+        league_dir: Path to the league data directory.  Used to load the
+            carrying tool config.  When ``None``, the default config is used.
+
+    Returns a dict with keys: composite_score, ceiling_score, tool_only_score,
+    secondary_composite, divergence, ceiling_divergence, archetype,
+    carrying_tools, red_flag_tools, two_way_scores, carrying_tool_bonus,
+    carrying_tool_breakdown, positional_percentile, positional_median.
+    """
+    result = {
+        "composite_score": None, "ceiling_score": None,
+        "tool_only_score": None, "secondary_composite": None,
+        "divergence": None, "ceiling_divergence": None,
+        "archetype": None, "carrying_tools": [], "red_flag_tools": [],
+        "two_way_scores": None,
+        "offensive_grade": None, "baserunning_value": None,
+        "defensive_value": None, "durability_score": None,
+        "offensive_ceiling": None,
+        "carrying_tool_bonus": 0.0, "carrying_tool_breakdown": [],
+        "positional_percentile": None, "positional_median": None,
+    }
+    if not rd:
+        return result
+
+    composite_score = rd.get("composite_score")
+    ceiling_score = rd.get("ceiling_score")
+    tool_only_score = rd.get("tool_only_score")
+    secondary_composite = rd.get("secondary_composite")
+
+    result["composite_score"] = composite_score
+    result["ceiling_score"] = ceiling_score
+    result["tool_only_score"] = tool_only_score
+    result["secondary_composite"] = secondary_composite
+
+    # Component scores
+    result["offensive_grade"] = rd.get("offensive_grade")
+    result["baserunning_value"] = rd.get("baserunning_value")
+    result["defensive_value"] = rd.get("defensive_value")
+    result["durability_score"] = rd.get("durability_score")
+    result["offensive_ceiling"] = rd.get("offensive_ceiling")
+
+    # Positional context: percentile and median from stored ratings columns
+    result["positional_percentile"] = rd.get("positional_percentile")
+    result["positional_median"] = rd.get("positional_median")
+
+    # Carrying tool bonus: compute on-the-fly for hitters with offensive grade
+    if not is_pitcher and position_bucket and result["offensive_grade"] is not None:
+        try:
+            from pathlib import Path as _Path
+            from evaluation_engine import compute_carrying_tool_bonus, load_carrying_tool_config
+            # Map display position back to internal bucket for config lookup
+            _internal_bucket = "COF" if position_bucket == "OF" else position_bucket
+            _ct_config = load_carrying_tool_config(_Path(league_dir)) if league_dir else load_carrying_tool_config(_Path("."))
+            _hitter_tools = {
+                "contact": norm_fn(rd.get("cntct")),
+                "gap": norm_fn(rd.get("gap")),
+                "power": norm_fn(rd.get("pow")),
+                "eye": norm_fn(rd.get("eye")),
+            }
+            _ct_bonus, _ct_breakdown = compute_carrying_tool_bonus(
+                _hitter_tools, _internal_bucket, _ct_config
+            )
+            result["carrying_tool_bonus"] = _ct_bonus
+            result["carrying_tool_breakdown"] = _ct_breakdown
+        except Exception:
+            pass
+
+    # Divergence detection (tool_only vs OVR, ceiling vs POT)
+    try:
+        from evaluation_engine import detect_divergence
+        _ovr = rd.get("ovr")
+        _pot = rd.get("pot")
+        if tool_only_score is not None and _ovr is not None:
+            components = {
+                "offensive_grade": result["offensive_grade"],
+                "baserunning_value": result["baserunning_value"],
+                "defensive_value": result["defensive_value"],
+            }
+            result["divergence"] = detect_divergence(tool_only_score, _ovr, components=components)
+        if ceiling_score is not None and _pot is not None:
+            result["ceiling_divergence"] = detect_divergence(ceiling_score, _pot)
+    except Exception:
+        pass
+
+    # Tool profile analysis: archetype, carrying tools, red-flag tools
+    if composite_score is not None:
+        try:
+            from evaluation_engine import classify_archetype, identify_carrying_tools, identify_red_flag_tools
+            if is_pitcher:
+                _tools = {
+                    "stuff": norm_fn(rd.get("stf")),
+                    "movement": norm_fn(rd.get("mov")),
+                    "control": norm_fn(rd.get("ctrl") or (
+                        round(((rd.get("ctrl_r", 0) or 0) + (rd.get("ctrl_l", 0) or 0)) / 2)
+                        if rd.get("ctrl_r") and rd.get("ctrl_l")
+                        else rd.get("ctrl_r") or rd.get("ctrl_l") or 0
+                    )),
+                }
+                _arsenal = {}
+                for col, label in [("fst", "Fastball"), ("snk", "Sinker"), ("crv", "Curveball"),
+                                    ("sld", "Slider"), ("chg", "Changeup"), ("splt", "Splitter"),
+                                    ("cutt", "Cutter"), ("cir_chg", "Circle Change")]:
+                    v = norm_fn(rd.get(col))
+                    if v and v >= 20:
+                        _arsenal[label] = v
+                result["archetype"] = classify_archetype(_tools, composite_score, is_pitcher=True, arsenal=_arsenal)
+                result["carrying_tools"] = identify_carrying_tools(_tools, composite_score)
+                result["red_flag_tools"] = identify_red_flag_tools(_tools, composite_score)
+            else:
+                _tools = {
+                    "contact": norm_fn(rd.get("cntct")),
+                    "gap": norm_fn(rd.get("gap")),
+                    "power": norm_fn(rd.get("pow")),
+                    "eye": norm_fn(rd.get("eye")),
+                    "avoid_k": norm_fn(rd.get("ks")),
+                    "speed": norm_fn(rd.get("speed")),
+                }
+                result["archetype"] = classify_archetype(_tools, composite_score, is_pitcher=False)
+                result["carrying_tools"] = identify_carrying_tools(_tools, composite_score)
+                result["red_flag_tools"] = identify_red_flag_tools(_tools, composite_score)
+        except Exception:
+            pass
+
+    # Two-way player: include both role scores and combined value
+    if secondary_composite is not None and composite_score is not None:
+        try:
+            from evaluation_engine import compute_combined_value
+            combined = compute_combined_value(composite_score, secondary_composite)
+            if is_pitcher:
+                result["two_way_scores"] = {
+                    "pitcher_composite": composite_score,
+                    "hitter_composite": secondary_composite,
+                    "combined_value": combined,
+                }
+            else:
+                result["two_way_scores"] = {
+                    "hitter_composite": composite_score,
+                    "pitcher_composite": secondary_composite,
+                    "combined_value": combined,
+                }
+        except Exception:
+            pass
+
+    return result
+
+
 def get_player(pid):
     conn = get_db()
     conn.row_factory = None
@@ -501,6 +667,44 @@ def get_player(pid):
             "SELECT COUNT(*) FROM games WHERE (home_team=? OR away_team=?) AND date>=? AND played=1",
             (org_id, org_id, f"{_pap_year}-01-01")).fetchone()[0]
 
+    # Development tracking: snapshot deltas between two most recent ratings_history rows
+    snapshot_deltas = None
+    try:
+        _hist_cols_info = conn.execute("PRAGMA table_info(ratings_history)").fetchall()
+        _hist_col_names = [c[1] for c in _hist_cols_info]
+        if "composite_score" in _hist_col_names:
+            _hist_rows = conn.execute(
+                "SELECT * FROM ratings_history WHERE player_id=? ORDER BY snapshot_date DESC LIMIT 2",
+                (pid,)
+            ).fetchall()
+            if len(_hist_rows) == 2:
+                _cur_snap = dict(zip(_hist_col_names, _hist_rows[0]))
+                _prev_snap = dict(zip(_hist_col_names, _hist_rows[1]))
+                from evaluation_engine import compute_snapshot_deltas
+                snapshot_deltas = compute_snapshot_deltas(_cur_snap, _prev_snap)
+    except Exception:
+        pass
+
+    # Composite scores, divergence, archetype, carrying/red-flag tools
+    # Determine position bucket for positional context
+    _pos_bucket = None
+    if valuation:
+        _pos_bucket = valuation.get("bucket")
+    _league_dir = str(get_cfg().league_dir)
+    eval_data = _build_evaluation_data(rd, is_pitcher, _norm,
+                                       position_bucket=_pos_bucket,
+                                       league_dir=_league_dir)
+    composite_score = eval_data["composite_score"]
+    ceiling_score = eval_data["ceiling_score"]
+    tool_only_score = eval_data["tool_only_score"]
+    secondary_composite = eval_data["secondary_composite"]
+    divergence = eval_data["divergence"]
+    ceiling_divergence = eval_data["ceiling_divergence"]
+    archetype = eval_data["archetype"]
+    carrying_tools = eval_data["carrying_tools"]
+    red_flag_tools = eval_data["red_flag_tools"]
+    two_way_scores = eval_data["two_way_scores"]
+
     conn.close()
 
     # Surplus breakdown
@@ -685,6 +889,26 @@ def get_player(pid):
         "fielding_pctiles": fielding_pctiles,
         "bat_percentiles": bat_percentiles, "bat_pctile_splits": bat_pctile_splits,
         "prospect_comps": prospect_comps, "pap": pap,
+        "snapshot_deltas": snapshot_deltas,
+        "composite_score": composite_score,
+        "ceiling_score": ceiling_score,
+        "tool_only_score": tool_only_score,
+        "secondary_composite": secondary_composite,
+        "divergence": divergence,
+        "ceiling_divergence": ceiling_divergence,
+        "archetype": archetype,
+        "carrying_tools": carrying_tools,
+        "red_flag_tools": red_flag_tools,
+        "two_way_scores": two_way_scores,
+        "offensive_grade": eval_data["offensive_grade"],
+        "baserunning_value": eval_data["baserunning_value"],
+        "defensive_value": eval_data["defensive_value"],
+        "durability_score": eval_data["durability_score"],
+        "offensive_ceiling": eval_data["offensive_ceiling"],
+        "carrying_tool_bonus": eval_data["carrying_tool_bonus"],
+        "carrying_tool_breakdown": eval_data["carrying_tool_breakdown"],
+        "positional_percentile": eval_data["positional_percentile"],
+        "positional_median": eval_data["positional_median"],
     }
 
 
