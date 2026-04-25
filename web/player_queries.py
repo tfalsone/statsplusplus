@@ -11,6 +11,84 @@ from constants import ROLE_MAP
 
 
 # ---------------------------------------------------------------------------
+# MLB context: percentile + tier for composite/ceiling vs MLB at position
+# ---------------------------------------------------------------------------
+
+def _mlb_context(conn, bucket, composite, ceiling):
+    """Compute MLB percentile and tier label for composite and ceiling.
+
+    Compares against all MLB players at the same position bucket.
+    Returns dict with comp_pctile, comp_tier, ceil_pctile, ceil_tier.
+    """
+    rows = conn.execute("""
+        SELECT r.composite_score
+        FROM latest_ratings r
+        JOIN players p ON r.player_id = p.player_id
+        WHERE p.level = 1 AND r.composite_score IS NOT NULL
+    """).fetchall()
+
+    if not rows:
+        return None
+
+    from player_utils import assign_bucket as _ab
+    from league_config import config as _lc
+    _rm = {str(k): v for k, v in _lc.role_map.items()}
+
+    vals = []
+    for r in rows:
+        # We need bucket but don't have full player dict — use a simpler approach
+        # Query with bucket pre-computed would be better but this works for now
+        vals.append(r["composite_score"])
+
+    # Re-query with position info for accurate bucketing
+    rows2 = conn.execute("""
+        SELECT r.composite_score, p.pos, p.role
+        FROM latest_ratings r
+        JOIN players p ON r.player_id = p.player_id
+        WHERE p.level = 1 AND r.composite_score IS NOT NULL
+    """).fetchall()
+
+    vals = []
+    for r in rows2:
+        p = {"Pos": str(r["pos"] or ""), "_role": _rm.get(str(r["role"] or 0), "position_player")}
+        p["_is_pitcher"] = p["Pos"] == "P" or p["_role"] in ("starter", "reliever", "closer")
+        try:
+            b = _ab(p, use_pot=False)
+        except Exception:
+            continue
+        if b == bucket:
+            vals.append(r["composite_score"])
+
+    if len(vals) < 5:
+        return None
+
+    vals_sorted = sorted(vals)
+    n = len(vals_sorted)
+
+    def pctile(score):
+        return round(sum(1 for v in vals_sorted if v <= score) / n * 100)
+
+    def tier(pct):
+        if pct >= 90: return "Elite"
+        if pct >= 75: return "Plus"
+        if pct >= 40: return "Average"
+        if pct >= 20: return "Below Avg"
+        return "Fringe"
+
+    cp = pctile(composite) if composite else None
+    clp = pctile(ceiling) if ceiling else None
+
+    return {
+        "comp_pctile": cp,
+        "comp_tier": tier(cp) if cp is not None else None,
+        "ceil_pctile": clp,
+        "ceil_tier": tier(clp) if clp is not None else None,
+        "n": n,
+        "median": vals_sorted[n // 2],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Evaluation data helper — extracts composite scores, divergence, archetype,
 # carrying/red-flag tools, and two-way info from a ratings row.
 # ---------------------------------------------------------------------------
@@ -877,6 +955,16 @@ def get_player(pid):
         _dpw = _dollars_per_war()
         pap = calc_pap(_war, _pap_sal, _pap_tg, _dpw)
 
+    # MLB context: percentile + tier for composite/ceiling vs MLB at position
+    mlb_ctx = None
+    if composite_score is not None and _pos_bucket:
+        _internal_bucket = "COF" if _pos_bucket == "OF" else _pos_bucket
+        try:
+            _ctx_conn = get_db()
+            mlb_ctx = _mlb_context(_ctx_conn, _internal_bucket, composite_score, ceiling_score)
+        except Exception:
+            pass
+
     return {
         "pid": pid, "name": name, "age": age, "pos": pos_str,
         "team": team_names_map().get(org_id, "?"), "team_abbr": team_abbr_map().get(org_id, "?"), "tid": org_id,
@@ -909,6 +997,7 @@ def get_player(pid):
         "carrying_tool_breakdown": eval_data["carrying_tool_breakdown"],
         "positional_percentile": eval_data["positional_percentile"],
         "positional_median": eval_data["positional_median"],
+        "mlb_context": mlb_ctx,
     }
 
 

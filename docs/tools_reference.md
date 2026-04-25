@@ -445,8 +445,9 @@ Import with `sys.path.insert(0, 'web')`. All are read-only against the DB.
 
 | Function | Returns |
 |---|---|
-| `get_player(pid)` | Full player detail — bio, ratings (current/potential), stat history, contract, surplus, splits, percentiles |
+| `get_player(pid)` | Full player detail — bio, ratings, stats, contract, surplus, splits, percentiles, evaluation panel data (composite/ceiling with MLB context) |
 | `get_player_popup(pid)` | Lightweight popup data — bio, key ratings, current stats, surplus |
+| `_mlb_context(conn, bucket, composite, ceiling)` | MLB percentile + tier label for composite and ceiling vs all MLB players at the position |
 
 ### Trade-Level (`trade_queries.py`)
 

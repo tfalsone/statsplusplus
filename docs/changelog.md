@@ -56,7 +56,29 @@ First calibration run on both VMLB (20-80 scale) and EMLB (1-100 scale). Identif
 | EMLB Ceiling collapse | -3.9 | +2.7 | > -3.0 ✅ |
 | Weight cosine similarity | 0.65 | 0.98 | > 0.85 ✅ |
 
-Files changed: `scripts/calibrate.py`, `scripts/evaluation_engine.py`, `scripts/player_utils.py`, `scripts/fv_model.py`, `scripts/benchmark.py` (new)
+Files changed: `scripts/calibrate.py`, `scripts/evaluation_engine.py`, `scripts/player_utils.py`, `scripts/fv_model.py`, `scripts/benchmark.py` (new), `web/player_queries.py`, `web/templates/player.html`
+
+---
+
+### Player Page — Evaluation Panel Redesign
+
+Replaced the scattered evaluation data (header component scores, Tool Profile panel, Development Tracking panel) with a unified **Player Evaluation** panel and a cleaner header.
+
+**Header simplified:**
+- Kept: Team/Level, Name, Position, Age, Ht/B-T, Comp/Ceil (new), OVR/POT, FV, Surplus, PAP, Performance
+- Removed: Component score grade bars, carrying tool bonus, positional percentile, divergence badges — all moved to evaluation panel
+
+**New Player Evaluation panel:**
+- Two-box layout: **Now** (composite + MLB percentile + tier) and **Ceiling** (ceiling + MLB percentile + tier)
+- Percentiles computed against all MLB players at the same position bucket, giving instant context ("51 composite = 45th pctile MLB 2B = Average")
+- Tier labels: Fringe / Below Avg / Average / Plus / Elite
+- Component bars (Offense/Baserunning/Defense or Pitching/Durability) with color-coded fill
+- Carrying tools and red flag tools on one line
+- "vs. Game Rating" section showing Comp vs OVR and Ceil vs POT divergence with Hidden Gem / Landmine badges
+- Development tracking (composite/ceiling deltas + Riser/Reduced Ceiling badges)
+- Works for both prospects and MLB players
+
+**New query: `_mlb_context()`** in `player_queries.py` — computes positional percentile and tier label for any composite/ceiling score against the MLB population at that position.
 
 ---
 

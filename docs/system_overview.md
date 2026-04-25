@@ -298,7 +298,8 @@ MLB players use a three-tab layout (Overview / Stats / Contract). Prospects disp
 - **Contract panel** — year-by-year salary with NTC badge on header, TO/PO badges on final year row.
 - **Surplus projection** — year-by-year breakdown (MLB: WAR/market/salary/surplus; prospects: control years/ETA/dev discount). Pessimistic/optimistic range.
 - **Stats tables** — Batting: Year/G/PA → slash/ISO → BB%/SO%/BABIP → HR/RBI/SB-CS → OPS+/WAR. Pitching: Year/G/GS/IP → ERA/ERA+/FIP/SIERA → K%/BB%/K-BB%/GB%/BABIP → W/L/SV/HLD → WAR.
-- **Header** — Ovr/Pot color-coded by tier. StatsPlus external link. Prospects show FV; MLB players omit redundant Ovr display.
+- **Header** — Compact identity bar: Team/Level, Name, Position, Age, Ht/B-T, Comp/Ceil (color-coded), Ovr/Pot, FV (prospects), Surplus, PAP (MLB), Performance indicator.
+- **Player Evaluation panel** — Unified evaluation display replacing the old Tool Profile and Development Tracking panels. Two-box layout showing "Now" (composite + MLB percentile + tier label) and "Ceiling" (ceiling + MLB percentile + tier label). Component bars (Offense/Baserunning/Defense or Pitching/Durability). Carrying/red-flag tools. "vs. Game Rating" divergence section with Hidden Gem / Landmine badges. Development tracking deltas.
 
 ### Key Files
 
