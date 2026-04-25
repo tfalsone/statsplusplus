@@ -25,10 +25,10 @@ Open work items. Completed items are in `docs/changelog.md`.
 
 Legacy components designed for OVR/POT that need updating for composite/ceiling:
 
-- [ ] **`dev_weight()` curve tuning** — The blending curve is too flat at diff=+1/+2 (both give dw=0.50). Young-for-level prospects with high ceilings (e.g., Joe Read: 20yo A-ball SS, Comp=35, Ceil=66, gets FV 50+ instead of 55) are undervalued because ceiling only gets 50% weight. Need steeper curve for diff ≥ +2. **LOE: Low. Impact: High.**
-- [ ] **`effective_pot()` override removal** — Overrides ceiling to ≥55 when pitcher has 3+ elite pitches. Redundant with peak tool bonus already in ceiling. May inflate SP ceilings. **LOE: Low. Impact: Medium.**
-- [ ] **`RP_POT_DISCOUNT` (0.8×) review** — Applied to ceiling before FV blend. May double-count RP devaluation already in pitcher composite weights. Needs validation: compare RP FV with and without discount against actual RP value. **LOE: Low. Impact: Medium.**
-- [ ] **Prospect discount + dev_weight interaction** — Age discount lowers composite, then dev_weight blends with ceiling at only 50%. Double-penalizes young raw prospects. Fix dev_weight first, then reassess whether discount needs adjustment. **LOE: Low. Impact: Medium.**
+- [x] **`dev_weight()` curve tuning** — diff>=2 now gets 0.60 (was 0.50), rookie cap raised to 0.55. Fixes Joe Read-type undervaluation. **Done Session 49.**
+- [x] **`effective_pot()` override removal** — Was dead code (column name mismatch). Removed from calc_fv. **Done Session 49.**
+- [x] **`RP_POT_DISCOUNT` (0.8×) review** — Reduced to 0.85×. Old value double-counted RP devaluation in pitcher composite weights. FV 57 cap still limits top end. **Done Session 49.**
+- [x] **Prospect discount + dev_weight interaction** — Resolved by dev_weight fix. Discount impact on FV is now ~2 points (acceptable). **Done Session 49.**
 
 ---
 
