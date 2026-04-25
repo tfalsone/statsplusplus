@@ -209,7 +209,69 @@ def prospect_surplus(fv, age, level, bucket, positional_adjust=False, fv_plus=Fa
             "total_surplus": base_surplus, "breakdown": rows}
 
 
-def career_outcome_probs(fv, age, level, bucket, ovr=None, pot=None, def_rating=None):
+_PREMIUM_DEF_POSITIONS = {"SS", "C", "CF"}
+
+
+def _adjust_scenario_probs(p_base, p_mid, p_ceil, bucket,
+                           offensive_grade=None, offensive_ceiling=None,
+                           defensive_value=None, durability_score=None):
+    """Adjust scenario probabilities based on component profile shape.
+
+    Defense-heavy profiles at premium positions get a floor boost (higher p_base).
+    Offense-heavy profiles get a ceiling boost (higher p_ceil).
+    Balanced profiles get tighter distributions (higher p_mid).
+    Low-durability SP get higher bust risk.
+    """
+    if not any((offensive_grade, offensive_ceiling, defensive_value, durability_score)):
+        return p_base, p_mid, p_ceil
+
+    # Floor boost: premium defense at premium position
+    if bucket in _PREMIUM_DEF_POSITIONS and defensive_value and defensive_value >= 60:
+        boost = min(0.12, (defensive_value - 55) * 0.02)
+        p_base += boost
+        p_ceil -= boost * 0.6
+        p_mid -= boost * 0.4
+
+    # Ceiling boost: elite offensive upside
+    if offensive_ceiling and offensive_ceiling >= 60:
+        boost = min(0.12, (offensive_ceiling - 55) * 0.02)
+        p_ceil += boost
+        p_base -= boost
+
+    # Profile shape: balanced vs extreme
+    if offensive_grade and defensive_value:
+        gap = abs(offensive_grade - defensive_value)
+        if gap >= 20:
+            # Extreme: wider distribution
+            shift = min(0.08, (gap - 15) * 0.01)
+            p_ceil += shift
+            p_base += shift * 0.5
+            p_mid -= shift * 1.5
+        elif gap <= 8:
+            # Balanced: tighter distribution
+            shift = min(0.08, (12 - gap) * 0.02)
+            p_mid += shift
+            p_ceil -= shift * 0.6
+            p_base -= shift * 0.4
+
+    # SP durability risk
+    if bucket == "SP" and durability_score and durability_score < 45:
+        penalty = min(0.10, (50 - durability_score) * 0.02)
+        p_base += penalty
+        p_ceil -= penalty
+
+    # Renormalize to sum to 1.0
+    total = p_base + p_mid + p_ceil
+    if total > 0:
+        p_base /= total
+        p_mid /= total
+        p_ceil /= total
+    return p_base, p_mid, p_ceil
+
+
+def career_outcome_probs(fv, age, level, bucket, ovr=None, pot=None, def_rating=None,
+                         offensive_grade=None, offensive_ceiling=None,
+                         defensive_value=None, durability_score=None):
     """Compute cumulative probability of reaching each WAR/season tier.
 
     Returns dict with:
@@ -228,8 +290,21 @@ def career_outcome_probs(fv, age, level, bucket, ovr=None, pot=None, def_rating=
     p_ceil = min(0.25, 0.10 + youth_bonus * 0.5 + gap_factor * 0.10) if cfv > fv else 0
     p_base = 1.0 - p_mid - p_ceil
 
+    # Adjust scenario probabilities based on component profile shape
+    p_base, p_mid, p_ceil = _adjust_scenario_probs(
+        p_base, p_mid, p_ceil, bucket,
+        offensive_grade, offensive_ceiling, defensive_value, durability_score)
+
     # Bust probability = 1 - dev_discount
     dev = _age_adjusted_discount(level, age)
+
+    # Component-based development adjustment
+    # Premium defense = more reliable development (defense translates earlier)
+    # Low durability SP = higher bust risk
+    if bucket in _PREMIUM_DEF_POSITIONS and defensive_value and defensive_value >= 60:
+        dev = min(1.0, dev * (1.0 + (defensive_value - 55) * 0.01))
+    if bucket == "SP" and durability_score and durability_score < 45:
+        dev *= max(0.80, 1.0 - (50 - durability_score) * 0.015)
 
     # WAR for each scenario
     war_base = peak_war(fv, bucket)
@@ -317,7 +392,9 @@ def _ceiling_fv(pot):
 
 
 def prospect_surplus_with_option(fv, age, level, bucket, ovr=None, pot=None,
-                                  fv_plus=False, positional_adjust=False, def_rating=None):
+                                  fv_plus=False, positional_adjust=False, def_rating=None,
+                                  offensive_grade=None, offensive_ceiling=None,
+                                  defensive_value=None, durability_score=None):
     """Compute surplus including option value from upside scenarios.
     Returns the higher of base surplus and probability-weighted blended surplus.
     
@@ -325,6 +402,10 @@ def prospect_surplus_with_option(fv, age, level, bucket, ovr=None, pot=None,
     - Youth: younger players have more development time (+5% per year under 20)
     - Pot-FV gap: wider gap = more development runway = higher upside probability
       (a Pot 80 / FV 50 player has much more upside than Pot 52 / FV 50)
+    
+    Component scores (offensive_grade, defensive_value, etc.) adjust scenario
+    probabilities: defense-heavy profiles have higher floors, offense-heavy
+    profiles have higher ceilings, balanced profiles have tighter distributions.
     """
     base = prospect_surplus(fv, age, level, bucket, positional_adjust=positional_adjust,
                             fv_plus=fv_plus, ovr=ovr, pot=pot, def_rating=def_rating)
@@ -343,6 +424,11 @@ def prospect_surplus_with_option(fv, age, level, bucket, ovr=None, pot=None,
     p_mid = min(0.45, 0.30 + youth_bonus + gap_factor * 0.15)
     p_ceil = min(0.25, 0.10 + youth_bonus * 0.5 + gap_factor * 0.10)
     p_base = 1.0 - p_mid - p_ceil
+
+    # Component-based adjustments to scenario probabilities
+    p_base, p_mid, p_ceil = _adjust_scenario_probs(
+        p_base, p_mid, p_ceil, bucket,
+        offensive_grade, offensive_ceiling, defensive_value, durability_score)
 
     blended = p_base * base_val + p_mid * s_mid + p_ceil * s_ceil
     return max(base_val, round(blended))

@@ -220,7 +220,11 @@ def run():
                     raw_fv, raw_plus = fv_base, fv_plus
                 p_surplus = _prospect_surplus_opt(
                     raw_fv, age, "MLB", bucket, fv_plus=raw_plus,
-                    ovr=p.get("Ovr"), pot=p.get("Pot"), def_rating=def_rating
+                    ovr=p.get("Ovr"), pot=p.get("Pot"), def_rating=def_rating,
+                    offensive_grade=p.get("offensive_grade"),
+                    offensive_ceiling=p.get("offensive_ceiling"),
+                    defensive_value=p.get("defensive_value"),
+                    durability_score=p.get("durability_score"),
                 )
                 prospect_rows.append((
                     pid, game_date, fv_base, fv_str,
@@ -249,7 +253,11 @@ def run():
 
             surplus = _prospect_surplus_opt(
                 raw_fv, age, level_label, bucket, fv_plus=raw_plus,
-                ovr=p.get("Ovr"), pot=p.get("Pot"), def_rating=def_rating
+                ovr=p.get("Ovr"), pot=p.get("Pot"), def_rating=def_rating,
+                offensive_grade=p.get("offensive_grade"),
+                offensive_ceiling=p.get("offensive_ceiling"),
+                defensive_value=p.get("defensive_value"),
+                durability_score=p.get("durability_score"),
             )
             prospect_rows.append((
                 pid, game_date, fv_base, fv_str,

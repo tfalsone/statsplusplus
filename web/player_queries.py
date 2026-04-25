@@ -849,10 +849,14 @@ def get_player(pid):
                     "raw_total": round(raw_total / 1e6, 1),
                 }
             # Career outcome probabilities
+            _comp_kw = dict(offensive_grade=eval_data.get("offensive_grade"),
+                            offensive_ceiling=eval_data.get("offensive_ceiling"),
+                            defensive_value=eval_data.get("defensive_value"),
+                            durability_score=eval_data.get("durability_score"))
             outcome_probs = _pv.career_outcome_probs(
                 fv, age, level_val, bucket_val,
                 ovr=valuation.get("ovr"), pot=valuation.get("pot"),
-                def_rating=_dr)
+                def_rating=_dr, **_comp_kw)
         # MLB player who is also rookie-eligible (in prospect_fv)
         if valuation.get("type") == "MLB" and prospect_row and outcome_probs is None:
             import prospect_value as _pv
@@ -863,7 +867,8 @@ def get_player(pid):
                 _fv, age, _level, _bucket,
                 ovr=ratings["ovr"] if ratings else None,
                 pot=ratings["pot"] if ratings else None,
-                def_rating=valuation.get("def_rating"))
+                def_rating=valuation.get("def_rating"),
+                **_comp_kw)
         # Amateur/draft prospect — not in prospect_fv or player_surplus
         if not valuation and outcome_probs is None and level_str not in ('MLB','AAA','AA','A','A-Short','Rookie','International'):
             try:
