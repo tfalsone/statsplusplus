@@ -18,8 +18,9 @@ def _mlb_context(conn, bucket, composite, ceiling):
     """Compute MLB percentile and tier label for composite and ceiling.
 
     Compares against qualified MLB regulars at the same position bucket.
-    Hitters: 200+ PA. SP: 80+ IP. RP: 30+ IP. Filters out bench/mop-up
-    players to give meaningful percentile context.
+    Qualification thresholds scale with season progress so early-season
+    data still produces meaningful comparisons.
+    Full-season targets: Hitters 200 PA, SP 80 IP, RP 30 IP.
     """
     from player_utils import assign_bucket as _ab
     from league_config import config as _lc
@@ -29,14 +30,31 @@ def _mlb_context(conn, bucket, composite, ceiling):
     if not _year:
         return None
 
+    # Scale qualification thresholds by season progress.
+    # Full season ≈ 162 games from ~April 1 to ~Sept 30 (183 days).
+    # Minimum floor: 50 PA / 20 IP SP / 8 IP RP to avoid tiny samples.
+    game_date = _lc.game_date
+    if game_date:
+        import datetime
+        if isinstance(game_date, str):
+            game_date = datetime.date.fromisoformat(game_date)
+        season_start = datetime.date(game_date.year, 4, 1)
+        days_elapsed = max(1, (game_date - season_start).days)
+        season_frac = min(1.0, days_elapsed / 183)
+    else:
+        season_frac = 1.0
+    pa_min = max(50, round(200 * season_frac))
+    sp_ip_min = max(20, round(80 * season_frac))
+    rp_ip_min = max(8, round(30 * season_frac))
+
     if bucket == "SP":
         rows = conn.execute("""
             SELECT r.composite_score FROM latest_ratings r
             JOIN players p ON r.player_id = p.player_id
             JOIN pitching_stats ps ON ps.player_id = p.player_id AND ps.split_id = 1
             WHERE p.level = 1 AND r.composite_score IS NOT NULL AND p.role = '11'
-              AND ps.year = ? AND CAST(ps.ip AS REAL) >= 80
-        """, (_year,)).fetchall()
+              AND ps.year = ? AND CAST(ps.ip AS REAL) >= ?
+        """, (_year, sp_ip_min)).fetchall()
         vals = [r["composite_score"] for r in rows]
     elif bucket == "RP":
         rows = conn.execute("""
@@ -44,8 +62,8 @@ def _mlb_context(conn, bucket, composite, ceiling):
             JOIN players p ON r.player_id = p.player_id
             JOIN pitching_stats ps ON ps.player_id = p.player_id AND ps.split_id = 1
             WHERE p.level = 1 AND r.composite_score IS NOT NULL AND p.role IN ('12','13')
-              AND ps.year = ? AND CAST(ps.ip AS REAL) >= 30
-        """, (_year,)).fetchall()
+              AND ps.year = ? AND CAST(ps.ip AS REAL) >= ?
+        """, (_year, rp_ip_min)).fetchall()
         vals = [r["composite_score"] for r in rows]
     else:
         rows = conn.execute("""
@@ -55,8 +73,8 @@ def _mlb_context(conn, bucket, composite, ceiling):
             JOIN batting_stats bs ON bs.player_id = p.player_id AND bs.split_id = 1
             WHERE p.level = 1 AND r.composite_score IS NOT NULL
               AND p.role NOT IN ('11','12','13')
-              AND bs.year = ? AND bs.pa >= 200
-        """, (_year,)).fetchall()
+              AND bs.year = ? AND bs.pa >= ?
+        """, (_year, pa_min)).fetchall()
         vals = []
         for r in rows:
             p = {"Pos": str(r["pos"] or ""), "_role": _rm.get(str(r["role"] or 0), "position_player")}

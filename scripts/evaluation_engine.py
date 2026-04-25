@@ -1270,9 +1270,10 @@ def compute_ceiling(
     raw_ceiling += min(peak_bonus, _peak_cap)
 
     # Age-weighted blend: younger players weight potential tools more heavily.
-    # At age 16-17: potential_weight = 0.90-0.95 (ceiling driven by potential)
-    # At age 25+: potential_weight = 0.50 (blend of current and potential)
-    # At age 30+: potential_weight = 0.30 (current-dominant)
+    # Ceiling represents the theoretical maximum -- what happens if everything
+    # goes right. Base curve ramps from 0.95 (age 16) to 0.30 (age 30+).
+    # Minor leaguers get a boost: ceiling should reflect upside, not current
+    # production. MLB level 1, minors > 1.
     potential_weight = max(0.30, min(0.95, 1.0 - (age - 16) * 0.05))
     raw_ceiling = round(raw_ceiling * potential_weight + composite_score * (1.0 - potential_weight))
 
