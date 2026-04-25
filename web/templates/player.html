@@ -565,7 +565,7 @@
       <div style="font-size:32px; font-weight:700"><span class="ovr-color" data-g="{{ p.composite_score }}">{{ p.composite_score }}</span></div>
       {% if p.mlb_context %}
       <div style="font-size:12px; margin-top:4px">
-        <span style="{% if p.mlb_context.comp_pctile >= 75 %}color:#4caf50{% elif p.mlb_context.comp_pctile <= 25 %}color:#f44336{% else %}color:var(--text-dim){% endif %}">{{ p.mlb_context.comp_pctile }}th pctile</span>
+        {% set cp = p.mlb_context.comp_pctile %}<span style="{% if cp >= 75 %}color:#4caf50{% elif cp <= 25 %}color:#f44336{% else %}color:var(--text-dim){% endif %}">{{ cp }}{{ 'st' if cp % 10 == 1 and cp != 11 else 'nd' if cp % 10 == 2 and cp != 12 else 'rd' if cp % 10 == 3 and cp != 13 else 'th' }} pctile</span>
         <span style="color:var(--text-dim)">MLB {{ p.valuation.bucket if p.valuation else '' }}</span>
       </div>
       <div style="font-size:11px; color:var(--text-dim)">{{ p.mlb_context.comp_tier }}</div>
@@ -577,7 +577,7 @@
       <div style="font-size:32px; font-weight:700"><span class="ovr-color" data-g="{{ p.ceiling_score }}">{{ p.ceiling_score }}</span></div>
       {% if p.mlb_context %}
       <div style="font-size:12px; margin-top:4px">
-        <span style="{% if p.mlb_context.ceil_pctile >= 75 %}color:#4caf50{% elif p.mlb_context.ceil_pctile <= 25 %}color:#f44336{% else %}color:var(--text-dim){% endif %}">{{ p.mlb_context.ceil_pctile }}th pctile</span>
+        {% set clp = p.mlb_context.ceil_pctile %}<span style="{% if clp >= 75 %}color:#4caf50{% elif clp <= 25 %}color:#f44336{% else %}color:var(--text-dim){% endif %}">{{ clp }}{{ 'st' if clp % 10 == 1 and clp != 11 else 'nd' if clp % 10 == 2 and clp != 12 else 'rd' if clp % 10 == 3 and clp != 13 else 'th' }} pctile</span>
         <span style="color:var(--text-dim)">MLB {{ p.valuation.bucket if p.valuation else '' }}</span>
       </div>
       <div style="font-size:11px; color:var(--text-dim)">{{ p.mlb_context.ceil_tier }}</div>

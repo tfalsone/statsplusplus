@@ -31,27 +31,25 @@ def _mlb_context(conn, bucket, composite, ceiling):
 
     if bucket == "SP":
         rows = conn.execute("""
-            SELECT r.composite_score, r.ceiling_score FROM latest_ratings r
+            SELECT r.composite_score FROM latest_ratings r
             JOIN players p ON r.player_id = p.player_id
             JOIN pitching_stats ps ON ps.player_id = p.player_id AND ps.split_id = 1
             WHERE p.level = 1 AND r.composite_score IS NOT NULL AND p.role = '11'
               AND ps.year = ? AND CAST(ps.ip AS REAL) >= 80
         """, (_year,)).fetchall()
         vals = [r["composite_score"] for r in rows]
-        ceil_vals = sorted(r["ceiling_score"] for r in rows if r["ceiling_score"])
     elif bucket == "RP":
         rows = conn.execute("""
-            SELECT r.composite_score, r.ceiling_score FROM latest_ratings r
+            SELECT r.composite_score FROM latest_ratings r
             JOIN players p ON r.player_id = p.player_id
             JOIN pitching_stats ps ON ps.player_id = p.player_id AND ps.split_id = 1
             WHERE p.level = 1 AND r.composite_score IS NOT NULL AND p.role IN ('12','13')
               AND ps.year = ? AND CAST(ps.ip AS REAL) >= 30
         """, (_year,)).fetchall()
         vals = [r["composite_score"] for r in rows]
-        ceil_vals = sorted(r["ceiling_score"] for r in rows if r["ceiling_score"])
     else:
         rows = conn.execute("""
-            SELECT r.composite_score, r.ceiling_score, p.pos, p.role
+            SELECT r.composite_score, p.pos, p.role
             FROM latest_ratings r
             JOIN players p ON r.player_id = p.player_id
             JOIN batting_stats bs ON bs.player_id = p.player_id AND bs.split_id = 1
@@ -60,7 +58,6 @@ def _mlb_context(conn, bucket, composite, ceiling):
               AND bs.year = ? AND bs.pa >= 200
         """, (_year,)).fetchall()
         vals = []
-        ceil_vals = []
         for r in rows:
             p = {"Pos": str(r["pos"] or ""), "_role": _rm.get(str(r["role"] or 0), "position_player")}
             p["_is_pitcher"] = False
@@ -70,9 +67,6 @@ def _mlb_context(conn, bucket, composite, ceiling):
                 continue
             if b == bucket:
                 vals.append(r["composite_score"])
-                if r["ceiling_score"]:
-                    ceil_vals.append(r["ceiling_score"])
-        ceil_vals.sort()
 
     if len(vals) < 5:
         return None
@@ -90,8 +84,11 @@ def _mlb_context(conn, bucket, composite, ceiling):
         if pct >= 20: return "Below Avg"
         return "Fringe"
 
+    # Compare both composite and ceiling against the same distribution
+    # (qualified regulars' composites). This answers a consistent question:
+    # "where does this score rank among current MLB production at this position?"
     cp = pctile(composite, vals_sorted) if composite else None
-    clp = pctile(ceiling, ceil_vals) if ceiling and ceil_vals else None
+    clp = pctile(ceiling, vals_sorted) if ceiling else None
 
     return {
         "comp_pctile": cp,
