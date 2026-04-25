@@ -48,6 +48,34 @@ LEVEL_NORM_AGE = {
 # FV helpers
 # ---------------------------------------------------------------------------
 
+# Age-based development runway multiplier.
+# Derived from cross-sectional OVR/POT gap analysis: at each age, what
+# fraction of the ceiling-current gap remains unrealized? Normalized to
+# age 21 = 1.0 (the inflection where level-based context gives way to
+# age-based decay). Source: VMLB 2033, N=50+ per age bucket.
+_AGE_RUNWAY = {
+    17: 1.42, 18: 1.42, 19: 1.29, 20: 1.18, 21: 1.00,
+    22: 0.69, 23: 0.40, 24: 0.28, 25: 0.22, 26: 0.12,
+}
+
+
+def age_development_mult(age):
+    """Multiplier on dev_weight reflecting remaining development runway.
+
+    Returns 1.0 for age ≤ 21 (full runway), decays based on empirical
+    gap-closure rates for older prospects. Linearly interpolates between
+    defined age points.
+    """
+    if age <= 21:
+        return _AGE_RUNWAY.get(age, 1.42)
+    if age >= 26:
+        return _AGE_RUNWAY[26]
+    lo = int(age)
+    hi = lo + 1
+    frac = age - lo
+    return _AGE_RUNWAY.get(lo, 0.12) * (1 - frac) + _AGE_RUNWAY.get(hi, 0.12) * frac
+
+
 def dev_weight(age, norm_age, level=None):
     """Development weight: how much to blend Pot vs Ovr based on age vs level norm."""
     diff = norm_age - age
@@ -62,6 +90,9 @@ def dev_weight(age, norm_age, level=None):
         w += 0.10
         if level.lower().replace(" ", "-") in ("usl", "dsl", "intl", "rookie"):
             w = min(w, 0.55)
+    # Apply empirical age decay for prospects past peak development age
+    if age > 21:
+        w *= age_development_mult(age)
     return w
 
 
