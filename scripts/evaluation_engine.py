@@ -1009,16 +1009,11 @@ def compute_composite_pitcher(
         raw -= penalty
 
     # SP innings-volume adjustment: high-stamina SP absorb more innings,
-    # producing more total WAR. The composite is a rate-stat model, but WAR
-    # is a counting stat — Comp × IP correlates with WAR at r=0.70, nearly
-    # matching OVR (r=0.73). This adjustment bridges the rate/volume gap.
-    #
-    # Scale: +1 per 5 points above 45, capped at +7.
-    # Examples: Stm=50 → +1, Stm=60 → +3, Stm=70 → +5, Stm=80 → +7.
-    # The cap at +7 prevents stamina from dominating the score while still
-    # giving elite workhorses (Stm 75-80) meaningful separation.
+    # producing more total WAR. Calibrated from Q1-Q4 stamina WAR gap:
+    # 22-point stm gap → 0.41 WAR → ~2.7 composite points fair value.
+    # Scale: +1 per 8 points above 45, capped at +4.
     if role == "SP" and stamina > 45:
-        bonus = min(7.0, (stamina - 45) * 0.2)
+        bonus = min(4.0, (stamina - 45) * 0.12)
         raw += bonus
 
     # Platoon balance penalty: -2 to -3 when weak side < 35 and gap >= 15
@@ -1260,11 +1255,11 @@ def compute_ceiling(
     # Purely tool-derived, no reference to game OVR/POT.
     if is_pitcher:
         ceiling_tools = [potential_tools.get(k) or 0 for k in ("stuff", "movement", "control")]
-        # SP stamina bonus: stamina is a 4th tool for SP that contributes
-        # to value (innings volume) but isn't in the core 3. Include it
-        # in the peak bonus to give SP parity with hitters' 4 tools.
+        # SP stamina: include in peak bonus but cap its contribution
+        # at +5 so it doesn't dominate the ceiling. Stamina correlates
+        # with WAR at only r=0.168; core tools matter more.
         if role == "SP" and stamina >= 55:
-            ceiling_tools.append(stamina)
+            ceiling_tools.append(min(stamina, 65))
     else:
         ceiling_tools = [potential_tools.get(k) or 0 for k in ("contact", "gap", "power", "eye")]
     peak_bonus = sum(max(0, t - 60) for t in ceiling_tools)
