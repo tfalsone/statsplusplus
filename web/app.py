@@ -51,8 +51,8 @@ def _set_league_context():
     g.league_dir = league_dir
     g.league_config = cfg
     # Set ratings scale from this league's config (not the module-level singleton)
-    import player_utils
-    player_utils._ratings_scale = cfg.ratings_scale
+    import ratings
+    ratings._ratings_scale = cfg.ratings_scale
     # Check if league has enough data to render data pages
     g.league_ready = (league_dir / "league.db").exists() and (
         league_dir / "config" / "league_averages.json").exists()
