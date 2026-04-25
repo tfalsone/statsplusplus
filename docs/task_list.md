@@ -18,8 +18,17 @@ Open work items. Completed items are in `docs/changelog.md`.
 - [x] **Calibration on VMLB** — Full calibrate → evaluation_engine → fv_calc pipeline run on VMLB (Session 48). R²-blended defaults and raised min_weight floors produce stable cross-league weights (cosine similarity 0.98+).
 - [ ] **SP underrepresentation in prospect rankings** — Only 18/100 SP in VMLB top 100, 8/100 in EMLB. SP typically 25-30% of real prospect lists. Pitcher composite may still compress the top end. Investigate innings-volume adjustment and arsenal bonus effectiveness for prospect SP. **LOE: Medium.**
 - [ ] **FV40 prospect inflation residual** — FV 40+ prospects still +3.5 Comp-OVR on VMLB (target ±3.0). Driven by 2B/CF/COF buckets at +4.5 to +5.5. May need position-specific discount tuning. **LOE: Low.**
-- [ ] **EMLB ceiling slight inflation** — Mean Ceil-POT is +4.1 on EMLB after peak tool bonus. The +1/point above 60 bonus may be slightly too generous on 1-100 scale leagues. Consider scale-aware bonus or lower cap. **LOE: Low.**
+- [ ] **EMLB ceiling slight inflation** — Mean Ceil-POT is +2.7 on EMLB after peak tool bonus and scale-aware cap. May need further tuning. **LOE: Low.**
 - [x] **COMPOSITE_TO_WAR calibration** — Now that composite scores exist on both leagues, run a second calibration pass to produce COMPOSITE_TO_WAR tables. These feed into `peak_war_from_score()` for surplus calculations. **Done Session 48.**
+
+### FV Pipeline Migration to Composite/Ceiling Inputs
+
+Legacy components designed for OVR/POT that need updating for composite/ceiling:
+
+- [ ] **`dev_weight()` curve tuning** — The blending curve is too flat at diff=+1/+2 (both give dw=0.50). Young-for-level prospects with high ceilings (e.g., Joe Read: 20yo A-ball SS, Comp=35, Ceil=66, gets FV 50+ instead of 55) are undervalued because ceiling only gets 50% weight. Need steeper curve for diff ≥ +2. **LOE: Low. Impact: High.**
+- [ ] **`effective_pot()` override removal** — Overrides ceiling to ≥55 when pitcher has 3+ elite pitches. Redundant with peak tool bonus already in ceiling. May inflate SP ceilings. **LOE: Low. Impact: Medium.**
+- [ ] **`RP_POT_DISCOUNT` (0.8×) review** — Applied to ceiling before FV blend. May double-count RP devaluation already in pitcher composite weights. Needs validation: compare RP FV with and without discount against actual RP value. **LOE: Low. Impact: Medium.**
+- [ ] **Prospect discount + dev_weight interaction** — Age discount lowers composite, then dev_weight blends with ceiling at only 50%. Double-penalizes young raw prospects. Fix dev_weight first, then reassess whether discount needs adjustment. **LOE: Low. Impact: Medium.**
 
 ---
 
