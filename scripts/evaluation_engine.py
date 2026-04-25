@@ -2841,19 +2841,12 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
         # if those tools were going to translate, they would have by now.
         # Apply an age-based discount to align prospect composites with
         # the MLB baseline. Derived from empirical Comp-OVR offsets.
-        # Extra discount for older prospects with low upside (ceiling
-        # close to composite), who are near their peak already.
+        # Note: age_development_mult() in fv_model handles the
+        # "less likely to reach ceiling" concern via dev_weight decay,
+        # so no extra low-upside penalty is needed here.
         if not is_mlb:
             player_age = row_dict.get("age") or 25
-            if player_age >= 22:
-                prospect_discount = 5
-                # Extra penalty for older prospects with low upside
-                upside_gap = ceiling_score - composite_score
-                if player_age >= 23 and upside_gap <= 5:
-                    prospect_discount += 3
-                elif player_age >= 23 and upside_gap <= 10:
-                    prospect_discount += 1
-            elif player_age >= 20:
+            if player_age >= 20:
                 prospect_discount = 5
             elif player_age >= 18:
                 prospect_discount = 3
