@@ -17,37 +17,50 @@ from constants import ROLE_MAP
 def _mlb_context(conn, bucket, composite, ceiling):
     """Compute MLB percentile and tier label for composite and ceiling.
 
-    Compares against all MLB players at the same position bucket.
-    Returns dict with comp_pctile, comp_tier, ceil_pctile, ceil_tier.
+    Compares against qualified MLB regulars at the same position bucket.
+    Hitters: 200+ PA. SP: 80+ IP. RP: 30+ IP. Filters out bench/mop-up
+    players to give meaningful percentile context.
     """
     from player_utils import assign_bucket as _ab
     from league_config import config as _lc
     _rm = {str(k): v for k, v in _lc.role_map.items()}
 
-    # For pitcher buckets, match by role directly; for hitters, use assign_bucket
+    _year = conn.execute("SELECT MAX(year) FROM batting_stats").fetchone()[0]
+    if not _year:
+        return None
+
     if bucket == "SP":
         rows = conn.execute("""
-            SELECT r.composite_score FROM latest_ratings r
+            SELECT r.composite_score, r.ceiling_score FROM latest_ratings r
             JOIN players p ON r.player_id = p.player_id
+            JOIN pitching_stats ps ON ps.player_id = p.player_id AND ps.split_id = 1
             WHERE p.level = 1 AND r.composite_score IS NOT NULL AND p.role = '11'
-        """).fetchall()
+              AND ps.year = ? AND CAST(ps.ip AS REAL) >= 80
+        """, (_year,)).fetchall()
         vals = [r["composite_score"] for r in rows]
+        ceil_vals = sorted(r["ceiling_score"] for r in rows if r["ceiling_score"])
     elif bucket == "RP":
         rows = conn.execute("""
-            SELECT r.composite_score FROM latest_ratings r
+            SELECT r.composite_score, r.ceiling_score FROM latest_ratings r
             JOIN players p ON r.player_id = p.player_id
+            JOIN pitching_stats ps ON ps.player_id = p.player_id AND ps.split_id = 1
             WHERE p.level = 1 AND r.composite_score IS NOT NULL AND p.role IN ('12','13')
-        """).fetchall()
+              AND ps.year = ? AND CAST(ps.ip AS REAL) >= 30
+        """, (_year,)).fetchall()
         vals = [r["composite_score"] for r in rows]
+        ceil_vals = sorted(r["ceiling_score"] for r in rows if r["ceiling_score"])
     else:
         rows = conn.execute("""
-            SELECT r.composite_score, p.pos, p.role
+            SELECT r.composite_score, r.ceiling_score, p.pos, p.role
             FROM latest_ratings r
             JOIN players p ON r.player_id = p.player_id
+            JOIN batting_stats bs ON bs.player_id = p.player_id AND bs.split_id = 1
             WHERE p.level = 1 AND r.composite_score IS NOT NULL
               AND p.role NOT IN ('11','12','13')
-        """).fetchall()
+              AND bs.year = ? AND bs.pa >= 200
+        """, (_year,)).fetchall()
         vals = []
+        ceil_vals = []
         for r in rows:
             p = {"Pos": str(r["pos"] or ""), "_role": _rm.get(str(r["role"] or 0), "position_player")}
             p["_is_pitcher"] = False
@@ -57,45 +70,12 @@ def _mlb_context(conn, bucket, composite, ceiling):
                 continue
             if b == bucket:
                 vals.append(r["composite_score"])
+                if r["ceiling_score"]:
+                    ceil_vals.append(r["ceiling_score"])
+        ceil_vals.sort()
 
     if len(vals) < 5:
         return None
-
-    # Also collect ceiling scores for ceiling percentile comparison
-    if bucket == "SP":
-        ceil_rows = conn.execute("""
-            SELECT r.ceiling_score FROM latest_ratings r
-            JOIN players p ON r.player_id = p.player_id
-            WHERE p.level = 1 AND r.ceiling_score IS NOT NULL AND p.role = '11'
-        """).fetchall()
-        ceil_vals = sorted(r["ceiling_score"] for r in ceil_rows)
-    elif bucket == "RP":
-        ceil_rows = conn.execute("""
-            SELECT r.ceiling_score FROM latest_ratings r
-            JOIN players p ON r.player_id = p.player_id
-            WHERE p.level = 1 AND r.ceiling_score IS NOT NULL AND p.role IN ('12','13')
-        """).fetchall()
-        ceil_vals = sorted(r["ceiling_score"] for r in ceil_rows)
-    else:
-        # Re-query with ceiling_score for hitters at same bucket
-        ceil_rows = conn.execute("""
-            SELECT r.ceiling_score, p.pos, p.role
-            FROM latest_ratings r
-            JOIN players p ON r.player_id = p.player_id
-            WHERE p.level = 1 AND r.ceiling_score IS NOT NULL
-              AND p.role NOT IN ('11','12','13')
-        """).fetchall()
-        ceil_vals = []
-        for r in ceil_rows:
-            p = {"Pos": str(r["pos"] or ""), "_role": _rm.get(str(r["role"] or 0), "position_player")}
-            p["_is_pitcher"] = False
-            try:
-                b = _ab(p, use_pot=False)
-            except Exception:
-                continue
-            if b == bucket:
-                ceil_vals.append(r["ceiling_score"])
-        ceil_vals.sort()
 
     vals_sorted = sorted(vals)
     n = len(vals_sorted)
