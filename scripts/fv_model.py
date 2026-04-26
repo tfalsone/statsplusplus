@@ -306,8 +306,11 @@ def calc_fv_v2(p):
         raw_fv = 45 + (pot - mlb_median) * ceiling_credit
         # Minimum ceiling quality gate: prospects whose ceiling is barely
         # above the positional median have limited upside. Cap FV at 40
-        # unless ceiling is meaningfully above median (4+ points).
-        ceil_above_median = pot - mlb_median
+        # unless ceiling is meaningfully above median.
+        # Use raw ceiling (before RP discount) for the gate check so RP
+        # aren't double-penalized by the discount + gate.
+        raw_ceil = p["Pot"]  # before RP discount
+        ceil_above_median = raw_ceil - mlb_median
         if ceil_above_median < 6:
             fv = min(raw_fv, 42)  # caps at FV 40
         else:
