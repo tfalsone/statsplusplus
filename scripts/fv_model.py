@@ -171,17 +171,12 @@ def positional_access_premium(bucket, offensive_grade, defensive_value, access_t
 def calc_fv(p):
     """
     Compute FV for a prospect. Player dict must have:
-      Ovr, Pot, Age, _is_pitcher, _bucket, _norm_age
-    Returns (fv_base: int, fv_plus: bool).
+      Ovr, Pot, Age, _is_pitcher, _bucket, _norm_age, _mlb_median
+    Returns (fv_grade: int, risk: str).
 
-    Simplified formula (Session 48): the composite already incorporates
-    positional tool weights, defensive value, and carrying tool bonuses.
-    The ceiling already incorporates peak tool bonus and age-weighted blend.
-    FV is now just: composite + dev_weight × (ceiling - composite), plus
-    character modifiers and platoon penalty.
-
-    Removed (now in composite/ceiling): defensive bonus, versatility bonus,
-    positional access premium, critical tool floor penalty.
+    Delegates to calc_fv_v2: ceiling-credit FV with risk label.
+    FV reflects ceiling quality relative to MLB position median.
+    Risk captures development probability (Low/Medium/High/Extreme).
     """
     return calc_fv_v2(p)
 
@@ -263,15 +258,17 @@ def _get_outcome_probs(age, is_pitcher):
 
 
 def calc_fv_v2(p):
-    """Probability-informed FV using empirical gap closure rates.
+    """Ceiling-credit FV with risk label.
 
-    Uses forward-looking gap closure rates (what fraction of the remaining
-    composite-to-ceiling gap closes by peak age) as the development weight.
-    These rates are derived from cross-sectional OVR/POT analysis and
-    inherently capture the probability distribution of outcomes — the mean
-    closure rate IS the expected value across all outcome scenarios.
+    FV reflects the ceiling quality relative to MLB — what the player
+    becomes if he develops. Risk captures the probability of getting there.
 
-    Character traits and level context adjust the closure rate.
+    FV = 45 + (true_ceiling - positional_MLB_median) * ceiling_credit
+    Risk = f(age, gap, closure_rate, character)
+
+    Returns (fv_grade: int, risk: str).
+    fv_grade is on the 20-80 scale in steps of 5 (no "+" grades).
+    risk is one of: "Low", "Medium", "High", "Extreme".
     """
     ovr = p["Ovr"]       # composite_score
     pot = p["Pot"]        # true_ceiling
@@ -283,109 +280,38 @@ def calc_fv_v2(p):
     if bucket == "RP":
         pot = round(pot * RP_POT_DISCOUNT)
 
-    gap = max(0, pot - ovr)
-    if gap == 0:
-        # Maxed out — FV based on ceiling's MLB context
-        mlb_median = p.get("_mlb_median") or 50
-        fv = 45 + (pot - mlb_median)
-        fv = max(20, fv)
-        base = round(fv / 5) * 5
-        return base, False
-
-    # Get forward-looking gap closure rate for this age
-    table = _GAP_CLOSURE_PITCHER if is_pitcher else _GAP_CLOSURE_HITTER
-    if age <= 17:
-        closure = table[17]
-    elif age >= 25:
-        closure = table[25]
-    else:
-        lo = int(age)
-        hi = lo + 1
-        frac = age - lo
-        closure = table.get(lo, 0.38) * (1 - frac) + table.get(hi, 0.38) * frac
-
-    # Level adjustment: young-for-level closes more gap, old-for-level less.
-    level_diff = norm_age - age
-    if level_diff >= 1:
-        closure = min(0.98, closure + level_diff * 0.02)
-    elif level_diff <= -1:
-        closure = max(0.05, closure + level_diff * 0.02)
-
-    # Character adjustments
-    we = p.get("WrkEthic", "N")
-    intel = p.get("Int", "N")
-    if we in ("H", "VH"):
-        closure = min(0.98, closure + 0.03)
-    elif we == "L":
-        closure = max(0.05, closure - 0.03)
-    if intel in ("H", "VH"):
-        closure = min(0.98, closure + 0.02)
-    elif intel == "L":
-        closure = max(0.05, closure - 0.02)
-
-    # Scale closure rate to produce FV distributions closer to real baseball.
-    # OOTP's development model is generous (median player realizes 97%+ of POT).
-    # Real baseball has much higher bust rates.
-    #
-    # The discount varies by two factors:
-    # 1. Age: younger prospects have more uncertainty (higher bust risk).
-    #    Age 17-19: 0.30 (most uncertain — 8+ years of development)
-    #    Age 20-21: 0.35 (still very uncertain)
-    #    Age 22-23: 0.45 (tools starting to stabilize)
-    #    Age 24-25: 0.60 (near-peak, less uncertainty)
-    if age <= 19:
-        base_discount = 0.30
-    elif age <= 21:
-        base_discount = 0.35
-    elif age <= 23:
-        base_discount = 0.45
-    else:
-        base_discount = 0.60
-
-    # 2. Gap size: larger gaps = more uncertainty, but scaled by age
-    #    and player type. Big gaps are EXPECTED for young players and
-    #    for pitchers (who develop later). Only penalize big gaps when
-    #    they're abnormal for the player's age/type.
-    #    Expected gaps from empirical mean POT-OVR by age (VMLB 2033).
-    _EXPECTED_GAP_HITTER = {
-        17: 20, 18: 17, 19: 13, 20: 12, 21: 10, 22: 6, 23: 4, 24: 3, 25: 3,
-    }
-    _EXPECTED_GAP_PITCHER = {
-        17: 18, 18: 15, 19: 13, 20: 11, 21: 9, 22: 7, 23: 5, 24: 4, 25: 3,
-    }
-    gap_table = _EXPECTED_GAP_PITCHER if is_pitcher else _EXPECTED_GAP_HITTER
-    clamped_age = max(17, min(25, age))
-    expected_gap = gap_table[clamped_age]
-    excess_gap = max(0, gap - expected_gap)
-    if excess_gap >= 15:
-        gap_scale = 0.70
-    elif excess_gap >= 8:
-        gap_scale = 0.85
-    else:
-        gap_scale = 1.00
-
-    effective_closure = closure * base_discount * gap_scale
-
-    expected_peak = ovr + gap * effective_closure
-
-    # MLB-anchored FV: express the expected peak relative to the MLB
-    # median for this position bucket. A prospect projecting to the
-    # positional median is FV 45 (useful but average). Projecting well
-    # above median is FV 50+.
-    #
-    # The median is loaded dynamically per league/position from the
-    # player dict (set by fv_calc.py from league data). Falls back to
-    # 50 if not available.
     mlb_median = p.get("_mlb_median") or 50
+    gap = max(0, pot - ovr)
 
-    # Cap for maxed-out players: if the gap is tiny (< 3), the player
-    # is essentially what they're going to be. FV should reflect their
-    # ceiling's MLB context directly, not get inflated by a composite
-    # that happens to sit near the median.
+    # -- FV Grade: blended ceiling + current --
+    # FV reflects ceiling quality but discounts for distance from ceiling.
+    # A prospect close to their ceiling gets more credit than one far away.
+    # realization = composite / ceiling (0.0 to 1.0)
+    # credit = base_credit + realization_bonus
+    #   base_credit: 0.45 (everyone gets some ceiling credit)
+    #   realization_bonus: up to 0.40 more as composite approaches ceiling
+    # Total credit ranges from 0.45 (raw, far from ceiling) to 0.85 (near ceiling)
+    if pot > 0:
+        realization = min(1.0, ovr / pot)
+    else:
+        realization = 1.0
+
+    BASE_CREDIT = 0.20
+    REALIZATION_BONUS = 0.55
+    ceiling_credit = BASE_CREDIT + REALIZATION_BONUS * realization
+
     if gap < 3:
         fv = 45 + (pot - mlb_median)
     else:
-        fv = 45 + (expected_peak - mlb_median)
+        raw_fv = 45 + (pot - mlb_median) * ceiling_credit
+        # Minimum ceiling quality gate: prospects whose ceiling is barely
+        # above the positional median have limited upside. Cap FV at 40
+        # unless ceiling is meaningfully above median (4+ points).
+        ceil_above_median = pot - mlb_median
+        if ceil_above_median < 6:
+            fv = min(raw_fv, 42)  # caps at FV 40
+        else:
+            fv = raw_fv
 
     # Accuracy penalty
     if p.get("Acc") == "L":
@@ -409,7 +335,72 @@ def calc_fv_v2(p):
     if bucket == "RP":
         fv = min(fv, 57)
 
-    base = round(fv / 5) * 5
-    remainder = fv - base
-    plus = remainder >= 2.5 and base < 80
-    return base, plus
+    fv = max(20, fv)
+    fv_grade = round(fv / 5) * 5
+
+    # -- Risk Label --
+    # Derived from development confidence: how likely is this player
+    # to reach their ceiling? Combines closure rate, age discount,
+    # gap normality, and character.
+
+    # Closure rate
+    table = _GAP_CLOSURE_PITCHER if is_pitcher else _GAP_CLOSURE_HITTER
+    if age <= 17:
+        closure = table[17]
+    elif age >= 25:
+        closure = table[25]
+    else:
+        lo = int(age)
+        hi = lo + 1
+        frac = age - lo
+        closure = table.get(lo, 0.38) * (1 - frac) + table.get(hi, 0.38) * frac
+
+    # Age bust discount
+    if age <= 19:
+        base_discount = 0.30
+    elif age <= 21:
+        base_discount = 0.35
+    elif age <= 23:
+        base_discount = 0.45
+    else:
+        base_discount = 0.60
+
+    # Gap scale (empirical expected gaps by age/type)
+    _EG_H = {17:20,18:17,19:13,20:12,21:10,22:6,23:4,24:3,25:3}
+    _EG_P = {17:18,18:15,19:13,20:11,21:9,22:7,23:5,24:4,25:3}
+    eg_table = _EG_P if is_pitcher else _EG_H
+    expected_gap = eg_table.get(max(17, min(25, age)), 5)
+    excess_gap = max(0, gap - expected_gap)
+    if excess_gap >= 15:
+        gap_scale = 0.70
+    elif excess_gap >= 8:
+        gap_scale = 0.85
+    else:
+        gap_scale = 1.00
+
+    # Character
+    we = p.get("WrkEthic", "N")
+    intel = p.get("Int", "N")
+    char_adj = 0.0
+    if we in ("H", "VH"): char_adj += 0.03
+    elif we == "L": char_adj -= 0.03
+    if intel in ("H", "VH"): char_adj += 0.02
+    elif intel == "L": char_adj -= 0.02
+
+    # Development confidence (0.0 to 1.0)
+    dev_confidence = closure * base_discount * gap_scale + char_adj
+    dev_confidence = max(0.0, min(1.0, dev_confidence))
+
+    # Map to risk label
+    if gap < 3:
+        risk = "Low"
+    elif dev_confidence >= 0.40:
+        risk = "Low"
+    elif dev_confidence >= 0.25:
+        risk = "Medium"
+    elif dev_confidence >= 0.15:
+        risk = "High"
+    else:
+        risk = "Extreme"
+
+    return fv_grade, risk

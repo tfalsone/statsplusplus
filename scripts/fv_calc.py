@@ -79,7 +79,7 @@ def _check_fv_tier_discrepancy(p, fv_base, fv_plus):
     # Compute FV using the old path (without _defensive_value)
     p_old = dict(p)
     del p_old["_defensive_value"]
-    fv_old, plus_old = calc_fv(p_old)
+    fv_old, _ = calc_fv(p_old)
 
     # Effective FV values (base + 2.5 when plus modifier is set)
     fv_new_eff = fv_base + (2.5 if fv_plus else 0)
@@ -232,18 +232,17 @@ def run():
             if age <= 24 and _career_ab.get(pid, 0) < 130 and _career_ip.get(pid, 0) < 50:
                 p["_norm_age"] = LEVEL_NORM_AGE["aaa"]
                 p["_level"] = "aaa"
-                fv_base, fv_plus = calc_fv(p)
-                _check_fv_tier_discrepancy(p, fv_base, fv_plus)
-                fv_str = f"{fv_base}+" if fv_plus else str(fv_base)
+                fv_base, fv_risk = calc_fv(p)
+                fv_str = str(fv_base)
                 if bucket == "RP":
                     raw_pot = p["Pot"]
                     p["_bucket"] = "SP"
-                    raw_fv, raw_plus = calc_fv(p)
+                    raw_fv, _ = calc_fv(p)
                     p["_bucket"] = bucket
                 else:
-                    raw_fv, raw_plus = fv_base, fv_plus
+                    raw_fv = fv_base
                 p_surplus = _prospect_surplus_opt(
-                    raw_fv, age, "MLB", bucket, fv_plus=raw_plus,
+                    raw_fv, age, "MLB", bucket,
                     ovr=p.get("Ovr"), pot=p.get("Pot"), def_rating=def_rating,
                     offensive_grade=p.get("offensive_grade"),
                     offensive_ceiling=p.get("offensive_ceiling"),
@@ -260,9 +259,8 @@ def run():
                 continue
             p["_norm_age"] = LEVEL_NORM_AGE[level_key]
             p["_level"] = level_key
-            fv_base, fv_plus = calc_fv(p)
-            _check_fv_tier_discrepancy(p, fv_base, fv_plus)
-            fv_str = f"{fv_base}+" if fv_plus else str(fv_base)
+            fv_base, fv_risk = calc_fv(p)
+            fv_str = str(fv_base)
             level_label = LEVEL_INT_LABEL.get(int(level), str(level))
 
             # For surplus, use raw FV (before RP Pot discount) so the RP WAR
@@ -270,13 +268,13 @@ def run():
             if bucket == "RP":
                 raw_pot = p["Pot"]
                 p["_bucket"] = "SP"          # temporarily remove RP treatment
-                raw_fv, raw_plus = calc_fv(p)
+                raw_fv, _ = calc_fv(p)
                 p["_bucket"] = bucket
             else:
-                raw_fv, raw_plus = fv_base, fv_plus
+                raw_fv = fv_base
 
             surplus = _prospect_surplus_opt(
-                raw_fv, age, level_label, bucket, fv_plus=raw_plus,
+                raw_fv, age, level_label, bucket,
                 ovr=p.get("Ovr"), pot=p.get("Pot"), def_rating=def_rating,
                 offensive_grade=p.get("offensive_grade"),
                 offensive_ceiling=p.get("offensive_ceiling"),
