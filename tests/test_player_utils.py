@@ -21,18 +21,18 @@ def _sp():
     return {'Ovr':55,'Pot':70,'Age':21,'_is_pitcher':True,'_bucket':'SP','_norm_age':26,'_level':'aa',
             'PotFst':65,'PotSnk':0,'PotCrv':60,'PotSld':55,'PotChg':50,'PotSplt':0,'PotCutt':0,
             'PotCirChg':0,'PotScr':0,'PotFrk':0,'PotKncrv':0,'PotKnbl':0,
-            'PotStf':65,'PotMov':60,'PotCtrl':55,'Stm':55,'WrkEthic':'N','Acc':'A'}
+            'PotStf':65,'PotMov':60,'PotCtrl':55,'Stm':55,'WrkEthic':'N','Acc':'A','_mlb_median':50}
 
 def _ss():
     return {'Ovr':50,'Pot':65,'Age':20,'_is_pitcher':False,'_bucket':'SS','_norm_age':24,'_level':'a',
             'PotCntct':60,'PotGap':55,'PotPow':50,'PotEye':55,'PotKs':50,
-            'PotSS':60,'SS':45,'WrkEthic':'H','Acc':'A'}
+            'PotSS':60,'SS':45,'WrkEthic':'H','Acc':'A','_mlb_median':48}
 
 def _rp():
     return {'Ovr':48,'Pot':60,'Age':24,'_is_pitcher':True,'_bucket':'RP','_norm_age':26,'_level':'aaa',
             'PotFst':65,'PotSnk':0,'PotCrv':55,'PotSld':60,'PotChg':0,'PotSplt':0,'PotCutt':0,
             'PotCirChg':0,'PotScr':0,'PotFrk':0,'PotKncrv':0,'PotKnbl':0,
-            'PotStf':60,'PotMov':55,'PotCtrl':50,'Stm':30,'WrkEthic':'N','Acc':'A'}
+            'PotStf':60,'PotMov':55,'PotCtrl':50,'Stm':30,'WrkEthic':'N','Acc':'A','_mlb_median':50}
 
 
 # ---------------------------------------------------------------------------
@@ -76,24 +76,30 @@ def test_norm_zero_returns_none():
 
 def test_calc_fv_sp():
     from player_utils import calc_fv
-    assert calc_fv(_sp()) == (65, False)
+    fv, risk = calc_fv(_sp())
+    assert fv == 60
+    assert risk in ("Low", "Medium", "High", "Extreme")
 
 def test_calc_fv_ss():
     from player_utils import calc_fv
-    assert calc_fv(_ss()) == (60, False)
+    fv, risk = calc_fv(_ss())
+    assert fv == 55
+    assert risk in ("Low", "Medium", "High", "Extreme")
 
 def test_calc_fv_rp():
     from player_utils import calc_fv
-    assert calc_fv(_rp()) == (50, False)
+    fv, risk = calc_fv(_rp())
+    assert fv == 45
+    assert risk in ("Low", "Medium", "High", "Extreme")
 
-def test_calc_fv_rp_capped_at_50():
-    """RPs should never exceed FV 50 regardless of ratings."""
+def test_calc_fv_rp_capped_at_55():
+    """RPs should never exceed FV 55 regardless of ratings."""
     from player_utils import calc_fv
     p = _rp()
     p['Pot'] = 80
     p['Ovr'] = 70
     fv, _ = calc_fv(p)
-    assert fv <= 50
+    assert fv <= 55
 
 
 # ---------------------------------------------------------------------------

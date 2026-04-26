@@ -189,24 +189,23 @@ class TestFvCalcHelpers:
         p = {"ID": 100, "Ovr": 55, "Pot": 65, "Age": 21,
              "_is_pitcher": False, "_bucket": "SS", "_norm_age": 24, "_level": "aa"}
         with caplog.at_level(logging.WARNING, logger="fv_calc"):
-            _check_fv_tier_discrepancy(p, 45, False)
+            _check_fv_tier_discrepancy(p, 45, "Medium")
         assert "FV tier discrepancy" not in caplog.text
 
     def test_fv_tier_discrepancy_no_warning_within_one_tier(self, caplog):
         """No warning when component-based and raw-tool-based FV are within one tier."""
         import logging
         from fv_calc import _check_fv_tier_discrepancy
-        # Build a player where _defensive_value matches what defensive_score would produce
         p = {"ID": 101, "Ovr": 55, "Pot": 65, "Age": 21,
              "_is_pitcher": False, "_bucket": "SS", "_norm_age": 24, "_level": "aa",
-             "_defensive_value": 60,
+             "_defensive_value": 60, "_mlb_median": 48,
              "IFR": 130, "IFE": 120, "IFA": 120, "TDP": 120,
              "PotSS": 160, "SS": 160, "WrkEthic": "N", "Acc": "N",
              "PotCntct": 130, "Cntct_L": 0, "Cntct_R": 0}
         from player_utils import calc_fv
-        fv_base, fv_plus = calc_fv(p)
+        fv_base, fv_risk = calc_fv(p)
         with caplog.at_level(logging.WARNING, logger="fv_calc"):
-            _check_fv_tier_discrepancy(p, fv_base, fv_plus)
+            _check_fv_tier_discrepancy(p, fv_base, fv_risk)
         assert "FV tier discrepancy" not in caplog.text
 
     def test_fv_tier_discrepancy_warning_when_exceeds_one_tier(self, caplog):
@@ -256,6 +255,7 @@ class TestFvDefensiveValueIntegration:
         p = {
             "Ovr": 55, "Pot": 65, "Age": 21,
             "_is_pitcher": False, "_bucket": "SS", "_norm_age": 24, "_level": "aa",
+            "_mlb_median": 48,
             # Positional composite — PotSS high enough to trigger defensive bonus
             # norm(80) = 68 on 20-80 scale → comp >= 60 ✓
             "PotSS": 80, "SS": 75,
@@ -272,40 +272,24 @@ class TestFvDefensiveValueIntegration:
         return p
 
     def test_calc_fv_uses_defensive_value_when_available(self):
-        """When _defensive_value is set to a high value, calc_fv uses it for the
-        defensive bonus instead of computing from raw tools. The FV should differ
-        from a player with the same raw tools but no _defensive_value when the
-        raw tools would produce a different defensive score."""
+        """calc_fv produces valid FV grades regardless of _defensive_value.
+        The ceiling-credit FV formula uses composite/ceiling scores, not
+        defensive_score directly, so _defensive_value doesn't change FV."""
         from player_utils import calc_fv
-        from fv_model import defensive_score
         from ratings import init_ratings_scale
         init_ratings_scale("1-100")
 
-        # Player WITH _defensive_value set high (70 on 20-80 scale)
         p_with = self._make_ss_prospect(_defensive_value=70)
-        fv_with, plus_with = calc_fv(p_with)
+        fv_with, risk_with = calc_fv(p_with)
 
-        # Player WITHOUT _defensive_value — uses raw tools via defensive_score()
         p_without = self._make_ss_prospect()
-        fv_without, plus_without = calc_fv(p_without)
+        fv_without, risk_without = calc_fv(p_without)
 
-        # Compute what defensive_score would produce from raw tools
-        raw_def = defensive_score(p_without, "SS")
-
-        # If the raw defensive score differs from 70, the FV grades should differ
-        # (or at least the effective FV including plus modifier)
-        if abs(raw_def - 70) >= 10:
-            eff_with = fv_with + (2.5 if plus_with else 0)
-            eff_without = fv_without + (2.5 if plus_without else 0)
-            assert eff_with != eff_without, (
-                f"FV should differ when _defensive_value (70) diverges from "
-                f"raw defensive_score ({raw_def:.1f}): "
-                f"with={fv_with}{'+'if plus_with else ''}, "
-                f"without={fv_without}{'+'if plus_without else ''}"
-            )
-        # Either way, both should produce valid FV grades
+        # Both should produce valid FV grades
         assert isinstance(fv_with, int)
         assert isinstance(fv_without, int)
+        assert fv_with % 5 == 0
+        assert fv_without % 5 == 0
 
     def test_calc_fv_falls_back_when_defensive_value_absent(self):
         """When _defensive_value is NOT set, calc_fv uses defensive_score() from
@@ -318,19 +302,18 @@ class TestFvDefensiveValueIntegration:
         p = self._make_ss_prospect()
         assert "_defensive_value" not in p
 
-        fv_base, fv_plus = calc_fv(p)
+        fv_base, fv_risk = calc_fv(p)
 
         # Verify it produces a valid FV grade
         assert isinstance(fv_base, int)
         assert fv_base % 5 == 0, f"FV base should be rounded to nearest 5, got {fv_base}"
         assert 20 <= fv_base <= 80, f"FV base should be on 20-80 scale, got {fv_base}"
-        assert isinstance(fv_plus, bool)
+        assert isinstance(fv_risk, str)
 
-        # Run again with _defensive_value explicitly absent to confirm stability
+        # Run again to confirm stability
         p2 = dict(p)
-        p2.pop("_defensive_value", None)
-        fv2, plus2 = calc_fv(p2)
-        assert fv_base == fv2 and fv_plus == plus2, "FV should be deterministic"
+        fv2, risk2 = calc_fv(p2)
+        assert fv_base == fv2 and fv_risk == risk2, "FV should be deterministic"
 
     def test_fv_grades_remain_on_same_scale(self):
         """FV grades produced with _defensive_value are still on the standard scale:
@@ -344,13 +327,13 @@ class TestFvDefensiveValueIntegration:
         # Test across a range of _defensive_value inputs
         for dv in (20, 35, 45, 55, 60, 65, 70, 80):
             p = self._make_ss_prospect(_defensive_value=dv)
-            fv_base, fv_plus = calc_fv(p)
+            fv_base, fv_risk = calc_fv(p)
             assert fv_base in valid_fv_bases, (
                 f"FV base {fv_base} with _defensive_value={dv} is not on the "
                 f"standard scale {sorted(valid_fv_bases)}"
             )
-            assert isinstance(fv_plus, bool), (
-                f"fv_plus should be bool, got {type(fv_plus)} with _defensive_value={dv}"
+            assert isinstance(fv_risk, str), (
+                f"fv_risk should be str, got {type(fv_risk)} with _defensive_value={dv}"
             )
 
 

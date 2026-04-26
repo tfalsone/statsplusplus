@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS games (
 );
 CREATE TABLE IF NOT EXISTS prospect_fv (
     player_id INTEGER, eval_date TEXT, fv INTEGER, fv_str TEXT,
-    level TEXT, bucket TEXT, prospect_surplus INTEGER,
+    level TEXT, bucket TEXT, prospect_surplus INTEGER, risk TEXT,
     PRIMARY KEY (player_id, eval_date)
 );
 CREATE TABLE IF NOT EXISTS player_surplus (
@@ -274,7 +274,7 @@ def _seed(conn):
        runs0=2, runs1=4, game_type=0, played=1, losing_pitcher=PITCHER_ID)
 
     _r(conn, "prospect_fv", player_id=PROSPECT_ID, eval_date=EVAL_DATE,
-       fv=50, fv_str="50", level="AA", bucket="SS", prospect_surplus=8000000)
+       fv=50, fv_str="50", level="AA", bucket="SS", prospect_surplus=8000000, risk="Medium")
 
     _r(conn, "player_surplus", player_id=HITTER_ID, eval_date=EVAL_DATE,
        name="Joe Hitter", bucket="SS", age=27, ovr=55,

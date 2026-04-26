@@ -79,7 +79,7 @@ class TestPlayerPageRender:
         resp = client.get(f"/player/{HITTER_ID}")
         assert resp.status_code == 200
         html = resp.data.decode()
-        assert "Component Scores" in html
+        assert "Components" in html
         assert "Offense" in html
         assert "Baserunning" in html
         assert "Def" in html

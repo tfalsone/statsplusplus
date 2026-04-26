@@ -70,7 +70,7 @@ RATINGS_SQL = """
 
 
 
-def _check_fv_tier_discrepancy(p, fv_base, fv_plus):
+def _check_fv_tier_discrepancy(p, fv_base, fv_risk):
     """Log a warning when the component-based defensive bonus produces an FV
     grade differing from the old defensive_score() path by more than one FV
     tier (5 FV points).  Only runs when ``_defensive_value`` was used."""
@@ -81,18 +81,11 @@ def _check_fv_tier_discrepancy(p, fv_base, fv_plus):
     del p_old["_defensive_value"]
     fv_old, _ = calc_fv(p_old)
 
-    # Effective FV values (base + 2.5 when plus modifier is set)
-    fv_new_eff = fv_base + (2.5 if fv_plus else 0)
-    fv_old_eff = fv_old + (2.5 if plus_old else 0)
-
-    if abs(fv_new_eff - fv_old_eff) > 5:
+    if abs(fv_base - fv_old) > 5:
         logger.warning(
-            "FV tier discrepancy for player %s: component-based=%d%s, "
-            "raw-tool-based=%d%s (defensive_value=%s)",
-            p.get("ID", "?"),
-            fv_base, "+" if fv_plus else "",
-            fv_old, "+" if plus_old else "",
-            p["_defensive_value"],
+            "FV tier discrepancy for player %s: component-based=%d, "
+            "raw-tool-based=%d (defensive_value=%s)",
+            p.get("ID", "?"), fv_base, fv_old, p["_defensive_value"],
         )
 
 
