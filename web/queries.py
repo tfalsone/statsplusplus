@@ -120,7 +120,7 @@ def get_top_prospects(n=100):
              "eta": _calc_eta(r[6], r[13], r[14]),
              "height": fmt_ht(r[10]),
              "bats": r[11] or "", "throws": r[12] or "",
-             "composite_score": r[15], "ceiling_score": r[16]}
+             "composite_score": r[15], "ceiling_score": r[16], "risk": r[17]}
             for i, r in enumerate(rows)]
 
 
@@ -301,7 +301,7 @@ def get_all_prospects():
              "eta": _calc_eta(r[6], r[13], r[14]),
              "height": fmt_ht(r[10]),
              "bats": r[11] or "", "throws": r[12] or "",
-             "composite_score": r[15], "ceiling_score": r[16]}
+             "composite_score": r[15], "ceiling_score": r[16], "risk": r[17]}
             for r in rows]
 
 

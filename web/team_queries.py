@@ -533,7 +533,8 @@ def get_farm(team_id=None):
              "pos_order": pos_order().get(_display_pos(r[5], r[8]), 99),
              "surplus": round(r[6] / 1e6, 1) if r[6] else 0,
              "pid": r[7],
-             "composite_score": r[9], "ceiling_score": r[10]}
+             "composite_score": r[9], "ceiling_score": r[10],
+             "risk": r[11]}
             for i, r in enumerate(rows)]
 
 

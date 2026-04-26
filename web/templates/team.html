@@ -549,7 +549,7 @@
           <td>{{ p.age }}</td>
           <td>
             {%- set fv = p.fv -%}
-            <span class="fv-badge {% if fv >= 65 %}fv-badge-gold{% elif fv >= 55 %}fv-badge-blue{% elif fv >= 50 %}fv-badge-green{% else %}fv-badge-gray{% endif %}">{{ p.fv_str }}</span>
+            <span class="fv-badge {% if fv >= 65 %}fv-badge-gold{% elif fv >= 55 %}fv-badge-blue{% elif fv >= 50 %}fv-badge-green{% else %}fv-badge-gray{% endif %}">{{ p.fv_str }}{% if p.risk %} <span style="font-size:10px;color:{% if p.risk == 'Low' %}#4caf50{% elif p.risk == 'Medium' %}#ffc107{% elif p.risk == 'High' %}#ff9800{% else %}#f44336{% endif %}">{{ p.risk[0] }}</span>{% endif %}</span>
           </td>
           <td>
             {%- set lv = p.level -%}
@@ -843,7 +843,7 @@
             <td data-sort-value="{{ p.pos_order }}">{{ p.bucket }}</td>
             <td><a class="player-link" href="/player/{{ p.pid }}">{{ p.name }}</a></td>
             <td>{{ p.age }}</td>
-            <td class="left">{{ p.fv_str }}</td>
+            <td class="left">{{ p.fv_str }}{% if p.risk %} <span style="font-size:10px;color:{% if p.risk == 'Low' %}#4caf50{% elif p.risk == 'Medium' %}#ffc107{% elif p.risk == 'High' %}#ff9800{% else %}#f44336{% endif %}">{{ p.risk[0] }}</span>{% endif %}</td>
             <td class="left">{{ p.level }}</td>
             <td>${{ p.surplus }}M</td>
           </tr>
