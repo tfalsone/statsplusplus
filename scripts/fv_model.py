@@ -296,7 +296,7 @@ def calc_fv_v2(p):
 
     ceil_war = p.get("_ceil_war", 0)
     fv_thresholds = p.get("_fv_thresholds") or [
-        (6.0, 70), (5.0, 65), (4.0, 60), (3.0, 55), (2.0, 50), (1.2, 45), (0.5, 40),
+        (6.0, 70), (5.0, 65), (4.0, 60), (3.0, 55), (2.0, 50), (1.0, 45), (0.3, 40),
     ]
 
     # RP ceiling discount

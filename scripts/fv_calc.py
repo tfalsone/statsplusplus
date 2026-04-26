@@ -153,47 +153,11 @@ def run():
                 return table[str(lo)] * (1 - frac) + table[str(hi)] * frac
         return 0.0
 
-    # First pass: compute ceiling WAR for FV-eligible prospects to derive thresholds
-    _all_ceil_wars = []
-    _pre_rows = conn.execute("""
-        SELECT r.true_ceiling, p.pos, p.role, p.age, p.level
-        FROM latest_ratings r
-        JOIN players p ON r.player_id = p.player_id
-        WHERE r.true_ceiling IS NOT NULL AND r.true_ceiling > 20
-          AND CAST(p.level AS INTEGER) BETWEEN 2 AND 6
-          AND p.age <= 25
-    """).fetchall()
-    for _pr in _pre_rows:
-        _mp = {"pos": str(_pr["pos"]), "role": _pr["role"],
-               "_role": role_map.get(str(_pr["role"]), "position_player"),
-               "Pos": str(_pr["pos"])}
-        _mp["_is_pitcher"] = _mp["pos"] == "1" or _mp["_role"] in ("starter", "reliever", "closer")
-        try:
-            _bkt = assign_bucket(_mp, use_pot=False)
-        except Exception:
-            continue
-        _all_ceil_wars.append(_interpolate_war(_pr["true_ceiling"], _bkt))
-
-    # FG targets per org: 70=0.1, 65=0.2, 60=0.3, 55=0.7, 50=2.3, 45=5.0
-    _n_orgs = conn.execute(
-        "SELECT COUNT(DISTINCT team_id) FROM players WHERE level = 1"
-    ).fetchone()[0] or 30
-    _all_ceil_wars.sort(reverse=True)
-    _n_prospects = len(_all_ceil_wars)
-    _fg_targets = [(70, 0.1), (65, 0.3), (60, 0.6), (55, 1.3), (50, 3.6), (45, 8.6)]
-    _fv_thresholds = []
-    # Scale FG targets to our pool size (may be larger than 150/org)
-    _prospects_per_org = _n_prospects / _n_orgs
-    _fg_pool_per_org = 150  # FG assumes ~150 ranked prospects per org
-    _scale = _prospects_per_org / _fg_pool_per_org
-    for _fv, _per_org in _fg_targets:
-        _count = int(_per_org * _scale * _n_orgs)
-        if _count < _n_prospects:
-            _fv_thresholds.append((_all_ceil_wars[_count], _fv))
-        else:
-            _fv_thresholds.append((0.0, _fv))
-    # Add FV 40 floor
-    _fv_thresholds.append((max(0.1, _fv_thresholds[-1][0] * 0.5) if _fv_thresholds else 0.5, 40))
+    # FV thresholds: fixed WAR-based, grounded in actual MLB production
+    # FV 50 = median starter (~2.0 WAR), FV 55 = above-avg (~3.0), etc.
+    _fv_thresholds = [
+        (6.0, 70), (5.0, 65), (4.0, 60), (3.0, 55), (2.0, 50), (1.0, 45), (0.3, 40),
+    ]
 
     prospect_rows = []
     surplus_rows  = []
