@@ -183,46 +183,175 @@ def calc_fv(p):
     Removed (now in composite/ceiling): defensive bonus, versatility bonus,
     positional access premium, critical tool floor penalty.
     """
-    ovr    = p["Ovr"]
-    pot    = p["Pot"]
-    age, norm_age = p["Age"], p["_norm_age"]
+    return calc_fv_v2(p)
+
+
+# ---------------------------------------------------------------------------
+# Probability-based FV (v2)
+# ---------------------------------------------------------------------------
+
+# Forward-looking gap closure rates by age.
+# "What fraction of the remaining composite-to-ceiling gap closes between
+# age X and peak (26)?" Derived from cross-sectional mean realization at
+# each age vs age 26 terminal. Source: VMLB 2033, N=200+ per age bucket.
+_GAP_CLOSURE_HITTER = {
+    17: 0.87, 18: 0.86, 19: 0.84, 20: 0.83, 21: 0.80,
+    22: 0.68, 23: 0.48, 24: 0.38, 25: 0.38,
+}
+_GAP_CLOSURE_PITCHER = {
+    17: 0.93, 18: 0.92, 19: 0.91, 20: 0.90, 21: 0.87,
+    22: 0.83, 23: 0.72, 24: 0.59, 25: 0.49,
+}
+
+# Terminal (age 26) outcome distribution — what the final realization
+# looks like at peak. Used to model variance around the expected closure.
+# Buckets: (bust <75%, below 75-88%, meets 88-95%, exceeds 95-100%, full 100%)
+_TERMINAL_DIST_HITTER = (0.01, 0.13, 0.24, 0.32, 0.29)
+_TERMINAL_DIST_PITCHER = (0.00, 0.05, 0.14, 0.19, 0.62)
+
+# Realization fractions for each terminal outcome bucket (midpoints).
+_TERMINAL_REALIZATION = (0.65, 0.82, 0.92, 0.97, 1.00)
+
+# Empirical outcome probabilities by age, from cross-sectional OVR/POT
+# realization analysis (VMLB 2033). Each row: (bust, below, meets, exceeds, full).
+# Bust: <60% realization. Below: 60-75%. Meets: 75-90%.
+# Exceeds: 90-97%. Full: 97%+.
+_OUTCOME_PROBS_HITTER = {
+    17: (0.52, 0.45, 0.03, 0.00, 0.00),
+    18: (0.46, 0.48, 0.06, 0.00, 0.00),
+    19: (0.25, 0.57, 0.17, 0.00, 0.00),
+    20: (0.25, 0.56, 0.19, 0.00, 0.00),
+    21: (0.13, 0.43, 0.38, 0.06, 0.00),
+    22: (0.03, 0.20, 0.50, 0.21, 0.06),
+    23: (0.00, 0.07, 0.39, 0.33, 0.21),
+    24: (0.00, 0.05, 0.28, 0.35, 0.31),
+    25: (0.00, 0.07, 0.28, 0.29, 0.36),
+}
+_OUTCOME_PROBS_PITCHER = {
+    17: (0.51, 0.45, 0.04, 0.00, 0.00),
+    18: (0.31, 0.59, 0.10, 0.00, 0.00),
+    19: (0.19, 0.61, 0.19, 0.01, 0.00),
+    20: (0.07, 0.54, 0.35, 0.04, 0.00),
+    21: (0.03, 0.37, 0.50, 0.08, 0.03),
+    22: (0.00, 0.15, 0.61, 0.15, 0.08),
+    23: (0.00, 0.06, 0.41, 0.23, 0.29),
+    24: (0.00, 0.03, 0.24, 0.33, 0.39),
+    25: (0.00, 0.02, 0.20, 0.31, 0.47),
+}
+
+# Realization fractions for each outcome bucket.
+# These represent what fraction of the TRUE CEILING the player achieves
+# as their peak OVR, not fraction of the gap. Derived from empirical
+# OVR/POT ratios: bust median ~40% of POT, below ~68%, etc.
+# Applied as: score_i = ceiling × realization_i, floored at 20.
+_OUTCOME_REALIZATION = (0.40, 0.68, 0.83, 0.94, 1.00)
+
+
+def _get_outcome_probs(age, is_pitcher):
+    """Get outcome probabilities for a given age, with interpolation."""
+    table = _OUTCOME_PROBS_PITCHER if is_pitcher else _OUTCOME_PROBS_HITTER
+    if age <= 17:
+        return table[17]
+    if age >= 25:
+        return table[25]
+    lo = int(age)
+    hi = lo + 1
+    frac = age - lo
+    lo_p = table.get(lo, table[25])
+    hi_p = table.get(hi, table[25])
+    return tuple(lo_p[i] * (1 - frac) + hi_p[i] * frac for i in range(5))
+
+
+def calc_fv_v2(p):
+    """Probability-informed FV using empirical gap closure rates.
+
+    Uses forward-looking gap closure rates (what fraction of the remaining
+    composite-to-ceiling gap closes by peak age) as the development weight.
+    These rates are derived from cross-sectional OVR/POT analysis and
+    inherently capture the probability distribution of outcomes — the mean
+    closure rate IS the expected value across all outcome scenarios.
+
+    Character traits and level context adjust the closure rate.
+    """
+    ovr = p["Ovr"]       # composite_score
+    pot = p["Pot"]        # true_ceiling
+    age = p["Age"]
+    norm_age = p["_norm_age"]
     bucket = p["_bucket"]
+    is_pitcher = bool(p.get("_is_pitcher"))
 
     if bucket == "RP":
         pot = round(pot * RP_POT_DISCOUNT)
 
-    dw = dev_weight(age, norm_age, level=p.get("_level"),
-                    is_pitcher=bool(p.get("_is_pitcher")))
-    fv = ovr + (pot - ovr) * dw
+    gap = max(0, pot - ovr)
+    if gap == 0:
+        base = round(ovr / 5) * 5
+        return base, False
 
-    # Character modifiers
+    # Get forward-looking gap closure rate for this age
+    table = _GAP_CLOSURE_PITCHER if is_pitcher else _GAP_CLOSURE_HITTER
+    if age <= 17:
+        closure = table[17]
+    elif age >= 25:
+        closure = table[25]
+    else:
+        lo = int(age)
+        hi = lo + 1
+        frac = age - lo
+        closure = table.get(lo, 0.38) * (1 - frac) + table.get(hi, 0.38) * frac
+
+    # Level adjustment: young-for-level closes more gap, old-for-level less.
+    level_diff = norm_age - age
+    if level_diff >= 1:
+        closure = min(0.98, closure + level_diff * 0.02)
+    elif level_diff <= -1:
+        closure = max(0.05, closure + level_diff * 0.02)
+
+    # Character adjustments
     we = p.get("WrkEthic", "N")
-    if we in ("H", "VH"): fv += 1
-    elif we == "L":        fv -= 1
+    intel = p.get("Int", "N")
+    if we in ("H", "VH"):
+        closure = min(0.98, closure + 0.03)
+    elif we == "L":
+        closure = max(0.05, closure - 0.03)
+    if intel in ("H", "VH"):
+        closure = min(0.98, closure + 0.02)
+    elif intel == "L":
+        closure = max(0.05, closure - 0.02)
 
+    # Scale closure rate to produce FV distributions closer to real baseball.
+    # OOTP's development model is generous (median player realizes 97%+ of POT).
+    # Real baseball has much higher bust rates. Apply a discount that reflects
+    # the gap between game development and real-world outcomes.
+    # Calibrated to produce ~1 FV55+/org, ~3 FV50+/org, ~8 FV45+/org.
+    bust_discount = 0.45
+    effective_closure = closure * bust_discount
+
+    fv = ovr + gap * effective_closure
+
+    # Accuracy penalty
     if p.get("Acc") == "L":
         fv -= 2
 
-    # Platoon split penalty (not captured by composite)
-    if p.get("_is_pitcher"):
+    # Platoon split penalty
+    if is_pitcher:
         sl, sr = norm_floor(p.get("Stf_L", 0)), norm_floor(p.get("Stf_R", 0))
         if sl and sr:
-            gap, weak = abs(sl - sr), min(sl, sr)
-            if weak <= 25 and gap >= 15: fv -= 3
-            elif weak <= 25 and gap >= 10: fv -= 2
+            g, weak = abs(sl - sr), min(sl, sr)
+            if weak <= 25 and g >= 15: fv -= 3
+            elif weak <= 25 and g >= 10: fv -= 2
     else:
         cl, cr = norm_floor(p.get("Cntct_L", 0)), norm_floor(p.get("Cntct_R", 0))
         if cl and cr:
-            gap, weak = abs(cl - cr), min(cl, cr)
-            if weak <= 25 and gap >= 15: fv -= 3
-            elif weak <= 25 and gap >= 10: fv -= 2
+            g, weak = abs(cl - cr), min(cl, cr)
+            if weak <= 25 and g >= 15: fv -= 3
+            elif weak <= 25 and g >= 10: fv -= 2
 
-    # RP ceiling: cap FV at 55. RP value is heavily discounted due to
-    # fewer innings; even elite closers rarely justify FV above 55.
+    # RP ceiling
     if bucket == "RP":
-        fv = min(fv, 57)  # 57 rounds to 55+
+        fv = min(fv, 57)
 
     base = round(fv / 5) * 5
     remainder = fv - base
-    plus = remainder >= 2.0 or ((pot - base) >= 10 and age <= norm_age)
+    plus = remainder >= 2.5 and base < 80
     return base, plus
