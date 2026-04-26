@@ -6,6 +6,32 @@ For implementation details, see `system_overview.md`. For constant tables, see
 
 ---
 
+## Design Principles (Session 51)
+
+These decisions define the model's scope and are not subject to incremental tuning:
+
+1. **Composite = pure tool value.** The composite score is a tool-weighted assessment on the 20-80 scale, identical in methodology for prospects and MLB players. It does not incorporate "proven-ness," track record, or stat performance. This provides a unified basis for comparing players across the prospect/MLB threshold.
+
+2. **FV = ceiling quality, not expected value.** FV answers "what does this player become if he develops?" Risk label answers "how likely is that?" These are separate dimensions, not blended into a single number.
+
+3. **Risk labels replace "+" grades.** Clean 5-point FV tiers (40/45/50/55/60/65/70) with a separate risk dimension (Low/Medium/High/Extreme).
+
+4. **MLB players get a performance-blended score** in addition to the pure tool composite. The blended score (`composite_score` in the DB) incorporates stat signal for MLB players; the pure tool score (`tool_only_score`) is always available for apples-to-apples comparison.
+
+5. **Composite-OVR divergence is a feature.** Our composite runs +7-8 above the game's OVR for developing prospects. This gap IS the development upside — the difference between what the tools say and what the player has proven. The FV system handles this via ceiling-credit (less credit for players far from their ceiling).
+
+6. **Sub-MLB floor penalty.** Tools below 35 (the MLB P5 threshold) impose a composite-level penalty. Empirically, MLB hitters with a sub-35 tool underperform their OVR by ~0.3-0.5 WAR/season. Rate: 0.25 composite points per point below 35.
+
+7. **All development curves are league-calibrated.** Gap closure rates, age runway tables, expected gaps, and years-to-MLB are derived per league from cross-sectional data during calibration. Hardcoded VMLB-derived values serve as fallbacks.
+
+8. **Durability and injury risk are out of scope** for the current model.
+
+9. **Platoon exposure is a future investigation.** The composite uses overall ratings; the FV platoon penalty (-2/-3 for severe splits) partially addresses this. Full platoon modeling requires research into how to properly value platoon contributors.
+
+---
+
+## Core Concepts
+
 ## Core Concepts
 
 Every player has a **surplus value** — the difference between what they're worth on
@@ -23,16 +49,33 @@ free agent contracts in the league. Currently $8.62M. This converts WAR into dol
 ### FV Grade (Future Value)
 
 FV is a scouting-style grade on the standard 20-80 scale that estimates a prospect's
-future MLB ceiling. It answers: *how good could this player become?*
+MLB ceiling quality. It answers: *how good could this player become if he develops?*
 
-The base formula blends current ability (Ovr) with ceiling (Pot), weighted by how
-much development time remains:
+The formula compares the player's true ceiling to the MLB positional median, scaled
+by how much of that ceiling they've already realized:
 
-    FV = Ovr + (Pot - Ovr) × development_weight
+    ceiling_credit = 0.20 + 0.55 × (composite / ceiling)
+    FV = 45 + (true_ceiling - positional_MLB_median) × ceiling_credit
 
-**Development weight** depends on age relative to level norms. A 19-year-old in A-ball
-gets heavy weight on Pot (lots of projection). A 25-year-old in AAA gets almost none
-(what you see is what you get).
+Players closer to their ceiling get more credit (higher `ceiling_credit`). A prospect
+who is 90% of the way to their ceiling gets nearly full credit; a raw 19-year-old at
+40% realization gets minimal credit.
+
+**Maxed-out players** (gap < 3 between composite and ceiling) use a simpler formula:
+`FV = 45 + (ceiling - median)`. What you see is what you get.
+
+**Ceiling quality gate**: A prospect's ceiling must be at least 6 points above the
+positional MLB median to qualify for FV 45+. This prevents marginal prospects with
+ceilings barely above average from inflating the FV 45 tier.
+
+**Risk label** captures development probability separately from FV:
+- Low: development confidence ≥ 0.40 (or gap < 3)
+- Medium: ≥ 0.25
+- High: ≥ 0.15
+- Extreme: < 0.15
+
+Development confidence combines gap closure rate (empirical, per league), age-based
+bust discount, gap normality for age, and character traits (work ethic, intelligence).
 
 **Modifiers** adjust FV up or down:
 
@@ -40,20 +83,12 @@ gets heavy weight on Pot (lots of projection). A 25-year-old in AAA gets almost 
 - Platoon split penalty (-2 to -3): severe weakness against one handedness
 - Scouting accuracy penalty (-2): low-accuracy scouting reports are less trustworthy
 
-Note: defensive bonus, versatility bonus, and critical tool floor penalty were removed
-in Session 48. These adjustments are now captured upstream in the composite and ceiling
-scores produced by the evaluation engine.
-
 **RP positional discount**: Relief pitchers produce less WAR per talent grade than
-other positions. Before calculating FV, an RP's ceiling is scaled to 80% of its raw value.
-RPs are capped at FV 55. This discount
-is for display/ranking only — surplus uses the raw FV through a separate RP WAR table
-to avoid double-counting.
+other positions. Before calculating FV, an RP's ceiling is scaled to 85% of its raw value.
+RPs are capped at FV 55.
 
-**FV grades use 5-point increments** (40, 45, 50, etc.) with a "+" modifier for
-half-grades (45+ means between 45 and 50). The "+" is awarded when the remainder
-is large enough or when the player has significant upside room and is young for
-their level.
+**FV grades use 5-point increments** (40, 45, 50, etc.) with no "+" modifier.
+Risk labels (Low/Medium/High/Extreme) provide the granularity that "+" was capturing.
 
 ### Prospect Surplus
 
