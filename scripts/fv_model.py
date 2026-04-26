@@ -334,24 +334,37 @@ def calc_fv_v2(p):
     #    Gap 10-19: ×0.85 (moderate development)
     #    Gap <10: ×1.00 (small gap, outcome is mostly determined)
     if age <= 19:
-        base_discount = 0.35
+        base_discount = 0.30
     elif age <= 21:
-        base_discount = 0.40
+        base_discount = 0.35
     elif age <= 23:
-        base_discount = 0.50
+        base_discount = 0.45
     else:
-        base_discount = 0.55
+        base_discount = 0.60
 
     if gap >= 20:
         gap_scale = 0.70
     elif gap >= 10:
-        gap_scale = 0.85
+        gap_scale = 0.90
     else:
         gap_scale = 1.00
 
     effective_closure = closure * base_discount * gap_scale
 
-    fv = ovr + gap * effective_closure
+    expected_peak = ovr + gap * effective_closure
+
+    # MLB-anchored FV: the raw expected_peak is on the composite scale
+    # (20-80), but FV grades should reflect MLB context. A prospect whose
+    # peak projects at the MLB median (~49-51) is an "average" outcome =
+    # FV 45. A prospect projecting well above average (~53+) is FV 50+.
+    #
+    # Offset calibrated from MLB composite distribution:
+    #   MLB P10=45, P25=47, Median=49, P75=53, P90=56
+    #   FV 45 ≈ projects to MLB median (peak ~49)
+    #   FV 50 ≈ projects to MLB P65 (peak ~53)
+    #   FV 55 ≈ projects to MLB P85 (peak ~57)
+    # Shift: FV = expected_peak - 3
+    fv = expected_peak - 3
 
     # Accuracy penalty
     if p.get("Acc") == "L":
