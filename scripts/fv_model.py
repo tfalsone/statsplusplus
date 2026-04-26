@@ -285,7 +285,11 @@ def calc_fv_v2(p):
 
     gap = max(0, pot - ovr)
     if gap == 0:
-        base = round(ovr / 5) * 5
+        # Maxed out — FV based on ceiling's MLB context
+        mlb_median = p.get("_mlb_median") or 50
+        fv = 45 + (pot - mlb_median)
+        fv = max(20, fv)
+        base = round(fv / 5) * 5
         return base, False
 
     # Get forward-looking gap closure rate for this age
@@ -325,14 +329,10 @@ def calc_fv_v2(p):
     #
     # The discount varies by two factors:
     # 1. Age: younger prospects have more uncertainty (higher bust risk).
-    #    Age 17-19: 0.35 (most uncertain — 8+ years of development)
-    #    Age 20-21: 0.40 (still very uncertain)
-    #    Age 22-23: 0.50 (tools starting to stabilize)
-    #    Age 24-25: 0.55 (near-peak, less uncertainty)
-    # 2. Gap size: larger gaps = more uncertainty.
-    #    Gap 20+: ×0.70 (huge development needed, high bust risk)
-    #    Gap 10-19: ×0.85 (moderate development)
-    #    Gap <10: ×1.00 (small gap, outcome is mostly determined)
+    #    Age 17-19: 0.30 (most uncertain — 8+ years of development)
+    #    Age 20-21: 0.35 (still very uncertain)
+    #    Age 22-23: 0.45 (tools starting to stabilize)
+    #    Age 24-25: 0.60 (near-peak, less uncertainty)
     if age <= 19:
         base_discount = 0.30
     elif age <= 21:
@@ -342,10 +342,25 @@ def calc_fv_v2(p):
     else:
         base_discount = 0.60
 
-    if gap >= 20:
+    # 2. Gap size: larger gaps = more uncertainty, but scaled by age
+    #    and player type. Big gaps are EXPECTED for young players and
+    #    for pitchers (who develop later). Only penalize big gaps when
+    #    they're abnormal for the player's age/type.
+    #    Expected gaps from empirical mean POT-OVR by age (VMLB 2033).
+    _EXPECTED_GAP_HITTER = {
+        17: 20, 18: 17, 19: 13, 20: 12, 21: 10, 22: 6, 23: 4, 24: 3, 25: 3,
+    }
+    _EXPECTED_GAP_PITCHER = {
+        17: 18, 18: 15, 19: 13, 20: 11, 21: 9, 22: 7, 23: 5, 24: 4, 25: 3,
+    }
+    gap_table = _EXPECTED_GAP_PITCHER if is_pitcher else _EXPECTED_GAP_HITTER
+    clamped_age = max(17, min(25, age))
+    expected_gap = gap_table[clamped_age]
+    excess_gap = max(0, gap - expected_gap)
+    if excess_gap >= 15:
         gap_scale = 0.70
-    elif gap >= 10:
-        gap_scale = 0.90
+    elif excess_gap >= 8:
+        gap_scale = 0.85
     else:
         gap_scale = 1.00
 
@@ -362,7 +377,15 @@ def calc_fv_v2(p):
     # player dict (set by fv_calc.py from league data). Falls back to
     # 50 if not available.
     mlb_median = p.get("_mlb_median") or 50
-    fv = 45 + (expected_peak - mlb_median)
+
+    # Cap for maxed-out players: if the gap is tiny (< 3), the player
+    # is essentially what they're going to be. FV should reflect their
+    # ceiling's MLB context directly, not get inflated by a composite
+    # that happens to sit near the median.
+    if gap < 3:
+        fv = 45 + (pot - mlb_median)
+    else:
+        fv = 45 + (expected_peak - mlb_median)
 
     # Accuracy penalty
     if p.get("Acc") == "L":
