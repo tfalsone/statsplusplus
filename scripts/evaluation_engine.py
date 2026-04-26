@@ -706,7 +706,9 @@ def compute_composite_hitter(
         raw += def_raw * defense_weight
 
     # Sub-MLB floor penalty: tools below 35 impose a composite-level cost
-    raw -= _sub_mlb_floor_penalty(tools)
+    # Only applies to primary offensive tools (not baserunning)
+    hitting_tools = {k: v for k, v in tools.items() if k in ("contact", "gap", "power", "eye")}
+    raw -= _sub_mlb_floor_penalty(hitting_tools)
 
     return max(20, min(80, round(raw)))
 
