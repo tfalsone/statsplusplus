@@ -21,21 +21,18 @@ def _sp():
     return {'Ovr':55,'Pot':70,'Age':21,'_is_pitcher':True,'_bucket':'SP','_norm_age':26,'_level':'aa',
             'PotFst':65,'PotSnk':0,'PotCrv':60,'PotSld':55,'PotChg':50,'PotSplt':0,'PotCutt':0,
             'PotCirChg':0,'PotScr':0,'PotFrk':0,'PotKncrv':0,'PotKnbl':0,
-            'PotStf':65,'PotMov':60,'PotCtrl':55,'Stm':55,'WrkEthic':'N','Acc':'A','_mlb_median':50,
-            '_ceil_war':4.5,'_fv_thresholds':[(6.0,70),(5.0,65),(4.0,60),(3.0,55),(2.0,50),(1.2,45),(0.5,40)]}
+            'PotStf':65,'PotMov':60,'PotCtrl':55,'Stm':55,'WrkEthic':'N','Acc':'A','_mlb_median':50}
 
 def _ss():
     return {'Ovr':50,'Pot':65,'Age':20,'_is_pitcher':False,'_bucket':'SS','_norm_age':24,'_level':'a',
             'PotCntct':60,'PotGap':55,'PotPow':50,'PotEye':55,'PotKs':50,
-            'PotSS':60,'SS':45,'WrkEthic':'H','Acc':'A','_mlb_median':48,
-            '_ceil_war':5.0,'_fv_thresholds':[(6.0,70),(5.0,65),(4.0,60),(3.0,55),(2.0,50),(1.2,45),(0.5,40)]}
+            'PotSS':60,'SS':45,'WrkEthic':'H','Acc':'A','_mlb_median':48}
 
 def _rp():
     return {'Ovr':48,'Pot':60,'Age':24,'_is_pitcher':True,'_bucket':'RP','_norm_age':26,'_level':'aaa',
             'PotFst':65,'PotSnk':0,'PotCrv':55,'PotSld':60,'PotChg':0,'PotSplt':0,'PotCutt':0,
             'PotCirChg':0,'PotScr':0,'PotFrk':0,'PotKncrv':0,'PotKnbl':0,
-            'PotStf':60,'PotMov':55,'PotCtrl':50,'Stm':30,'WrkEthic':'N','Acc':'A','_mlb_median':50,
-            '_ceil_war':2.5,'_fv_thresholds':[(6.0,70),(5.0,65),(4.0,60),(3.0,55),(2.0,50),(1.2,45),(0.5,40)]}
+            'PotStf':60,'PotMov':55,'PotCtrl':50,'Stm':30,'WrkEthic':'N','Acc':'A','_mlb_median':50}
 
 
 # ---------------------------------------------------------------------------
@@ -80,19 +77,19 @@ def test_norm_zero_returns_none():
 def test_calc_fv_sp():
     from player_utils import calc_fv
     fv, risk = calc_fv(_sp())
-    assert fv == 60
+    assert fv == 70  # ceiling 70 → FV 70
     assert risk in ("Low", "Medium", "High", "Extreme")
 
 def test_calc_fv_ss():
     from player_utils import calc_fv
     fv, risk = calc_fv(_ss())
-    assert fv == 65
+    assert fv == 65  # ceiling 65 → FV 65
     assert risk in ("Low", "Medium", "High", "Extreme")
 
 def test_calc_fv_rp():
     from player_utils import calc_fv
     fv, risk = calc_fv(_rp())
-    assert fv == 50
+    assert fv == 50  # ceiling 60 * 0.85 RP discount = 51 → FV 50
     assert risk in ("Low", "Medium", "High", "Extreme")
 
 def test_calc_fv_rp_capped_at_55():
@@ -101,7 +98,6 @@ def test_calc_fv_rp_capped_at_55():
     p = _rp()
     p['Pot'] = 80
     p['Ovr'] = 70
-    p['_ceil_war'] = 4.0
     fv, _ = calc_fv(p)
     assert fv <= 55
 

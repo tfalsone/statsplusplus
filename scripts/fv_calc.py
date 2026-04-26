@@ -206,9 +206,7 @@ def run():
         p["_is_pitcher"] = (p["Pos"] == "P" or role_str in ("starter", "reliever", "closer"))
         bucket = assign_bucket(p)
         p["_bucket"] = bucket
-        p["_mlb_median"] = 50  # legacy, not used by WAR-based FV
-        p["_ceil_war"] = _interpolate_war(p["Pot"], bucket)
-        p["_fv_thresholds"] = _fv_thresholds
+        p["_mlb_median"] = 50  # legacy, not used by ceiling-based FV
 
         # Defensive potential for position-adjusted scarcity
         _DEF_KEY = {'CF':'PotCF','SS':'PotSS','C':'PotC','2B':'Pot2B','3B':'Pot3B'}

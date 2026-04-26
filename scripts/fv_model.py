@@ -294,21 +294,15 @@ def calc_fv_v2(p):
     bucket = p["_bucket"]
     is_pitcher = bool(p.get("_is_pitcher"))
 
-    ceil_war = p.get("_ceil_war", 0)
-    fv_thresholds = p.get("_fv_thresholds") or [
-        (6.0, 70), (5.0, 65), (4.0, 60), (3.0, 55), (2.0, 50), (1.0, 45), (0.3, 40),
-    ]
-
-    # RP ceiling discount
+    # FV = ceiling composite rounded to nearest 5.
+    # The composite is position-normalized (average MLB player \xe2\x89\x88 50 at
+    # every position), so ceiling directly maps to the FV scale.
+    # RP ceiling discount applied before rounding.
+    ceiling = pot
     if bucket == "RP":
-        ceil_war *= RP_POT_DISCOUNT
+        ceiling = round(ceiling * RP_POT_DISCOUNT)
 
-    # Map ceiling WAR to FV grade
-    fv = 35
-    for war_thresh, fv_grade in fv_thresholds:
-        if ceil_war >= war_thresh:
-            fv = fv_grade
-            break
+    fv = ceiling
 
     # Accuracy penalty
     if p.get("Acc") == "L":
