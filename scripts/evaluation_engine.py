@@ -1287,11 +1287,66 @@ def compute_ceiling(
     if accuracy == "L":
         raw_ceiling -= 2
 
-    # Floor constraint: ceiling is never below composite
+    # Floor constraint: projected is never below composite
     raw_ceiling = max(raw_ceiling, composite_score)
 
     # Clamp to [20, 80]
     return max(20, min(80, raw_ceiling))
+
+
+def compute_true_ceiling(
+    potential_tools: dict[str, int | None],
+    weights: dict[str, float],
+    composite_score: int,
+    accuracy: str = "A",
+    work_ethic: str = "N",
+    defense: dict[str, int | None] | None = None,
+    def_weights: dict[str, float] | None = None,
+    is_pitcher: bool = False,
+    arsenal: dict[str, int] | None = None,
+    stamina: int = 50,
+    role: str = "SP",
+) -> int:
+    """Compute the true ceiling from potential tools with no age blend.
+
+    Pure potential-driven score: what happens if every tool reaches its
+    potential rating. Includes peak tool bonus and character modifiers
+    but no age-weighted blend with current composite.
+
+    Use ``compute_ceiling()`` for the age-blended projected score.
+    """
+    if is_pitcher:
+        raw = compute_composite_pitcher(
+            potential_tools, weights, arsenal or {}, stamina, role,
+        )
+    else:
+        raw = compute_composite_hitter(
+            potential_tools, weights, defense or {}, def_weights or {},
+        )
+
+    # Peak tool bonus (same logic as compute_ceiling)
+    if is_pitcher:
+        ceiling_tools = [potential_tools.get(k) or 0 for k in ("stuff", "movement", "control")]
+        if role == "SP" and stamina >= 55:
+            ceiling_tools.append(min(stamina, 65))
+    else:
+        ceiling_tools = [potential_tools.get(k) or 0 for k in ("contact", "gap", "power", "eye")]
+    peak_bonus = sum(max(0, t - 60) for t in ceiling_tools)
+    from ratings import get_ratings_scale as _get_scale
+    _peak_cap = 10 if _get_scale() == "1-100" else 15
+    raw += min(peak_bonus, _peak_cap)
+
+    # Work ethic / accuracy
+    if work_ethic in ("H", "VH"):
+        raw += 1
+    elif work_ethic == "L":
+        raw -= 1
+    if accuracy == "L":
+        raw -= 2
+
+    # Floor: never below composite
+    raw = max(raw, composite_score)
+    return max(20, min(80, raw))
 
 
 def compute_component_ceilings(
@@ -2507,7 +2562,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
 
     # -- Ensure positional context columns exist (idempotent migration) --
     _existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(ratings)").fetchall()}
-    for _col, _typ in [("positional_percentile", "REAL"), ("positional_median", "INTEGER")]:
+    for _col, _typ in [("positional_percentile", "REAL"), ("positional_median", "INTEGER"), ("true_ceiling", "INTEGER")]:
         if _col not in _existing_cols:
             conn.execute(f"ALTER TABLE ratings ADD COLUMN {_col} {_typ}")
 
@@ -2614,6 +2669,9 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
         baserunning_ceiling: int | None = None
         defensive_ceiling: int | None = None
 
+        # True ceiling (no age blend -- theoretical maximum)
+        true_ceiling: int | None = None
+
         # Carrying tool bonus (populated per branch for hitters)
         ct_bonus: float = 0.0
         ct_breakdown: list[dict] = []
@@ -2668,6 +2726,21 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
             )
 
             ceiling_score = max(h_ceiling, p_ceiling)
+
+            # True ceiling (no age blend)
+            h_true_ceil = compute_true_ceiling(
+                potential_hitter_tools, h_weights, two_way_result["hitter_composite"],
+                accuracy=row_dict.get("acc") or "A",
+                work_ethic=row_dict.get("wrk_ethic") or "N",
+                defense=defense_tools, def_weights=def_weights,
+            )
+            p_true_ceil = compute_true_ceiling(
+                potential_pitcher_tools, p_weights, two_way_result["pitcher_composite"],
+                accuracy=row_dict.get("acc") or "A",
+                work_ethic=row_dict.get("wrk_ethic") or "N",
+                is_pitcher=True, arsenal=arsenal, stamina=stamina, role=pitcher_role,
+            )
+            true_ceiling = max(h_true_ceil, p_true_ceil)
 
             # Component scores for two-way: compute hitter components
             offensive_grade = compute_offensive_grade(hitter_tools, h_weights)
@@ -2743,6 +2816,12 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 role=role,
                 age=player_age,
             )
+            true_ceiling = compute_true_ceiling(
+                potential_pitcher_tools, p_weights, composite_score,
+                accuracy=row_dict.get("acc") or "A",
+                work_ethic=row_dict.get("wrk_ethic") or "N",
+                is_pitcher=True, arsenal=arsenal, stamina=stamina, role=role,
+            )
 
             # Component scores for pitchers:
             # pitching composite stored as offensive_grade (primary skill component)
@@ -2781,6 +2860,12 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 defense=defense_tools,
                 def_weights=def_weights,
                 age=player_age,
+            )
+            true_ceiling = compute_true_ceiling(
+                potential_hitter_tools, h_weights, composite_score,
+                accuracy=row_dict.get("acc") or "A",
+                work_ethic=row_dict.get("wrk_ethic") or "N",
+                defense=defense_tools, def_weights=def_weights,
             )
 
             # Component scores for hitters
@@ -2871,7 +2956,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
         ratings_updates.append((
             composite_score, ceiling_score, tool_only_score, secondary_composite,
             offensive_grade, baserunning_value, defensive_value,
-            durability_score, offensive_ceiling,
+            durability_score, offensive_ceiling, true_ceiling,
             positional_percentile, positional_median,
             player_id, snapshot_date,
         ))
@@ -2916,13 +3001,13 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
         # Store positional context in the ratings update tuple
         if pct is not None or pos_median is not None:
             old_tuple = ratings_updates[idx]
-            # Replace positional_percentile (index 9) and positional_median (index 10)
+            # Replace positional_percentile (index 10) and positional_median (index 11)
             ratings_updates[idx] = (
                 old_tuple[0], old_tuple[1], old_tuple[2], old_tuple[3],
                 old_tuple[4], old_tuple[5], old_tuple[6],
-                old_tuple[7], old_tuple[8],
+                old_tuple[7], old_tuple[8], old_tuple[9],
                 pct, pos_median,
-                old_tuple[11], old_tuple[12],
+                old_tuple[12], old_tuple[13],
             )
 
         # Re-run divergence detection with positional context for hitters
@@ -2948,7 +3033,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
         SET composite_score = ?, ceiling_score = ?, tool_only_score = ?,
             secondary_composite = ?,
             offensive_grade = ?, baserunning_value = ?, defensive_value = ?,
-            durability_score = ?, offensive_ceiling = ?,
+            durability_score = ?, offensive_ceiling = ?, true_ceiling = ?,
             positional_percentile = ?, positional_median = ?
         WHERE player_id = ? AND snapshot_date = ?
     """, ratings_updates)
