@@ -604,6 +604,39 @@ def _tool_transform(val: float) -> float:
     else:
         return float(val)
 
+
+# ---------------------------------------------------------------------------
+# Sub-MLB floor penalty
+# ---------------------------------------------------------------------------
+
+# MLB hitters with a tool below 35 underperform their OVR by ~0.3-0.5 WAR/yr.
+# The game's OVR penalizes sub-35 tools by ~2-4 points at the same tool average.
+# Empirical rate: ~0.3 composite points per shortfall point (single-season WAR
+# residual analysis, VMLB N=47, EMLB N=31). Source: Session 51 investigation.
+_MLB_TOOL_FLOOR = 35
+_FLOOR_PENALTY_RATE = 0.25  # composite points per point below floor
+
+
+def _sub_mlb_floor_penalty(tools: dict[str, int | None]) -> float:
+    """Compute composite penalty for tools below the MLB floor.
+
+    Players with tools below 35 (the MLB P5 threshold) underperform
+    their OVR-predicted WAR. This penalty captures the nonlinear cost
+    of having a disqualifying weakness that a weighted average misses.
+
+    Args:
+        tools: Tool ratings on the 20-80 scale (already normalized).
+
+    Returns:
+        Penalty as a positive float to subtract from the composite.
+    """
+    penalty = 0.0
+    for val in tools.values():
+        if val is not None and val < _MLB_TOOL_FLOOR:
+            penalty += (_MLB_TOOL_FLOOR - val) * _FLOOR_PENALTY_RATE
+    return penalty
+
+
 def compute_composite_hitter(
     tools: dict[str, int | None],
     weights: dict[str, float],
@@ -671,6 +704,9 @@ def compute_composite_hitter(
         raw += br_raw * baserunning_share
     if def_raw is not None:
         raw += def_raw * defense_weight
+
+    # Sub-MLB floor penalty: tools below 35 impose a composite-level cost
+    raw -= _sub_mlb_floor_penalty(tools)
 
     return max(20, min(80, round(raw)))
 
@@ -1027,6 +1063,10 @@ def compute_composite_pitcher(
                 raw -= 3
             else:
                 raw -= 2
+
+    # Sub-MLB floor penalty for core pitcher tools
+    core_tools = {k: v for k, v in tools.items() if k in ('stuff', 'movement', 'control')}
+    raw -= _sub_mlb_floor_penalty(core_tools)
 
     return max(20, min(80, round(raw)))
 
