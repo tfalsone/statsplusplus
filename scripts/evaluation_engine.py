@@ -1324,17 +1324,9 @@ def compute_true_ceiling(
             potential_tools, weights, defense or {}, def_weights or {},
         )
 
-    # Peak tool bonus (same logic as compute_ceiling)
-    if is_pitcher:
-        ceiling_tools = [potential_tools.get(k) or 0 for k in ("stuff", "movement", "control")]
-        if role == "SP" and stamina >= 55:
-            ceiling_tools.append(min(stamina, 65))
-    else:
-        ceiling_tools = [potential_tools.get(k) or 0 for k in ("contact", "gap", "power", "eye")]
-    peak_bonus = sum(max(0, t - 60) for t in ceiling_tools)
-    from ratings import get_ratings_scale as _get_scale
-    _peak_cap = 10 if _get_scale() == "1-100" else 15
-    raw += min(peak_bonus, _peak_cap)
+    # No peak tool bonus for true ceiling -- the potential composite already
+    # reflects the full tool profile without age-blend compression, so the
+    # bonus that compensated for that compression is not needed here.
 
     # Work ethic / accuracy
     if work_ethic in ("H", "VH"):
