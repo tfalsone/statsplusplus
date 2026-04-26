@@ -293,12 +293,15 @@ get_ratings_scale()   # → '1-100' or '20-80'
 
 ### `fv_model`
 
-Prospect FV grade calculation. Pure functions — no DB access.
+Prospect FV grade calculation. Empirical gap closure model with MLB-anchored grading.
 
 ```python
-from fv_model import calc_fv, dev_weight, age_development_mult, defensive_score
-fv_base, fv_plus = calc_fv(player_dict)   # player_dict needs Ovr, Pot, Age, _bucket, _norm_age
-age_development_mult(24)                   # → 0.28 (empirical development runway remaining)
+from fv_model import calc_fv, calc_fv_v2, defensive_score
+# player_dict needs: Ovr (composite), Pot (true_ceiling), Age, _bucket,
+#   _norm_age, _is_pitcher, _mlb_median, WrkEthic, Int, Acc
+fv_base, fv_plus = calc_fv(player_dict)
+# FV = 45 + (expected_peak - positional_MLB_median)
+# expected_peak = composite + gap × closure × bust_discount × gap_scale
 ```
 
 ### `war_model`

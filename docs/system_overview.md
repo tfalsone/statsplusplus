@@ -132,14 +132,23 @@ recomputed from summed counting stats — `_bat_row`/`_pit_row` store raw counts
 `_hra`, `_bf`, etc.) alongside computed rates for this purpose. Percentile queries use `GROUP BY
 player_id` with `SUM` to aggregate stints before computing rankings.
 
-**FV calculation** — `calc_fv()` in `fv_model.py` (re-exported via `player_utils.py`). Simplified in Session 48 to trust the evaluation engine's composite and ceiling scores. Inputs: composite (as Ovr), ceiling (as Pot), age vs. level norm, bucket, work ethic, scouting accuracy. Key rules:
-- Core formula: `fv = composite + dev_weight × (ceiling - composite)`
-- `dev_weight()` blends ceiling vs composite based on age-vs-level norm (diff-based tiers) with empirical age decay via `age_development_mult()` for prospects past 21 (derived from cross-sectional OVR/POT gap closure rates).
-- RP ceiling scaled to 85% before FV calc (innings-volume discount). RP FV capped at 55.
-- `Acc=L` applies -2 FV penalty
-- Platoon split penalty: -2/-3 FV for severe L/R splits (weak-side Contact < 30 for hitters, Stuff < 30 for pitchers)
-- Work ethic: +1 for H/VH, -1 for L
-- Removed (now in composite/ceiling): defensive bonus, versatility bonus, positional access premium, critical tool floor penalty, effective_pot override
+**FV calculation** — `calc_fv()` / `calc_fv_v2()` in `fv_model.py` (re-exported via `player_utils.py`). Rearchitected in Session 50 to use empirical gap closure rates with MLB-anchored grading.
+
+Three-score model inputs from evaluation engine:
+- **Composite** (composite_score): current tool value, no discounts
+- **Projected** (ceiling_score): age-blended likely outcome
+- **True Ceiling** (true_ceiling): pure potential, no age blend — used as FV ceiling input
+
+Core formula: `FV = 45 + (expected_peak - positional_MLB_median)`
+- `expected_peak = composite + gap × closure_rate × bust_discount × gap_scale`
+- Gap closure rates: empirical forward-looking rates by age and player type (hitter/pitcher). Pitchers close more gap at each age (later development).
+- Bust discount: age-varying (0.30 at 17-19, 0.60 at 24-25). Bridges OOTP's generous development model to real baseball bust rates.
+- Gap scale: ×0.70 for gap 20+ (empirical ~100% bust rate), ×0.90 for 10-19, ×1.00 for <10.
+- MLB median: computed dynamically per league and position bucket. FV 45 = projects to positional median.
+- Character: work ethic H/VH +3% closure, L -3%. Intelligence H/VH +2%, L -2%. Accuracy L: -2 FV.
+- Level: +2%/yr young-for-level, -2%/yr old-for-level on closure rate.
+- RP ceiling scaled to 85% before FV calc. RP FV capped at 55.
+- Platoon split penalty: -2/-3 FV for severe L/R splits.
 
 **Pitcher composite extended ratings** — `compute_composite_pitcher()` in `evaluation_engine.py` uses HRA and PBABIP as optional weighted tools when available. Calibration produces weights automatically; leagues without extended ratings degrade gracefully to stuff/movement/control + arsenal.
 
