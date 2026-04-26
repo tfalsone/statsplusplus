@@ -353,18 +353,16 @@ def calc_fv_v2(p):
 
     expected_peak = ovr + gap * effective_closure
 
-    # MLB-anchored FV: the raw expected_peak is on the composite scale
-    # (20-80), but FV grades should reflect MLB context. A prospect whose
-    # peak projects at the MLB median (~49-51) is an "average" outcome =
-    # FV 45. A prospect projecting well above average (~53+) is FV 50+.
+    # MLB-anchored FV: express the expected peak relative to the MLB
+    # median for this position bucket. A prospect projecting to the
+    # positional median is FV 45 (useful but average). Projecting well
+    # above median is FV 50+.
     #
-    # Offset calibrated from MLB composite distribution:
-    #   MLB P10=45, P25=47, Median=49, P75=53, P90=56
-    #   FV 45 ≈ projects to MLB median (peak ~49)
-    #   FV 50 ≈ projects to MLB P65 (peak ~53)
-    #   FV 55 ≈ projects to MLB P85 (peak ~57)
-    # Shift: FV = expected_peak - 3
-    fv = expected_peak - 3
+    # The median is loaded dynamically per league/position from the
+    # player dict (set by fv_calc.py from league data). Falls back to
+    # 50 if not available.
+    mlb_median = p.get("_mlb_median") or 50
+    fv = 45 + (expected_peak - mlb_median)
 
     # Accuracy penalty
     if p.get("Acc") == "L":

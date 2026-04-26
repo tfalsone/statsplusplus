@@ -133,6 +133,29 @@ def run():
 
     rows = conn.execute(RATINGS_SQL).fetchall()
 
+    # Compute MLB median composite by position bucket for FV anchoring
+    _mlb_medians = {}
+    _mlb_rows = conn.execute("""
+        SELECT p.pos, p.role, r.composite_score
+        FROM latest_ratings r
+        JOIN players p ON r.player_id = p.player_id
+        WHERE p.level = 1 AND r.composite_score IS NOT NULL
+    """).fetchall()
+    _mlb_by_bucket = {}
+    for mr in _mlb_rows:
+        _mp = {"pos": str(mr["pos"]), "role": mr["role"],
+               "_role": role_map.get(str(mr["role"]), "position_player"),
+               "Pos": str(mr["pos"])}
+        _mp["_is_pitcher"] = _mp["pos"] == "1" or _mp["_role"] in ("starter", "reliever", "closer")
+        try:
+            _bkt = assign_bucket(_mp, use_pot=False)
+        except Exception:
+            continue
+        _mlb_by_bucket.setdefault(_bkt, []).append(mr["composite_score"])
+    for _bkt, _vals in _mlb_by_bucket.items():
+        _vals.sort()
+        _mlb_medians[_bkt] = _vals[len(_vals) // 2]
+
     prospect_rows = []
     surplus_rows  = []
 
@@ -180,6 +203,7 @@ def run():
         p["_is_pitcher"] = (p["Pos"] == "P" or role_str in ("starter", "reliever", "closer"))
         bucket = assign_bucket(p)
         p["_bucket"] = bucket
+        p["_mlb_median"] = _mlb_medians.get(bucket, 50)
 
         # Defensive potential for position-adjusted scarcity
         _DEF_KEY = {'CF':'PotCF','SS':'PotSS','C':'PotC','2B':'Pot2B','3B':'Pot3B'}
