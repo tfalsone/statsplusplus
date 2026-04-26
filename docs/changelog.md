@@ -15,38 +15,52 @@ Replaced the two-score model (composite/ceiling) with three scores:
 
 New `compute_true_ceiling()` in `evaluation_engine.py`. Column `true_ceiling` added to ratings table.
 
-### FV Rearchitecture — Empirical Gap Closure Model
+### FV Rearchitecture — Ceiling-Credit with Risk Labels
 
-Replaced the `dev_weight` point-estimate system with a probability-informed model based on empirical development data.
+Replaced the `dev_weight` point-estimate system with a ceiling-credit model that separates FV grade (what could this player be?) from risk (how likely is that?). Evolved through several iterations during the session: gap-closure expected value → MLB-anchored offset → dynamic positional median → ceiling-credit with realization scaling.
 
-**FV = 45 + (expected_peak - positional_MLB_median)**
+**Final FV formula:** `FV = 45 + (true_ceiling - positional_MLB_median) × ceiling_credit`
+- `ceiling_credit = 0.20 + 0.55 × (composite / ceiling)` — players closer to their ceiling get more credit
+- Maxed-out players (gap < 3): `FV = 45 + (ceiling - median)` — no credit scaling needed
+- Ceiling quality gate: ceiling must be 6+ above positional median for FV 45+ (uses raw ceiling before RP discount)
+- Dynamic positional MLB median computed per league from current MLB composite distribution
+- Character traits adjust development confidence (work ethic, intelligence)
+- Accuracy L: -2 FV. Platoon splits: -2/-3 FV. RP cap: FV ≤ 55.
 
-Where `expected_peak = composite + gap × closure_rate × bust_discount × gap_scale`
+**Risk labels** (Low/Medium/High/Extreme) derived from development confidence:
+- `dev_confidence = closure_rate × age_discount × gap_scale + character_adj`
+- Closure rates: empirical forward-looking by age and player type (hitter/pitcher)
+- Age discount: 0.30 (17-19) to 0.60 (24-25)
+- Gap scale: penalizes excess gap above age-expected norm (empirical mean POT-OVR by age)
+- Stored in `prospect_fv.risk` column, displayed on player page with color coding
 
-Key components:
-- **Forward-looking gap closure rates** by age and player type, derived from cross-sectional OVR/POT analysis. Pitchers close more gap at each age (later development). Source: VMLB 2033, N=200+ per age bucket.
-- **Age-varying bust discount**: Young prospects (17-19) get 0.30 (most uncertain), older (24-25) get 0.60 (near-peak). Bridges the gap between OOTP's generous development model and real baseball bust rates.
-- **Gap-size scaling**: Gaps 20+ get ×0.70 (empirical: ~100% bust rate for gap 21+ at ages 18-20). Gaps 10-19 get ×0.90. Gaps <10 get ×1.00.
-- **Dynamic positional MLB median**: FV anchored to the MLB median composite for the player's position bucket, computed per league. A ceiling of 52 is FV 50 for a catcher (median 48) but FV 45 for a corner outfielder (median 52).
-- **Character traits**: Work ethic H/VH: +3% closure, L: -3%. Intelligence H/VH: +2%, L: -2%. Accuracy L: -2 FV points. Empirical basis: 87-91% realization range across work ethic levels at age 22-25.
-- **Level context**: +2%/yr young-for-level, -2%/yr old-for-level on closure rate.
+**Dropped "+" grades** — clean FV tiers (40/45/50/55/60/65/70). Risk label provides the granularity that "+" was capturing.
 
 ### Prospect Discount Removed
 
-The flat -5/-3 prospect composite discount was removed. It double-counted with dev_weight age decay, suppressed honest tool evaluations, and dragged ceilings down. The composite now reflects pure tool value; the FV grade (via bust discount and MLB anchoring) handles skepticism about development likelihood.
+The flat -5/-3 prospect composite discount was removed. It double-counted with the development model, suppressed honest tool evaluations, and dragged ceilings down. The composite now reflects pure tool value; the FV grade (via ceiling-credit and MLB anchoring) handles the translation to prospect value.
 
-### FV Distribution Calibration
+### FV Distribution (Final)
 
-| Metric | Before (S49) | After (S50) | Fangraphs ref |
-|--------|-------------|-------------|---------------|
-| EMLB FV 55+/org | ~2.4 | 0.5 | ~1.0 |
-| EMLB FV 50+/org | ~9.0 | 2.1 | ~3.3 |
-| EMLB FV 45+/org | ~36 | 11.2 | ~8.3 |
-| VMLB FV 55+/org | ~2.4 | 0.7 | ~1.0 |
-| VMLB FV 50+/org | ~13 | 5.3 | ~3.3 |
-| VMLB FV 45+/org | ~44 | 18.7 | ~8.3 |
+| Metric | EMLB | VMLB | Fangraphs ref |
+|--------|------|------|---------------|
+| FV 55+/org | 0.6 | 0.2 | ~1.0 |
+| FV 50+/org | 7.1 | 2.9 | ~3.3 |
+| FV 45+/org | 10.7 | 10.3 | ~8.3 |
 
-EMLB FV 50+ now matches Fangraphs closely. Remaining FV 45+ inflation driven by composite-OVR divergence (+7-8 for mid-range prospects) — a composite calibration issue, not an FV formula issue.
+VMLB matches Fangraphs closely at all tiers. EMLB FV 50+ runs higher (league composition — more high-ceiling prospects).
+
+### Key Player Outcomes (Final)
+- **Schwarzenberg** (24yo AAA SP, POT 65): Comp 45 / Ceil 59 / FV 50 Medium
+- **Chad Marshall** (20yo A COF, POT 64): Comp 35 / Ceil 61 / FV 50 Medium
+- **Eric Kiefer** (22yo A COF, POT 61): Comp 39 / Ceil 67 / FV 55 High
+- **Mike French** (22yo AAA SS, POT 42): Comp 48 / Ceil 48 / FV 45 Low (maxed)
+- **Hoadley** (24yo AA 2B, POT 42): Comp 47 / Ceil 51 / FV 40 High
+- **J.C. Swishman** (23yo AAA RP, POT 76): Comp 50 / Ceil 65 / FV 50 Medium
+
+### SP Ceiling Compression — Accepted Limitation
+
+Pitcher true_ceiling runs ~5-6 below game POT. Root cause: stuff rating already incorporates individual pitch quality, so the arsenal bonus partially double-counts. The gap is stable and predictable. The FV system compensates through ceiling-credit. Increasing arsenal weight would risk further double-counting.
 
 ### Bug Fixes
 
