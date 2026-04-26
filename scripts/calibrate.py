@@ -560,6 +560,98 @@ def _build_ovr_to_war_table(regressions):
 
 
 # ---------------------------------------------------------------------------
+# Development curve calibration (gap closure, age runway, expected gaps)
+# ---------------------------------------------------------------------------
+
+def _calibrate_development_curves(conn):
+    """Derive per-league development curves from cross-sectional OVR/POT data.
+
+    Queries all players aged 17-26 with valid OVR/POT, computes mean
+    realization (OVR/POT) and mean gap (POT-OVR) by age for hitters and
+    pitchers separately.
+
+    Returns dict with keys:
+        gap_closure_hitter, gap_closure_pitcher: {age: rate}
+        age_runway_hitter, age_runway_pitcher: {age: mult}
+        expected_gap_hitter, expected_gap_pitcher: {age: gap}
+    or None if insufficient data.
+    """
+    rows = conn.execute("""
+        SELECT p.age,
+               CASE WHEN p.pos = 1 THEN 1 ELSE 0 END as is_pitcher,
+               AVG(CAST(r.ovr AS FLOAT) / NULLIF(r.pot, 0)) as mean_real,
+               AVG(r.pot - r.ovr) as mean_gap,
+               COUNT(*) as n
+        FROM latest_ratings r
+        JOIN players p ON r.player_id = p.player_id
+        WHERE p.age BETWEEN 17 AND 26
+          AND r.pot > 20 AND r.ovr > 0
+        GROUP BY p.age, is_pitcher
+        ORDER BY is_pitcher, p.age
+    """).fetchall()
+
+    if not rows:
+        return None
+
+    # Organize by type
+    hitter_data = {}  # age -> (mean_real, mean_gap, n)
+    pitcher_data = {}
+    for r in rows:
+        d = pitcher_data if r["is_pitcher"] else hitter_data
+        d[r["age"]] = (r["mean_real"], r["mean_gap"], r["n"])
+
+    MIN_N = 30  # minimum sample per age bucket
+
+    result = {}
+    for label, data in [("hitter", hitter_data), ("pitcher", pitcher_data)]:
+        # Filter to ages with enough data
+        ages = sorted(a for a, (_, _, n) in data.items() if n >= MIN_N)
+        if len(ages) < 5:
+            return None  # not enough age coverage
+
+        # Terminal realization (age 26, or highest available)
+        terminal_age = max(ages)
+        terminal_real = data[terminal_age][0]
+
+        # Gap closure: forward-looking. At age X, what fraction of the
+        # remaining gap (1.0 - realization_X) will close by terminal?
+        # closure_X = (terminal_real - real_X) / (1.0 - real_X)
+        closure = {}
+        for age in ages:
+            real_x = data[age][0]
+            remaining = 1.0 - real_x
+            if remaining > 0.01:
+                closure[age] = round((terminal_real - real_x) / remaining, 2)
+            else:
+                closure[age] = 0.0
+
+        # Age runway: normalized to age 21 = 1.0.
+        # Runway = remaining gap fraction relative to age 21's remaining gap.
+        real_21 = data.get(21, (0.73, 0, 0))[0]
+        remaining_21 = 1.0 - real_21
+        runway = {}
+        for age in ages:
+            real_x = data[age][0]
+            remaining_x = 1.0 - real_x
+            if remaining_21 > 0.01:
+                runway[age] = round(remaining_x / remaining_21, 2)
+            else:
+                runway[age] = 0.0
+
+        # Expected gap: mean POT-OVR at each age (rounded to int)
+        expected_gap = {}
+        for age in ages:
+            expected_gap[age] = round(data[age][1])
+
+        result[f"gap_closure_{label}"] = closure
+        result[f"age_runway_{label}"] = runway
+        result[f"expected_gap_{label}"] = expected_gap
+        result[f"calibration_n_{label}"] = {a: data[a][2] for a in ages}
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # COMPOSITE_TO_WAR regression (runs in calibrate pass 2)
 # ---------------------------------------------------------------------------
 
@@ -1079,6 +1171,23 @@ def calibrate(dry_run=False):
         print("  No tool weight data available — using defaults")
     print()
 
+    # Development curves (gap closure, age runway, expected gaps)
+    print("=== Development Curves ===")
+    dev_curves = _calibrate_development_curves(conn)
+    if dev_curves:
+        for label in ("hitter", "pitcher"):
+            n_data = dev_curves.get(f"calibration_n_{label}", {})
+            total_n = sum(n_data.values())
+            closure = dev_curves[f"gap_closure_{label}"]
+            eg = dev_curves[f"expected_gap_{label}"]
+            ages = sorted(closure.keys())
+            cl_str = " ".join(f"{a}:{closure[a]:.2f}" for a in ages if a in (17, 20, 22, 24))
+            eg_str = " ".join(f"{a}:{eg[a]}" for a in ages if a in (17, 20, 22, 24))
+            print(f"  {label:<7} N={total_n:<6} closure=[{cl_str}]  gaps=[{eg_str}]")
+    else:
+        print("  Insufficient data — using hardcoded defaults")
+    print()
+
     # Step 1: OVR_TO_WAR
     print("=== OVR_TO_WAR Regression ===")
     regressions, bucket_data = _calibrate_ovr_to_war(conn, game_year, role_map)
@@ -1218,6 +1327,13 @@ def calibrate(dry_run=False):
                           (scarcity if scarcity else SCARCITY_MULT).items()},
         "PAP_SCALE": pap_scale,
     }
+
+    # Add development curves when available
+    if dev_curves:
+        for key in ("gap_closure_hitter", "gap_closure_pitcher",
+                     "age_runway_hitter", "age_runway_pitcher",
+                     "expected_gap_hitter", "expected_gap_pitcher"):
+            weights[key] = {str(k): v for k, v in dev_curves[key].items()}
 
     # Add COMPOSITE_TO_WAR tables when available
     if composite_ovr_table is not None:

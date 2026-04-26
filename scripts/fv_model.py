@@ -11,8 +11,19 @@ Public API:
   defensive_score(p, bucket) → float
 """
 
-from constants import RP_POT_DISCOUNT
+from constants import RP_POT_DISCOUNT, _load_weights
 from ratings import norm, norm_floor
+
+
+def _dev_curve(key, default):
+    """Load a league-calibrated development curve, falling back to default."""
+    w = _load_weights()
+    if not w or key not in w:
+        return default
+    raw = w[key]
+    if isinstance(raw, dict):
+        return {int(k): v for k, v in raw.items()}
+    return raw
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -54,14 +65,14 @@ LEVEL_NORM_AGE = {
 # age-based decay). Source: VMLB + EMLB 2033 average, N=50+ per bucket.
 # Separate tables for hitters and pitchers — pitchers develop later
 # (stuff/movement can improve into mid-20s, control peaks even later).
-_AGE_RUNWAY_HITTER = {
+_AGE_RUNWAY_HITTER = _dev_curve("age_runway_hitter", {
     17: 1.60, 18: 1.43, 19: 1.26, 20: 1.16, 21: 1.00,
     22: 0.73, 23: 0.55, 24: 0.43, 25: 0.33, 26: 0.19,
-}
-_AGE_RUNWAY_PITCHER = {
+})
+_AGE_RUNWAY_PITCHER = _dev_curve("age_runway_pitcher", {
     17: 1.56, 18: 1.42, 19: 1.30, 20: 1.16, 21: 1.00,
     22: 0.79, 23: 0.62, 24: 0.48, 25: 0.35, 26: 0.20,
-}
+})
 # Combined table kept for backward compatibility / external callers
 _AGE_RUNWAY = {
     17: 1.58, 18: 1.42, 19: 1.28, 20: 1.16, 21: 1.00,
@@ -189,14 +200,21 @@ def calc_fv(p):
 # "What fraction of the remaining composite-to-ceiling gap closes between
 # age X and peak (26)?" Derived from cross-sectional mean realization at
 # each age vs age 26 terminal. Source: VMLB 2033, N=200+ per age bucket.
-_GAP_CLOSURE_HITTER = {
+_GAP_CLOSURE_HITTER = _dev_curve("gap_closure_hitter", {
     17: 0.87, 18: 0.86, 19: 0.84, 20: 0.83, 21: 0.80,
     22: 0.68, 23: 0.48, 24: 0.38, 25: 0.38,
-}
-_GAP_CLOSURE_PITCHER = {
+})
+_GAP_CLOSURE_PITCHER = _dev_curve("gap_closure_pitcher", {
     17: 0.93, 18: 0.92, 19: 0.91, 20: 0.90, 21: 0.87,
     22: 0.83, 23: 0.72, 24: 0.59, 25: 0.49,
-}
+})
+
+_EXPECTED_GAP_HITTER = _dev_curve("expected_gap_hitter", {
+    17: 20, 18: 17, 19: 13, 20: 12, 21: 10, 22: 6, 23: 4, 24: 3, 25: 3,
+})
+_EXPECTED_GAP_PITCHER = _dev_curve("expected_gap_pitcher", {
+    17: 18, 18: 15, 19: 13, 20: 11, 21: 9, 22: 7, 23: 5, 24: 4, 25: 3,
+})
 
 # Terminal (age 26) outcome distribution — what the final realization
 # looks like at peak. Used to model variance around the expected closure.
@@ -369,9 +387,7 @@ def calc_fv_v2(p):
         base_discount = 0.60
 
     # Gap scale (empirical expected gaps by age/type)
-    _EG_H = {17:20,18:17,19:13,20:12,21:10,22:6,23:4,24:3,25:3}
-    _EG_P = {17:18,18:15,19:13,20:11,21:9,22:7,23:5,24:4,25:3}
-    eg_table = _EG_P if is_pitcher else _EG_H
+    eg_table = _EXPECTED_GAP_PITCHER if is_pitcher else _EXPECTED_GAP_HITTER
     expected_gap = eg_table.get(max(17, min(25, age)), 5)
     excess_gap = max(0, gap - expected_gap)
     if excess_gap >= 15:
