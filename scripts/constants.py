@@ -69,9 +69,12 @@ def _w(key, default):
     if not w or key not in w:
         return default
     raw = w[key]
-    # Convert string keys to int
-    if isinstance(raw, dict):
-        return {int(k): v for k, v in raw.items()}
+    # Convert string keys to int when the default uses int keys
+    if isinstance(raw, dict) and isinstance(default, dict):
+        sample_key = next(iter(default), None)
+        if isinstance(sample_key, int):
+            return {int(k): v for k, v in raw.items()}
+        return dict(raw)
     return raw
 
 # ---------------------------------------------------------------------------
@@ -129,10 +132,11 @@ DEVELOPMENT_DISCOUNT = {
 }
 
 # Estimated years until MLB debut by current level
-YEARS_TO_MLB = {
+_YEARS_TO_MLB_DEFAULT = {
     "MLB": 0, "AAA": 0.5, "AA": 1.5, "A": 2.5,
     "A-Short": 3.5, "USL": 4.5, "DSL": 4.5, "Intl": 5.0,
 }
+YEARS_TO_MLB = _w("YEARS_TO_MLB", _YEARS_TO_MLB_DEFAULT)
 
 # Annual discount rate for time value + residual development risk
 PROSPECT_DISCOUNT_RATE = 0.05

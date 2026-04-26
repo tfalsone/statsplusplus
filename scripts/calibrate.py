@@ -651,6 +651,46 @@ def _calibrate_development_curves(conn):
     return result
 
 
+def _calibrate_years_to_mlb(conn):
+    """Derive years-to-MLB by level from mean age at each level vs young MLB debut age.
+
+    Returns dict mapping level label → years, or None if insufficient data.
+    """
+    young_mlb = conn.execute(
+        "SELECT AVG(age) FROM players WHERE level = 1 AND age <= 26"
+    ).fetchone()[0]
+    if not young_mlb:
+        return None
+
+    rows = conn.execute("""
+        SELECT CAST(p.level AS INTEGER) as lvl, AVG(p.age) as mean_age, COUNT(*) as n
+        FROM players p
+        JOIN latest_ratings r ON p.player_id = r.player_id
+        WHERE CAST(p.level AS INTEGER) >= 2 AND r.pot >= 40 AND r.ovr > 0
+          AND p.age BETWEEN 17 AND 25
+        GROUP BY CAST(p.level AS INTEGER)
+    """).fetchall()
+
+    if not rows:
+        return None
+
+    level_names = {2: "AAA", 3: "AA", 4: "A", 5: "A-Short",
+                   6: "Rookie", 8: "Intl", 10: "A-Short", 11: "DSL"}
+    aliases = {"Rookie": ["USL"]}
+
+    result = {"MLB": 0}
+    for r in rows:
+        name = level_names.get(int(r["lvl"]))
+        if not name or r["n"] < 20:
+            continue
+        yrs = round(max(0.5, young_mlb - r["mean_age"]), 1)
+        result[name] = yrs
+        for alias in aliases.get(name, []):
+            result[alias] = yrs
+
+    return result if len(result) > 2 else None
+
+
 # ---------------------------------------------------------------------------
 # COMPOSITE_TO_WAR regression (runs in calibrate pass 2)
 # ---------------------------------------------------------------------------
@@ -1188,6 +1228,18 @@ def calibrate(dry_run=False):
         print("  Insufficient data — using hardcoded defaults")
     print()
 
+    # Years-to-MLB by level
+    print("=== Years to MLB ===")
+    years_to_mlb = _calibrate_years_to_mlb(conn)
+    if years_to_mlb:
+        for lvl in ["AAA", "AA", "A", "Rookie", "Intl", "DSL"]:
+            yrs = years_to_mlb.get(lvl)
+            if yrs is not None:
+                print(f"  {lvl:<8} {yrs:.1f} yrs")
+    else:
+        print("  Insufficient data — using hardcoded defaults")
+    print()
+
     # Step 1: OVR_TO_WAR
     print("=== OVR_TO_WAR Regression ===")
     regressions, bucket_data = _calibrate_ovr_to_war(conn, game_year, role_map)
@@ -1334,6 +1386,10 @@ def calibrate(dry_run=False):
                      "age_runway_hitter", "age_runway_pitcher",
                      "expected_gap_hitter", "expected_gap_pitcher"):
             weights[key] = {str(k): v for k, v in dev_curves[key].items()}
+
+    # Add years-to-MLB when available
+    if years_to_mlb:
+        weights["YEARS_TO_MLB"] = years_to_mlb
 
     # Add COMPOSITE_TO_WAR tables when available
     if composite_ovr_table is not None:
