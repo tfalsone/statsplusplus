@@ -4,6 +4,35 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 51 (2026-04-26)
+
+### Per-League Development Curve Calibration
+
+New `_calibrate_development_curves()` in `calibrate.py` derives gap closure rates, age runway tables, and expected gap tables from cross-sectional OVR/POT data per league. Stored in `model_weights.json`, loaded by `fv_model.py` via `_dev_curve()` with hardcoded VMLB-derived fallbacks.
+
+EMLB vs VMLB show meaningfully different development profiles:
+- Hitter closure at 22: EMLB 0.91 vs VMLB 0.67
+- Pitcher closure at 22: EMLB 0.96 vs VMLB 0.79
+
+All six tables now league-aware: `gap_closure_hitter/pitcher`, `age_runway_hitter/pitcher`, `expected_gap_hitter/pitcher`.
+
+### Survivorship Bias Investigation
+
+Cross-sectional OVR/POT data has significant survivorship bias from OOTP's POT revision mechanic: only 22% of POT 50+ players at age 17 retain POT 50+ at age 26. Busts have POT revised downward, appearing as "low-POT, high-realization" players in the snapshot.
+
+Key findings:
+- Ages 17-21: ~100% player coverage, no survivorship bias
+- Ages 22-24: 95-99% coverage, minimal bias
+- Ages 25-26: 72-88% coverage, moderate bias from missing unsigned players
+- Unsigned players (level 0) already included in calibration queries
+- The POT revision effect is the dominant bias source, not missing players
+- FV grade formula is immune (uses current snapshot only)
+- Gap closure rates (→ risk labels) are slightly optimistic; bust_discount mitigates
+- Expected gap tables are correct for their cross-sectional use case
+- True fix requires longitudinal tracking across multiple seasons
+
+---
+
 ## Session 50 (2026-04-26)
 
 ### Three-Score Evaluation Model
