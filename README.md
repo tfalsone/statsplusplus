@@ -9,8 +9,10 @@ An assistant GM dashboard for [OOTP Baseball](https://www.ootpdevelopments.com/)
 - **League overview** — Standings, stat leaders, power rankings, league-wide averages
 - **Team pages** — Roster, depth chart, farm system, contracts, payroll breakdown, upcoming free agents
 - **Player pages** — Ratings with grade bars, batting/pitching splits, percentile rankings with expected-value tags (hot/cold/lucky/unlucky)
-- **Prospect system** — Top 100, by-team and by-position views, FV grades, surplus values, scouting panel with tools and pitch repertoire
+- **Prospect system** — Top 100, by-team and by-position views, FV grades with risk labels, surplus values, scouting panel with tools and pitch repertoire
+- **Player evaluation engine** — Independent tool-weighted composites, ceiling scores, and FV grades computed from raw ratings (not the game's OVR/POT)
 - **Multi-league support** — Manage multiple OOTP leagues from one install, switch between them in the nav
+- **League-calibrated models** — Tool weights, WAR curves, development curves, and financial tables derived from each league's own data
 - **Extended ratings** — BABIP, HR Avoidance, PBABIP, Injury Proneness (when the league's OOTP version provides them)
 - **One-click refresh** — Pull latest game data from StatsPlus without leaving the browser
 - **CLI analysis tools** — Roster scaffolds, farm reports, prospect rankings, free agent analysis, trade calculator
@@ -110,6 +112,45 @@ StatsPlus API → client.py → refresh.py → league.db (SQLite)
 ```
 
 `refresh.py` handles the full pipeline: fetches rosters, batting/pitching/fielding stats, ratings, contracts, and team stats for all teams in the league, then computes league averages and runs FV/surplus calculations. The web layer reads from SQLite only.
+
+## Player Evaluation Model
+
+Stats++ builds its own player evaluation independent of the game's OVR/POT ratings. This gives you a second opinion grounded in tool analysis and league-calibrated data.
+
+### Composite Score (20-80 scale)
+
+Every player gets a **composite score** — a tool-weighted assessment of their current ability. For hitters, this combines offensive tools (contact, gap, power, eye, K-rate), baserunning (speed, steal), and defense (position-specific weights). For pitchers, it combines stuff, movement, control, and arsenal depth/quality.
+
+The composite is the same methodology for prospects and MLB players, providing a unified basis for comparison across the prospect/MLB threshold. MLB players additionally get a **stat-blended score** that incorporates recent performance (OPS+, ERA/FIP), shown alongside the pure tool score on player pages.
+
+Tools below the MLB floor (35 on the 20-80 scale) receive an additional penalty — empirical analysis shows MLB hitters with a sub-35 tool underperform their OVR by ~0.3-0.5 WAR per season.
+
+### FV Grade and Risk Label
+
+Prospects receive an **FV grade** (Future Value) on the standard 20-80 scale in 5-point increments (40/45/50/55/60/65/70). FV answers: *how good could this player become if he develops?*
+
+FV is computed as ceiling quality relative to the MLB positional median. A prospect whose ceiling projects as an above-average MLB starter at their position gets FV 50. The grade scales with how far above (or below) the positional median their ceiling sits, weighted by how much of that ceiling they've already realized.
+
+A separate **risk label** (Low / Medium / High / Extreme) captures development probability. Risk is derived from the player's age, gap between current ability and ceiling, empirical gap closure rates for the league, and character traits (work ethic, intelligence). This separation means FV tells you the ceiling quality while risk tells you the likelihood of getting there.
+
+### Surplus Value
+
+Every player — prospect and MLB — has a **surplus value** in dollars. This is the difference between projected on-field value and salary cost over remaining team control. Surplus is the currency of trades: a fair trade has roughly equal surplus on both sides.
+
+For prospects, surplus projects six years of team control using the FV grade, position-specific WAR tables, aging curves, and development discounts by level. For MLB players, surplus uses a blend of stat-based and ratings-based WAR projections against actual contract costs.
+
+### League Calibration
+
+All model parameters are derived from each league's own data during calibration:
+
+- **Tool weights** — Per-position regression of tool ratings against WAR
+- **WAR curves** — OVR-to-WAR and Composite-to-WAR tables per position
+- **Development curves** — Gap closure rates, age runway, and expected gaps from cross-sectional OVR/POT analysis
+- **Financial tables** — Arbitration percentages, scarcity multipliers, years-to-MLB by level
+
+This means the model adapts to each league's settings (development speed, aging, financial structure) rather than using one-size-fits-all assumptions.
+
+For full model details, see `docs/valuation_model.md`.
 
 ## CLI Tools
 

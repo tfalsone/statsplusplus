@@ -372,10 +372,19 @@ const COLS = {
   position: ['#','Player','Team','Level','ETA','Age','Ht','B/T','FV','Comp','Surplus'],
 };
 const LEFT_COLS = new Set(['Player','Team','Level']);
+const COL_TIPS = {
+  'FV': 'Future Value — ceiling quality vs MLB positional median. Letter = risk (L=Low, M=Medium, H=High, E=Extreme)',
+  'Comp': 'Composite — tool-weighted current ability on the 20-80 scale',
+  'Surplus': 'Projected on-field value minus salary over remaining team control',
+  'ETA': 'Estimated year of MLB debut based on age and level',
+};
 
 function renderHead() {
   document.getElementById('prospect-thead').innerHTML = '<tr>' +
-    COLS[currentMode].map(c => LEFT_COLS.has(c) ? `<th class="left">${c}</th>` : `<th>${c}</th>`).join('') + '</tr>';
+    COLS[currentMode].map(c => {
+      const tip = COL_TIPS[c] ? ` title="${COL_TIPS[c]}"` : '';
+      return LEFT_COLS.has(c) ? `<th class="left"${tip}>${c}</th>` : `<th${tip}>${c}</th>`;
+    }).join('') + '</tr>';
 }
 
 function renderProspects(list, maxRows, singleTeam) {

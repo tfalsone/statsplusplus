@@ -504,7 +504,7 @@
   </div>
   {% endif %}
   {% if p.composite_score %}
-  <div class="summary-item">
+  <div class="summary-item" title="Tool-weighted player grade on the 20-80 scouting scale. Composite reflects current tools; Ceiling reflects maximum potential if all tools develop.">
     <span class="label">Comp / Ceil</span>
     <span class="value"><span class="ovr-color" data-g="{{ p.composite_score }}">{{ p.composite_score }}</span>{% if p.tool_only_score and p.tool_only_score != p.composite_score %} <span style="font-size:11px; font-weight:400; color:#999" title="Pure tool grade (no stat blend)">({{ p.tool_only_score }})</span>{% endif %} / <span class="ovr-color" data-g="{{ p.ceiling_score }}">{{ p.ceiling_score }}</span></span>
   </div>
@@ -517,12 +517,12 @@
   {% endif %}
   {% if p.valuation %}
   {% if p.valuation.type == "prospect" %}
-  <div class="summary-item">
+  <div class="summary-item" title="Future Value — ceiling quality relative to MLB positional median. Risk label indicates development probability (Low/Medium/High/Extreme).">
     <span class="label">FV</span>
     <span class="value">{{ p.valuation.fv_str }}{% if p.valuation.risk %} <span style="font-size:11px; font-weight:400; color:{% if p.valuation.risk == 'Low' %}#4caf50{% elif p.valuation.risk == 'Medium' %}#ffc107{% elif p.valuation.risk == 'High' %}#ff9800{% else %}#f44336{% endif %}">{{ p.valuation.risk }}</span>{% endif %}</span>
   </div>
   {% endif %}
-  <div class="summary-item">
+  <div class="summary-item" title="Projected on-field value minus salary cost over remaining team control. Positive = player worth more than they cost.">
     <span class="label">Surplus</span>
     <span class="value {% if p.valuation.surplus > 0 %}pos{% elif p.valuation.surplus < 0 %}neg{% endif %}">${{ p.valuation.surplus }}M</span>
   </div>
