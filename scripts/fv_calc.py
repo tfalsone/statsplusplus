@@ -251,7 +251,7 @@ def run():
                 )
                 prospect_rows.append((
                     pid, game_date, fv_base, fv_str,
-                    "MLB", bucket, p_surplus
+                    "MLB", bucket, p_surplus, fv_risk
                 ))
         elif age <= 24:
             level_key = LEVEL_INT_KEY.get(int(level))
@@ -283,10 +283,14 @@ def run():
             )
             prospect_rows.append((
                 pid, game_date, fv_base, fv_str,
-                level_label, bucket, surplus
+                level_label, bucket, surplus, fv_risk
             ))
 
     conn.execute("DELETE FROM prospect_fv")
+    # Ensure risk column exists (migration for existing DBs)
+    _pf_cols = {r[1] for r in conn.execute("PRAGMA table_info(prospect_fv)").fetchall()}
+    if "risk" not in _pf_cols:
+        conn.execute("ALTER TABLE prospect_fv ADD COLUMN risk TEXT")
     conn.execute("DROP TABLE IF EXISTS player_surplus")
     conn.execute("""CREATE TABLE player_surplus (
         player_id INTEGER, eval_date TEXT, name TEXT, bucket TEXT,
@@ -294,7 +298,7 @@ def run():
         surplus INTEGER, surplus_yr1 INTEGER, level TEXT,
         team_id INTEGER, parent_team_id INTEGER,
         PRIMARY KEY (player_id, eval_date))""")
-    conn.executemany("INSERT INTO prospect_fv VALUES (?,?,?,?,?,?,?)", prospect_rows)
+    conn.executemany("INSERT INTO prospect_fv VALUES (?,?,?,?,?,?,?,?)", prospect_rows)
     conn.executemany("INSERT INTO player_surplus VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", surplus_rows)
     conn.commit()
     conn.close()

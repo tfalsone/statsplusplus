@@ -88,7 +88,7 @@ def get_top_prospects(n=100):
                pf.fv, pf.fv_str, pf.bucket,
                pf.level, pf.prospect_surplus, p.pos, p.player_id,
                r.height, r.bats, r.throws, r.ovr, r.pot,
-               r.composite_score, r.ceiling_score
+               r.composite_score, r.ceiling_score, pf.risk
         FROM prospect_fv pf
         JOIN players p ON pf.player_id=p.player_id
         LEFT JOIN latest_ratings r ON pf.player_id=r.player_id
@@ -269,7 +269,7 @@ def get_all_prospects():
                pf.fv, pf.fv_str, pf.bucket,
                pf.level, pf.prospect_surplus, p.pos, p.player_id,
                r.height, r.bats, r.throws, r.ovr, r.pot,
-               r.composite_score, r.ceiling_score
+               r.composite_score, r.ceiling_score, pf.risk
         FROM prospect_fv pf
         JOIN players p ON pf.player_id=p.player_id
         LEFT JOIN latest_ratings r ON pf.player_id=r.player_id
@@ -313,14 +313,14 @@ def get_prospect_summary(pid):
 
     pf = conn.execute("""
         SELECT pf.fv, pf.fv_str, pf.bucket, pf.level, pf.prospect_surplus,
-               p.name, p.age, p.parent_team_id, p.role
+               p.name, p.age, p.parent_team_id, p.role, pf.risk
         FROM prospect_fv pf JOIN players p ON pf.player_id=p.player_id
         WHERE pf.eval_date=? AND pf.player_id=?
     """, (ed, pid)).fetchone()
     if not pf:
         return None
 
-    fv, fv_str, bucket, level, surplus, name, age, tid, role = pf
+    fv, fv_str, bucket, level, surplus, name, age, tid, role, risk = pf
 
     r = conn.execute("SELECT * FROM latest_ratings WHERE player_id=?", (pid,)).fetchone()
     if not r:

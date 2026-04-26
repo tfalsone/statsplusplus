@@ -493,7 +493,7 @@ def get_player(pid):
         "SELECT bucket, ovr, surplus, fv_str, surplus_yr1 FROM player_surplus WHERE player_id=? AND eval_date=?",
         (pid, ed)).fetchone()
     prospect_row = conn.execute(
-        "SELECT bucket, fv, fv_str, prospect_surplus, level FROM prospect_fv WHERE player_id=? AND eval_date=?",
+        "SELECT bucket, fv, fv_str, prospect_surplus, level, risk FROM prospect_fv WHERE player_id=? AND eval_date=?",
         (pid, ed)).fetchone()
 
     valuation = {}
@@ -510,6 +510,7 @@ def get_player(pid):
         valuation["surplus"] = round(prospect_row[3] / 1e6, 1) if prospect_row[3] else 0
         valuation["type"] = "prospect"
         valuation["level"] = prospect_row[4]
+        valuation["risk"] = prospect_row[5]
         valuation["ovr"] = ratings["ovr"] if ratings else None
         valuation["pot"] = ratings["pot"] if ratings else None
         _def_keys = {'CF':'pot_cf','SS':'pot_ss','C':'pot_c','2B':'pot_second_b','3B':'pot_third_b'}

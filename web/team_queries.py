@@ -513,7 +513,7 @@ def get_farm(team_id=None):
 
     rows = conn.execute("""
         SELECT p.name, p.age, p.level, pf.fv, pf.fv_str, pf.bucket, pf.prospect_surplus, p.player_id, p.pos,
-               r.composite_score, r.ceiling_score
+               r.composite_score, r.ceiling_score, pf.risk
         FROM prospect_fv pf
         JOIN players p ON pf.player_id=p.player_id
         LEFT JOIN latest_ratings r ON pf.player_id=r.player_id
@@ -1778,7 +1778,7 @@ def get_org_overview(team_id):
     prospect_by_pos = defaultdict(list)
     prosp_rows = conn.execute("""
         SELECT pf.player_id, p.name, pf.bucket, pf.fv, pf.fv_str, pf.level,
-               p.age, p.pos, pf.prospect_surplus
+               p.age, p.pos, pf.prospect_surplus, pf.risk
         FROM prospect_fv pf
         JOIN players p ON pf.player_id = p.player_id
         WHERE pf.eval_date = ? AND p.parent_team_id = ? AND p.level != '1'
