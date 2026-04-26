@@ -320,6 +320,9 @@ def calc_fv_v2(p):
 
     if gap < 3:
         fv = 45 + (pot - mlb_median)
+        # Maxed-out players below median: cap at FV 40
+        if pot < mlb_median:
+            fv = min(fv, 42)
     else:
         raw_fv = 45 + (pot - mlb_median) * ceiling_credit
         # Minimum ceiling quality gate: prospects whose ceiling is barely
