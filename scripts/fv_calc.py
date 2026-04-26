@@ -60,7 +60,7 @@ RATINGS_SQL = """
            r.loy AS Loy, r.lead AS Lead, r.acc AS Acc,
            r.league_id AS LeagueId,
            r.offensive_grade, r.baserunning_value, r.defensive_value,
-           r.durability_score, r.offensive_ceiling
+           r.durability_score, r.offensive_ceiling, r.true_ceiling
     FROM ratings r
     JOIN players p ON r.player_id = p.player_id
     WHERE r.snapshot_date = (
@@ -154,7 +154,7 @@ def run():
                 p["Ovr"] = combined
             else:
                 p["Ovr"] = p.get("composite_score") or p.get("Ovr") or 0
-            p["Pot"] = p.get("ceiling_score") or p.get("Pot") or 0
+            p["Pot"] = p.get("true_ceiling") or p.get("ceiling_score") or p.get("Pot") or 0
             # Pass pre-computed defensive component through to calc_fv
             # so it can use it directly instead of re-deriving from raw tools
             if p.get("defensive_value") is not None:
