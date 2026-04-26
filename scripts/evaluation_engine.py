@@ -2846,27 +2846,6 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                         is_pitcher=is_pitcher,
                     )
 
-        # -- Prospect composite discount --
-        # OVR for prospects incorporates a "proven-ness" discount that
-        # the tool-weighted composite does not. Older minor leaguers
-        # with decent tools get lower OVR because the game knows that
-        # if those tools were going to translate, they would have by now.
-        # Apply an age-based discount to align prospect composites with
-        # the MLB baseline. Derived from empirical Comp-OVR offsets.
-        # Note: age_development_mult() in fv_model handles the
-        # "less likely to reach ceiling" concern via dev_weight decay,
-        # so no extra low-upside penalty is needed here.
-        if not is_mlb:
-            player_age = row_dict.get("age") or 25
-            if player_age >= 20:
-                prospect_discount = 5
-            elif player_age >= 18:
-                prospect_discount = 3
-            else:
-                prospect_discount = 0
-            composite_score = max(20, composite_score - prospect_discount)
-            tool_only_score = max(20, tool_only_score - prospect_discount)
-
         # Ensure ceiling >= composite after stat blending
         ceiling_score = max(ceiling_score, composite_score)
 
