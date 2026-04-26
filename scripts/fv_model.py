@@ -294,15 +294,26 @@ def calc_fv_v2(p):
     bucket = p["_bucket"]
     is_pitcher = bool(p.get("_is_pitcher"))
 
-    # FV = ceiling composite rounded to nearest 5.
-    # The composite is position-normalized (average MLB player \xe2\x89\x88 50 at
-    # every position), so ceiling directly maps to the FV scale.
-    # RP ceiling discount applied before rounding.
-    ceiling = pot
+    # FV = expected peak composite with ceiling blend.
     if bucket == "RP":
-        ceiling = round(ceiling * RP_POT_DISCOUNT)
-
-    fv = ceiling
+        pot = round(pot * RP_POT_DISCOUNT)
+    gap = max(0, pot - ovr)
+    if gap < 3:
+        fv = ovr
+    else:
+        closure_table = _GAP_CLOSURE_PITCHER if is_pitcher else _GAP_CLOSURE_HITTER
+        if age <= 17: closure = closure_table[17]
+        elif age >= 25: closure = closure_table[25]
+        else:
+            lo = int(age); hi = lo + 1; frac = age - lo
+            closure = closure_table.get(lo, 0.85) * (1 - frac) + closure_table.get(hi, 0.85) * frac
+        if age <= 19: bust = 0.30
+        elif age <= 21: bust = 0.35
+        elif age <= 23: bust = 0.45
+        else: bust = 0.60
+        peak = ovr + gap * closure * bust
+        ceil_weight = max(0.0, min(0.5, (pot - 50) / 30.0))
+        fv = peak * (1.0 - ceil_weight) + pot * ceil_weight
 
     # Accuracy penalty
     if p.get("Acc") == "L":

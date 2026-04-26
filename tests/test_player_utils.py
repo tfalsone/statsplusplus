@@ -77,13 +77,13 @@ def test_norm_zero_returns_none():
 def test_calc_fv_sp():
     from player_utils import calc_fv
     fv, risk = calc_fv(_sp())
-    assert fv == 70  # ceiling 70 → FV 70
+    assert fv == 65  # expected peak with ceiling blend
     assert risk in ("Low", "Medium", "High", "Extreme")
 
 def test_calc_fv_ss():
     from player_utils import calc_fv
     fv, risk = calc_fv(_ss())
-    assert fv == 65  # ceiling 65 → FV 65
+    assert fv == 60
     assert risk in ("Low", "Medium", "High", "Extreme")
 
 def test_calc_fv_rp():
