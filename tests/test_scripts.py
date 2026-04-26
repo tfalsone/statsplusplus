@@ -256,6 +256,8 @@ class TestFvDefensiveValueIntegration:
             "Ovr": 55, "Pot": 65, "Age": 21,
             "_is_pitcher": False, "_bucket": "SS", "_norm_age": 24, "_level": "aa",
             "_mlb_median": 48,
+            "_ceil_war": 4.0,
+            "_fv_thresholds": [(6.0,70),(5.0,65),(4.0,60),(3.0,55),(2.0,50),(1.2,45),(0.5,40)],
             # Positional composite — PotSS high enough to trigger defensive bonus
             # norm(80) = 68 on 20-80 scale → comp >= 60 ✓
             "PotSS": 80, "SS": 75,

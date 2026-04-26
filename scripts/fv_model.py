@@ -276,98 +276,70 @@ def _get_outcome_probs(age, is_pitcher):
 
 
 def calc_fv_v2(p):
-    """Ceiling-credit FV with risk label.
+    """WAR-based FV with risk label.
 
-    FV reflects the ceiling quality relative to MLB — what the player
-    becomes if he develops. Risk captures the probability of getting there.
+    FV = ceiling WAR mapped to FV tiers via league-calibrated thresholds.
+    Risk captures development probability (Low/Medium/High/Extreme).
 
-    FV = 45 + (true_ceiling - positional_MLB_median) * ceiling_credit
-    Risk = f(age, gap, closure_rate, character)
+    Player dict must include:
+      Ovr (composite), Pot (true_ceiling), Age, _is_pitcher, _bucket,
+      _norm_age, _ceil_war (ceiling WAR from COMPOSITE_TO_WAR),
+      _fv_thresholds (list of (war, fv) tuples, descending)
 
     Returns (fv_grade: int, risk: str).
-    fv_grade is on the 20-80 scale in steps of 5 (no "+" grades).
-    risk is one of: "Low", "Medium", "High", "Extreme".
     """
     ovr = p["Ovr"]       # composite_score
     pot = p["Pot"]        # true_ceiling
     age = p["Age"]
-    norm_age = p["_norm_age"]
     bucket = p["_bucket"]
     is_pitcher = bool(p.get("_is_pitcher"))
 
+    ceil_war = p.get("_ceil_war", 0)
+    fv_thresholds = p.get("_fv_thresholds") or [
+        (6.0, 70), (5.0, 65), (4.0, 60), (3.0, 55), (2.0, 50), (1.2, 45), (0.5, 40),
+    ]
+
+    # RP ceiling discount
     if bucket == "RP":
-        pot = round(pot * RP_POT_DISCOUNT)
+        ceil_war *= RP_POT_DISCOUNT
 
-    mlb_median = p.get("_mlb_median") or 50
-    gap = max(0, pot - ovr)
-
-    # -- FV Grade: blended ceiling + current --
-    # FV reflects ceiling quality but discounts for distance from ceiling.
-    # A prospect close to their ceiling gets more credit than one far away.
-    # realization = composite / ceiling (0.0 to 1.0)
-    # credit = base_credit + realization_bonus
-    #   base_credit: 0.45 (everyone gets some ceiling credit)
-    #   realization_bonus: up to 0.40 more as composite approaches ceiling
-    # Total credit ranges from 0.45 (raw, far from ceiling) to 0.85 (near ceiling)
-    if pot > 0:
-        realization = min(1.0, ovr / pot)
-    else:
-        realization = 1.0
-
-    BASE_CREDIT = 0.20
-    REALIZATION_BONUS = 0.55
-    ceiling_credit = BASE_CREDIT + REALIZATION_BONUS * realization
-
-    if gap < 3:
-        fv = 45 + (pot - mlb_median)
-        # Maxed-out players below median: cap at FV 40
-        if pot < mlb_median:
-            fv = min(fv, 42)
-    else:
-        raw_fv = 45 + (pot - mlb_median) * ceiling_credit
-        # Minimum ceiling quality gate: prospects whose ceiling is barely
-        # above the positional median have limited upside. Cap FV at 40
-        # unless ceiling is meaningfully above median.
-        # Use raw ceiling (before RP discount) for the gate check so RP
-        # aren't double-penalized by the discount + gate.
-        raw_ceil = p["Pot"]  # before RP discount
-        ceil_above_median = raw_ceil - mlb_median
-        if ceil_above_median < 6:
-            fv = min(raw_fv, 42)  # caps at FV 40
-        else:
-            fv = raw_fv
+    # Map ceiling WAR to FV grade
+    fv = 35
+    for war_thresh, fv_grade in fv_thresholds:
+        if ceil_war >= war_thresh:
+            fv = fv_grade
+            break
 
     # Accuracy penalty
     if p.get("Acc") == "L":
-        fv -= 2
+        fv -= 5  # drop one tier
 
     # Platoon split penalty
     if is_pitcher:
         sl, sr = norm_floor(p.get("Stf_L", 0)), norm_floor(p.get("Stf_R", 0))
         if sl and sr:
             g, weak = abs(sl - sr), min(sl, sr)
-            if weak <= 25 and g >= 15: fv -= 3
-            elif weak <= 25 and g >= 10: fv -= 2
+            if weak <= 25 and g >= 15: fv -= 5
+            elif weak <= 25 and g >= 10: fv -= 5
     else:
         cl, cr = norm_floor(p.get("Cntct_L", 0)), norm_floor(p.get("Cntct_R", 0))
         if cl and cr:
             g, weak = abs(cl - cr), min(cl, cr)
-            if weak <= 25 and g >= 15: fv -= 3
-            elif weak <= 25 and g >= 10: fv -= 2
+            if weak <= 25 and g >= 15: fv -= 5
+            elif weak <= 25 and g >= 10: fv -= 5
 
-    # RP ceiling
+    # RP cap
     if bucket == "RP":
-        fv = min(fv, 57)
+        fv = min(fv, 55)
 
     fv = max(20, fv)
+    # Snap to nearest 5
     fv_grade = round(fv / 5) * 5
 
     # -- Risk Label --
-    # Derived from development confidence: how likely is this player
-    # to reach their ceiling? Combines closure rate, age discount,
-    # gap normality, and character.
+    gap = max(0, pot - ovr)
+    norm_age = p["_norm_age"]
 
-    # Closure rate
     table = _GAP_CLOSURE_PITCHER if is_pitcher else _GAP_CLOSURE_HITTER
     if age <= 17:
         closure = table[17]
@@ -379,7 +351,6 @@ def calc_fv_v2(p):
         frac = age - lo
         closure = table.get(lo, 0.38) * (1 - frac) + table.get(hi, 0.38) * frac
 
-    # Age bust discount
     if age <= 19:
         base_discount = 0.30
     elif age <= 21:
@@ -389,7 +360,6 @@ def calc_fv_v2(p):
     else:
         base_discount = 0.60
 
-    # Gap scale (empirical expected gaps by age/type)
     eg_table = _EXPECTED_GAP_PITCHER if is_pitcher else _EXPECTED_GAP_HITTER
     expected_gap = eg_table.get(max(17, min(25, age)), 5)
     excess_gap = max(0, gap - expected_gap)
@@ -400,7 +370,6 @@ def calc_fv_v2(p):
     else:
         gap_scale = 1.00
 
-    # Character
     we = p.get("WrkEthic", "N")
     intel = p.get("Int", "N")
     char_adj = 0.0
@@ -409,11 +378,9 @@ def calc_fv_v2(p):
     if intel in ("H", "VH"): char_adj += 0.02
     elif intel == "L": char_adj -= 0.02
 
-    # Development confidence (0.0 to 1.0)
     dev_confidence = closure * base_discount * gap_scale + char_adj
     dev_confidence = max(0.0, min(1.0, dev_confidence))
 
-    # Map to risk label
     if gap < 3:
         risk = "Low"
     elif dev_confidence >= 0.40:

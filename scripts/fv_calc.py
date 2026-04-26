@@ -126,28 +126,74 @@ def run():
 
     rows = conn.execute(RATINGS_SQL).fetchall()
 
-    # Compute MLB median composite by position bucket for FV anchoring
-    _mlb_medians = {}
-    _mlb_rows = conn.execute("""
-        SELECT p.pos, p.role, r.composite_score
+    # Load COMPOSITE_TO_WAR tables for WAR-based FV
+    import json as _json
+    _mw_path = league_dir / "config" / "model_weights.json"
+    _comp_war_tables = {}
+    if _mw_path.exists():
+        with open(_mw_path) as _f:
+            _mw = _json.load(_f)
+        _comp_war_tables = _mw.get("COMPOSITE_TO_WAR", _mw.get("OVR_TO_WAR", {}))
+
+    def _interpolate_war(comp, bucket):
+        table = _comp_war_tables.get(bucket, {})
+        if not table:
+            return 0.0
+        keys = sorted(int(k) for k in table.keys())
+        if not keys:
+            return 0.0
+        if comp <= keys[0]:
+            return table[str(keys[0])]
+        if comp >= keys[-1]:
+            return table[str(keys[-1])]
+        for i in range(len(keys) - 1):
+            if keys[i] <= comp <= keys[i + 1]:
+                lo, hi = keys[i], keys[i + 1]
+                frac = (comp - lo) / (hi - lo)
+                return table[str(lo)] * (1 - frac) + table[str(hi)] * frac
+        return 0.0
+
+    # First pass: compute ceiling WAR for FV-eligible prospects to derive thresholds
+    _all_ceil_wars = []
+    _pre_rows = conn.execute("""
+        SELECT r.true_ceiling, p.pos, p.role, p.age, p.level
         FROM latest_ratings r
         JOIN players p ON r.player_id = p.player_id
-        WHERE p.level = 1 AND r.composite_score IS NOT NULL
+        WHERE r.true_ceiling IS NOT NULL AND r.true_ceiling > 20
+          AND CAST(p.level AS INTEGER) BETWEEN 2 AND 6
+          AND p.age <= 25
     """).fetchall()
-    _mlb_by_bucket = {}
-    for mr in _mlb_rows:
-        _mp = {"pos": str(mr["pos"]), "role": mr["role"],
-               "_role": role_map.get(str(mr["role"]), "position_player"),
-               "Pos": str(mr["pos"])}
+    for _pr in _pre_rows:
+        _mp = {"pos": str(_pr["pos"]), "role": _pr["role"],
+               "_role": role_map.get(str(_pr["role"]), "position_player"),
+               "Pos": str(_pr["pos"])}
         _mp["_is_pitcher"] = _mp["pos"] == "1" or _mp["_role"] in ("starter", "reliever", "closer")
         try:
             _bkt = assign_bucket(_mp, use_pot=False)
         except Exception:
             continue
-        _mlb_by_bucket.setdefault(_bkt, []).append(mr["composite_score"])
-    for _bkt, _vals in _mlb_by_bucket.items():
-        _vals.sort()
-        _mlb_medians[_bkt] = _vals[len(_vals) // 2]
+        _all_ceil_wars.append(_interpolate_war(_pr["true_ceiling"], _bkt))
+
+    # FG targets per org: 70=0.1, 65=0.2, 60=0.3, 55=0.7, 50=2.3, 45=5.0
+    _n_orgs = conn.execute(
+        "SELECT COUNT(DISTINCT team_id) FROM players WHERE level = 1"
+    ).fetchone()[0] or 30
+    _all_ceil_wars.sort(reverse=True)
+    _n_prospects = len(_all_ceil_wars)
+    _fg_targets = [(70, 0.1), (65, 0.3), (60, 0.6), (55, 1.3), (50, 3.6), (45, 8.6)]
+    _fv_thresholds = []
+    # Scale FG targets to our pool size (may be larger than 150/org)
+    _prospects_per_org = _n_prospects / _n_orgs
+    _fg_pool_per_org = 150  # FG assumes ~150 ranked prospects per org
+    _scale = _prospects_per_org / _fg_pool_per_org
+    for _fv, _per_org in _fg_targets:
+        _count = int(_per_org * _scale * _n_orgs)
+        if _count < _n_prospects:
+            _fv_thresholds.append((_all_ceil_wars[_count], _fv))
+        else:
+            _fv_thresholds.append((0.0, _fv))
+    # Add FV 40 floor
+    _fv_thresholds.append((max(0.1, _fv_thresholds[-1][0] * 0.5) if _fv_thresholds else 0.5, 40))
 
     prospect_rows = []
     surplus_rows  = []
@@ -196,7 +242,9 @@ def run():
         p["_is_pitcher"] = (p["Pos"] == "P" or role_str in ("starter", "reliever", "closer"))
         bucket = assign_bucket(p)
         p["_bucket"] = bucket
-        p["_mlb_median"] = _mlb_medians.get(bucket, 50)
+        p["_mlb_median"] = 50  # legacy, not used by WAR-based FV
+        p["_ceil_war"] = _interpolate_war(p["Pot"], bucket)
+        p["_fv_thresholds"] = _fv_thresholds
 
         # Defensive potential for position-adjusted scarcity
         _DEF_KEY = {'CF':'PotCF','SS':'PotSS','C':'PotC','2B':'Pot2B','3B':'Pot3B'}
