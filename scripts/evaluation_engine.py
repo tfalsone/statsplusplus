@@ -1277,15 +1277,8 @@ def compute_ceiling(
     potential_weight = max(0.30, min(0.95, 1.0 - (age - 16) * 0.05))
     raw_ceiling = round(raw_ceiling * potential_weight + composite_score * (1.0 - potential_weight))
 
-    # Work ethic modifier
-    if work_ethic in ("H", "VH"):
-        raw_ceiling += 1
-    elif work_ethic == "L":
-        raw_ceiling -= 1
-
-    # Accuracy variance: Acc=L → -2 penalty
-    if accuracy == "L":
-        raw_ceiling -= 2
+    # Character traits (work ethic, accuracy) now handled in FV calc,
+    # not in the projected score.
 
     # Floor constraint: projected is never below composite
     raw_ceiling = max(raw_ceiling, composite_score)
@@ -1328,13 +1321,6 @@ def compute_true_ceiling(
     # reflects the full tool profile without age-blend compression, so the
     # bonus that compensated for that compression is not needed here.
 
-    # Work ethic / accuracy
-    if work_ethic in ("H", "VH"):
-        raw += 1
-    elif work_ethic == "L":
-        raw -= 1
-    if accuracy == "L":
-        raw -= 2
 
     # Floor: never below composite
     raw = max(raw, composite_score)

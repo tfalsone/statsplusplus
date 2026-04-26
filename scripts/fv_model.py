@@ -321,11 +321,35 @@ def calc_fv_v2(p):
 
     # Scale closure rate to produce FV distributions closer to real baseball.
     # OOTP's development model is generous (median player realizes 97%+ of POT).
-    # Real baseball has much higher bust rates. Apply a discount that reflects
-    # the gap between game development and real-world outcomes.
-    # Calibrated to produce ~1 FV55+/org, ~3 FV50+/org, ~8 FV45+/org.
-    bust_discount = 0.45
-    effective_closure = closure * bust_discount
+    # Real baseball has much higher bust rates.
+    #
+    # The discount varies by two factors:
+    # 1. Age: younger prospects have more uncertainty (higher bust risk).
+    #    Age 17-19: 0.35 (most uncertain — 8+ years of development)
+    #    Age 20-21: 0.40 (still very uncertain)
+    #    Age 22-23: 0.50 (tools starting to stabilize)
+    #    Age 24-25: 0.55 (near-peak, less uncertainty)
+    # 2. Gap size: larger gaps = more uncertainty.
+    #    Gap 20+: ×0.70 (huge development needed, high bust risk)
+    #    Gap 10-19: ×0.85 (moderate development)
+    #    Gap <10: ×1.00 (small gap, outcome is mostly determined)
+    if age <= 19:
+        base_discount = 0.35
+    elif age <= 21:
+        base_discount = 0.40
+    elif age <= 23:
+        base_discount = 0.50
+    else:
+        base_discount = 0.55
+
+    if gap >= 20:
+        gap_scale = 0.70
+    elif gap >= 10:
+        gap_scale = 0.85
+    else:
+        gap_scale = 1.00
+
+    effective_closure = closure * base_discount * gap_scale
 
     fv = ovr + gap * effective_closure
 
