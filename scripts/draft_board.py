@@ -1,0 +1,316 @@
+"""Draft board CLI tool.
+
+Usage:
+    python3 scripts/draft_board.py board [--top N]
+    python3 scripts/draft_board.py available [--top N]
+    python3 scripts/draft_board.py pick N
+    python3 scripts/draft_board.py upload [--top N]
+    python3 scripts/draft_board.py compare ID1 ID2 [ID3]
+
+Modes:
+    board      Full ranked draft board from uploaded pool
+    available  Board minus already-taken players (mid-draft)
+    pick N     Generate ranked list of exactly N players (pre-draft submission)
+    upload     Write StatsPlus auto-draft file (data/<league>/tmp/draft_upload.txt)
+    compare    Side-by-side comparison of 2-3 prospects by player_id or name
+"""
+import argparse
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from league_context import get_league_dir
+
+
+def _connect():
+    db = get_league_dir() / "league.db"
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _load_pool_ids():
+    pool_path = get_league_dir() / "config" / "draft_pool.json"
+    if not pool_path.exists():
+        sys.exit("No draft pool uploaded. Upload via the web UI first.")
+    return json.loads(pool_path.read_text())["player_ids"]
+
+
+def _get_taken_pids():
+    """Fetch already-drafted player IDs from StatsPlus API."""
+    try:
+        from statsplus import client
+        from league_context import get_statsplus_cookie
+        from league_config import LeagueConfig
+        cfg = LeagueConfig()
+        slug = cfg.settings.get("statsplus_slug", "")
+        cookie = get_statsplus_cookie()
+        if slug and cookie:
+            client.configure(slug, cookie)
+        raw = client.get_draft()
+        return {d["ID"] for d in raw if d.get("ID")}
+    except Exception as e:
+        print(f"Warning: could not fetch draft picks from API: {e}", file=sys.stderr)
+        return set()
+
+
+_BOARD_SQL = """
+    SELECT pf.fv, pf.fv_str, pf.risk, pf.bucket, pf.prospect_surplus,
+           p.name, p.age, p.player_id,
+           r.composite_score, r.true_ceiling, r.offensive_grade,
+           r.pot_cntct, r.pot_gap, r.pot_pow, r.pot_eye,
+           r.cntct, r.gap, r.pow, r.eye, r.speed,
+           r.pot_stf, r.pot_mov, r.pot_ctrl,
+           r.stf, r.mov, r.ctrl,
+           r.ofr, r.ifr, r.c_frm, r.acc
+    FROM prospect_fv pf
+    JOIN players p ON pf.player_id = p.player_id
+    JOIN latest_ratings r ON r.player_id = p.player_id
+    WHERE pf.player_id IN ({placeholders})
+    ORDER BY pf.fv DESC, pf.prospect_surplus DESC
+"""
+
+
+def _query_board(conn, pids):
+    ph = ",".join("?" * len(pids))
+    sql = _BOARD_SQL.format(placeholders=ph)
+    return conn.execute(sql, pids).fetchall()
+
+
+def _flags(r):
+    flags = []
+    if r["acc"] == "L":
+        flags.append("Acc=L!")
+    if r["risk"] == "Extreme":
+        flags.append("EXTREME")
+    if r["bucket"] in ("SP", "RP"):
+        if (r["pot_ctrl"] or 0) < 45:
+            flags.append("ctl<45")
+    return " ".join(flags)
+
+
+def _print_board(rows, limit=None):
+    if limit:
+        rows = rows[:limit]
+    print(f"{'#':>3} {'Name':24s} {'Age':>3} {'Pos':4s} {'FV':>3} {'Risk':>7} "
+          f"{'Ceil':>4} {'$M':>6} {'Flags'}")
+    print("-" * 82)
+    for i, r in enumerate(rows, 1):
+        surplus_m = r["prospect_surplus"] / 1e6
+        f = _flags(r)
+        print(f"{i:3d} {r['name']:24s} {r['age']:3d} {r['bucket']:4s} "
+              f"{r['fv_str']:>3} {r['risk']:>7} {r['true_ceiling']:4d} "
+              f"{surplus_m:6.1f} {f}")
+
+
+def _print_tools(rows, limit=None):
+    if limit:
+        rows = rows[:limit]
+    print()
+    print(f"{'#':>3} {'Name':24s} {'Pos':4s} Tools (cur/pot)")
+    print("-" * 82)
+    for i, r in enumerate(rows, 1):
+        if r["bucket"] in ("SP", "RP"):
+            print(f"{i:3d} {r['name']:24s} {r['bucket']:4s} "
+                  f"Stf {r['stf']:2d}/{r['pot_stf']:2d}  "
+                  f"Mov {r['mov']:2d}/{r['pot_mov']:2d}  "
+                  f"Ctl {r['ctrl']:2d}/{r['pot_ctrl']:2d}  Acc={r['acc']}")
+        else:
+            def_val = ""
+            if r["bucket"] == "C":
+                def_val = f" C={r['c_frm']}"
+            elif r["bucket"] in ("SS", "2B", "3B"):
+                def_val = f" IF={r['ifr']}"
+            elif r["bucket"] in ("CF", "COF"):
+                def_val = f" OF={r['ofr']}"
+            print(f"{i:3d} {r['name']:24s} {r['bucket']:4s} "
+                  f"Cnt {r['cntct']:2d}/{r['pot_cntct']:2d}  "
+                  f"Gap {r['gap']:2d}/{r['pot_gap']:2d}  "
+                  f"Pow {r['pow']:2d}/{r['pot_pow']:2d}  "
+                  f"Eye {r['eye']:2d}/{r['pot_eye']:2d}  "
+                  f"Spd {r['speed']:2d}{def_val}  Acc={r['acc']}")
+
+
+def _print_compare(rows):
+    """Side-by-side comparison of 2-3 prospects."""
+    names = [r["name"] for r in rows]
+    w = max(20, max(len(n) for n in names) + 2)
+
+    def _row(label, values):
+        print(f"  {label:12s}", end="")
+        for v in values:
+            print(f"{str(v):>{w}}", end="")
+        print()
+
+    print(f"\n{'':12s}", end="")
+    for n in names:
+        print(f"{n:>{w}}", end="")
+    print("\n" + "-" * (12 + w * len(rows)))
+
+    _row("FV", [f"{r['fv_str']} {r['risk']}" for r in rows])
+    _row("Ceiling", [r["true_ceiling"] for r in rows])
+    _row("Composite", [r["composite_score"] for r in rows])
+    _row("Surplus", [f"${r['prospect_surplus']/1e6:.1f}M" for r in rows])
+    _row("Age", [r["age"] for r in rows])
+    _row("Position", [r["bucket"] for r in rows])
+    _row("Acc", [r["acc"] for r in rows])
+
+    print()
+    # Tool comparison
+    all_pitchers = all(r["bucket"] in ("SP", "RP") for r in rows)
+    all_hitters = all(r["bucket"] not in ("SP", "RP") for r in rows)
+
+    if all_pitchers:
+        _row("Stuff", [f"{r['stf']}/{r['pot_stf']}" for r in rows])
+        _row("Movement", [f"{r['mov']}/{r['pot_mov']}" for r in rows])
+        _row("Control", [f"{r['ctrl']}/{r['pot_ctrl']}" for r in rows])
+    elif all_hitters:
+        _row("Contact", [f"{r['cntct']}/{r['pot_cntct']}" for r in rows])
+        _row("Gap", [f"{r['gap']}/{r['pot_gap']}" for r in rows])
+        _row("Power", [f"{r['pow']}/{r['pot_pow']}" for r in rows])
+        _row("Eye", [f"{r['eye']}/{r['pot_eye']}" for r in rows])
+        _row("Speed", [r["speed"] for r in rows])
+        def_labels = []
+        for r in rows:
+            if r["bucket"] == "C":
+                def_labels.append(f"C={r['c_frm']}")
+            elif r["bucket"] in ("SS", "2B", "3B"):
+                def_labels.append(f"IF={r['ifr']}")
+            elif r["bucket"] in ("CF", "COF"):
+                def_labels.append(f"OF={r['ofr']}")
+            else:
+                def_labels.append("-")
+        _row("Defense", def_labels)
+    else:
+        # Mixed — show what's relevant per player
+        for r in rows:
+            print(f"\n  {r['name']}:")
+            if r["bucket"] in ("SP", "RP"):
+                print(f"    Stf {r['stf']}/{r['pot_stf']}  "
+                      f"Mov {r['mov']}/{r['pot_mov']}  "
+                      f"Ctl {r['ctrl']}/{r['pot_ctrl']}")
+            else:
+                print(f"    Cnt {r['cntct']}/{r['pot_cntct']}  "
+                      f"Gap {r['gap']}/{r['pot_gap']}  "
+                      f"Pow {r['pow']}/{r['pot_pow']}  "
+                      f"Eye {r['eye']}/{r['pot_eye']}  Spd {r['speed']}")
+
+    # Flags
+    print()
+    for r in rows:
+        f = _flags(r)
+        if f:
+            print(f"  ⚠ {r['name']}: {f}")
+
+
+def cmd_board(args):
+    conn = _connect()
+    pids = _load_pool_ids()
+    rows = _query_board(conn, pids)
+    _print_board(rows, limit=args.top)
+    _print_tools(rows, limit=args.top)
+
+
+def cmd_available(args):
+    conn = _connect()
+    pids = _load_pool_ids()
+    taken = _get_taken_pids()
+    remaining = [p for p in pids if p not in taken]
+    if not remaining:
+        print("No players remaining (or could not fetch picks).")
+        return
+    rows = _query_board(conn, remaining)
+    print(f"({len(taken)} players already taken, {len(remaining)} remaining)\n")
+    _print_board(rows, limit=args.top)
+    _print_tools(rows, limit=args.top)
+
+
+def cmd_pick(args):
+    conn = _connect()
+    pids = _load_pool_ids()
+    rows = _query_board(conn, pids)
+    n = args.n
+    rows = rows[:n]
+    print(f"Pre-draft ranked list — Top {n} (for pick #{n})\n")
+    _print_board(rows, limit=n)
+    _print_tools(rows, limit=n)
+
+
+def cmd_upload(args):
+    conn = _connect()
+    pids = _load_pool_ids()
+    rows = _query_board(conn, pids)
+    limit = min(args.top or 500, 500)
+    ranked_ids = [str(r["player_id"]) for r in rows[:limit]]
+
+    out_path = get_league_dir() / "tmp" / "draft_upload.txt"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("\n".join(ranked_ids) + "\n")
+    print(f"Wrote {len(ranked_ids)} player IDs to {out_path}")
+
+
+def cmd_compare(args):
+    conn = _connect()
+    pids = _load_pool_ids()
+
+    # Resolve IDs — accept player_id (int) or name (string)
+    targets = []
+    for val in args.players:
+        if val.isdigit():
+            targets.append(int(val))
+        else:
+            # Search by name in pool
+            ph = ",".join("?" * len(pids))
+            match = conn.execute(
+                f"SELECT player_id FROM players WHERE name LIKE ? AND player_id IN ({ph})",
+                [f"%{val}%"] + pids
+            ).fetchone()
+            if match:
+                targets.append(match[0])
+            else:
+                sys.exit(f"Player not found in draft pool: {val}")
+
+    ph = ",".join("?" * len(targets))
+    sql = _BOARD_SQL.format(placeholders=ph)
+    rows = conn.execute(sql, targets).fetchall()
+    if len(rows) < 2:
+        sys.exit("Need at least 2 players to compare.")
+    # Sort by the order requested
+    by_id = {r["player_id"]: r for r in rows}
+    ordered = [by_id[t] for t in targets if t in by_id]
+    _print_compare(ordered)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Draft board analysis tool")
+    sub = parser.add_subparsers(dest="cmd")
+
+    p_board = sub.add_parser("board", help="Full ranked draft board")
+    p_board.add_argument("--top", type=int, default=30)
+
+    p_avail = sub.add_parser("available", help="Best available (excludes taken)")
+    p_avail.add_argument("--top", type=int, default=30)
+
+    p_pick = sub.add_parser("pick", help="Ranked list for pre-draft submission")
+    p_pick.add_argument("n", type=int, help="Number of picks (your draft position)")
+
+    p_upload = sub.add_parser("upload", help="Generate StatsPlus auto-draft file")
+    p_upload.add_argument("--top", type=int, default=500)
+
+    p_cmp = sub.add_parser("compare", help="Head-to-head comparison")
+    p_cmp.add_argument("players", nargs="+", help="Player IDs or names (2-3)")
+
+    args = parser.parse_args()
+    if not args.cmd:
+        parser.print_help()
+        return
+
+    {"board": cmd_board, "available": cmd_available, "pick": cmd_pick,
+     "upload": cmd_upload, "compare": cmd_compare}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    main()
