@@ -92,6 +92,21 @@ def _flags(r):
     return " ".join(flags)
 
 
+_ACC_ADJ = {"VH": 3, "A": 1, "H": 0, "L": -4, "N": 0}
+
+
+def _draft_value(r):
+    """Compute draft value score: FV + ceiling bonus + accuracy adjustment."""
+    fv = r["fv"] or 0
+    ceil = r["true_ceiling"] or 0
+    acc = r["acc"] or "N"
+    val = fv + (ceil - 55) * 0.15 + _ACC_ADJ.get(acc, 0)
+    # SP with control ceiling < 45: likely reliever, penalize
+    if r["bucket"] in ("SP", "RP") and (r["pot_ctrl"] or 0) < 45:
+        val -= 3
+    return val
+
+
 def _print_board(rows, limit=None):
     if limit:
         rows = rows[:limit]
@@ -250,6 +265,8 @@ def cmd_pick(args):
     conn = _connect()
     pids = _load_pool_ids()
     rows = _query_board(conn, pids)
+    # Sort by draft value (FV + ceiling bonus + acc adjustment)
+    rows = sorted(rows, key=lambda r: _draft_value(r), reverse=True)
     n = args.n
     rows = rows[:n]
     print(f"Pre-draft ranked list — Top {n} (for pick #{n})\n")
