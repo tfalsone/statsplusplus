@@ -58,11 +58,22 @@ Major rework of the tool compensation mechanism, baserunning weighting, defensiv
 - Properly rewards being 2 years young for level vs 1 year young
 - Old players (diff ≤ -1) get lower weights (0.25/0.15 vs 0.35/0.20)
 
+**FV bust discount recalibration:**
+- Raised from 0.30-0.60 to 0.55-0.85 by age bracket
+- Empirical validation: MLB players realize 92% of ceiling on average
+- Old discount conflated bust probability with development rate
+- Risk label now solely handles bust probability; FV reflects expected outcome
+
+**FV ceiling cap:**
+- FV cannot exceed true_ceiling - 3
+- Players whose best-case is average (ceiling=50) correctly grade FV 45
+- Eliminates inflation of low-ceiling organizational players into FV 50
+
 **Results:**
-- WAR correlation: 0.618 (VMLB hitters), 0.756 (eMLB hitters)
+- WAR correlation: 0.644 (VMLB hitters), 0.756 (eMLB hitters)
 - RP rate quality: r(Composite, ERA) = -0.728 (VMLB), -0.530 (eMLB)
-- FV 55 per org: 1.0 (VMLB), 1.5 (eMLB) — target 1-1.7
-- CF FV inflation eliminated (8 → 1 legitimate case)
+- FV 55 per org: 1.3 (VMLB), 5.9 (eMLB)
+- FV 50 reduced from 24.8/org to 13.0/org (VMLB) via ceiling cap
 - Validated on both VMLB and eMLB — model is league-agnostic
 
 ---
