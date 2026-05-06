@@ -342,6 +342,13 @@ def calc_fv_v2(p):
     # (future average regular) — they're a 45 (future backup/platoon).
     fv = min(fv, pot - 3)
 
+    # Offensive ceiling cap: if the bat can never be MLB-average (off_ceil < 45),
+    # cap FV at 50 regardless of defense/speed. A player who projects as a
+    # defensive replacement should not grade as a future regular.
+    off_ceil = p.get("_offensive_ceiling")
+    if off_ceil is not None and off_ceil < 45 and bucket not in ("SP", "RP"):
+        fv = min(fv, 50)
+
     fv = max(20, fv)
     # Snap to nearest 5
     fv_grade = round(fv / 5) * 5
