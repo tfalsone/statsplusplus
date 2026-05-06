@@ -96,11 +96,10 @@ _ACC_ADJ = {"VH": 3, "A": 1, "H": 0, "L": -4, "N": 0}
 
 
 def _draft_value(r):
-    """Compute draft value score: FV + ceiling bonus + accuracy adjustment."""
+    """Compute draft value score: FV + ceiling bonus + control penalty."""
     fv = r["fv"] or 0
     ceil = r["true_ceiling"] or 0
-    acc = r["acc"] or "N"
-    val = fv + (ceil - 55) * 0.15 + _ACC_ADJ.get(acc, 0)
+    val = fv + (ceil - 55) * 0.2
     # SP with control ceiling < 45: likely reliever, penalize
     if r["bucket"] in ("SP", "RP") and (r["pot_ctrl"] or 0) < 45:
         val -= 3
