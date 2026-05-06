@@ -2,25 +2,136 @@
 
 ## Purpose
 
-Analyze the uploaded draft pool and recommend picks based on prospect evaluation,
-organizational need, and value optimization. Operates on the active league's
-`config/draft_pool.json` player IDs cross-referenced with `prospect_fv` grades.
+Analyze the uploaded draft pool and provide draft recommendations across four
+operational modes. Operates on the active league's `config/draft_pool.json`
+player IDs cross-referenced with `prospect_fv` grades.
+
+---
+
+## Operational Modes
+
+### Mode 1: Best Available (Mid-Draft)
+
+**Trigger:** "Who should I pick?" / "Best available" / "It's my turn"
+
+The draft is in progress. Other players have been taken. Use the StatsPlus API
+(`/api/draft-picks`) to identify which players are already selected, then
+recommend from the remaining pool.
+
+**Process:**
+1. Fetch current picks via API to identify taken player_ids
+2. Filter draft pool to exclude taken players
+3. Present top 3-5 remaining by FV/surplus with full analysis
+4. Recommend one with reasoning
+
+**Key query:**
+```python
+# Get taken player IDs from API
+from statsplus import client
+picks = client.get_draft()
+taken_pids = {d["ID"] for d in picks if d.get("ID")}
+
+# Filter pool
+available = [pid for pid in pool_pids if pid not in taken_pids]
+```
+
+### Mode 2: Pre-Draft Ranked List (Fixed Pick Position)
+
+**Trigger:** "I'm picking Nth" / "Generate my top N list" / "Pre-draft submission"
+
+The user must submit a ranked list of N players before the draft starts. The list
+represents their preference order — if all players above their pick are taken,
+the commissioner selects the highest remaining player on their list.
+
+**Process:**
+1. Load full draft pool with FV grades
+2. Rank by FV (desc), then surplus (desc) as primary sort
+3. Apply tiebreakers: risk, ceiling, positional value, Acc
+4. Generate exactly N players, ranked
+5. Output as a clean numbered list suitable for submission
+
+**Important:** The list must be LONGER than the pick position to account for
+uncertainty about who others will take. If picking 30th, the list should be
+exactly 30 players — the user's top 30 in preference order.
+
+### Mode 3: Auto-Draft Upload List (StatsPlus Format)
+
+**Trigger:** "Generate auto-draft list" / "Upload list for StatsPlus"
+
+Generate a ranked list of up to 500 player IDs for StatsPlus auto-draft upload.
+StatsPlus will auto-select the highest player on this list when it's the team's
+turn. If no list players remain, it falls back to best available by OSA potential.
+
+**Process:**
+1. Load full draft pool with FV grades
+2. Rank all 500+ players by FV (desc), surplus (desc)
+3. Apply org need as a secondary factor (boost players at thin positions)
+4. Output as plain text file: one player ID per line, no header
+
+**Output format (for StatsPlus upload):**
+```
+36166
+56227
+46411
+53051
+...
+```
+
+**File:** Write to `data/<league>/tmp/draft_upload.txt`
+
+### Mode 4: Head-to-Head Comparison
+
+**Trigger:** "Compare X vs Y" / "I'm torn between..." / "Should I take A or B?"
+
+Deep analysis comparing 2-3 specific prospects to determine the best pick.
+
+**Process:**
+1. Pull full ratings for each player
+2. Compare across all evaluation dimensions:
+   - FV grade and surplus value
+   - Ceiling (true_ceiling) and floor (composite_score)
+   - Tool-by-tool comparison (potential AND current)
+   - Risk profile (risk label + Acc + age)
+   - Positional value and defensive projection
+   - Org need fit
+3. Identify the key differentiator (what makes one better than the other)
+4. Make a clear recommendation with reasoning
+
+**Analysis template:**
+```
+Player A vs Player B
+
+           A              B
+FV:        60 Medium      60 High
+Ceiling:   68             64
+Floor:     44             38
+Age:       21             18
+Pos:       CF             COF
+Acc:       A              H
+
+Tools (potential):
+  Contact: 78             62
+  Gap:     96             100
+  Power:   61             82
+  Eye:     92             97
+  Speed:   51             80
+
+Verdict: [recommendation with reasoning]
+```
 
 ---
 
 ## Data Sources
 
-All data lives in `data/<league>/league.db` (SQLite). Key tables and files:
-
 | Source | What it provides |
 |--------|-----------------|
-| `prospect_fv` | FV grade, risk label, bucket, surplus for each draft-eligible player |
-| `latest_ratings` | Full tool ratings (current + potential), defense, speed, character |
-| `players` | Age, level, team assignment |
-| `config/draft_pool.json` | Uploaded pool — the exact player_ids eligible for this draft |
+| `prospect_fv` table | FV grade, risk label, bucket, surplus |
+| `latest_ratings` view | Full tool ratings (cur/pot), defense, speed, character |
+| `players` table | Age, level, team assignment |
+| `config/draft_pool.json` | Uploaded pool — exact player_ids eligible |
 | `config/state.json` | `my_team_id` — the team we're drafting for |
-| `player_surplus` | MLB roster surplus by position (for org depth context) |
-| `config/model_weights.json` | COMPOSITE_TO_WAR tables for positional value context |
+| `player_surplus` table | MLB roster surplus by position (org depth) |
+| `get_draft_org_depth(team_id)` | Per-position surplus totals (web/team_queries.py) |
 
 ---
 
@@ -33,73 +144,44 @@ surplus captures age/position/ceiling value differences.
 
 ### Key Factors (in priority order)
 
-1. **FV Grade** — The prospect's expected peak outcome. FV 60+ = impact player.
+1. **FV Grade** — Expected peak outcome. FV 60+ = impact player.
    FV 55 = solid regular. FV 50 = depth/platoon.
 
 2. **Risk Label** — Low/Medium/High/Extreme. At equal FV, prefer lower risk.
    In early rounds, accept High risk for higher FV. In later rounds, prefer
-   Medium/Low risk for safer floor.
+   Medium/Low for safer floor.
 
 3. **Ceiling (true_ceiling)** — Maximum outcome. Two FV 55 prospects with
    ceilings of 68 vs 58 are very different bets.
 
 4. **Accuracy (Acc)** — Development probability modifier:
+   - VH = very high — strong development confidence
    - A = normal development expected
    - H = high accuracy — slightly better development odds
-   - VH = very high — strong development confidence
    - L = low accuracy — significant bust risk, discount by ~5 FV mentally
 
 5. **Positional Value** — C > SS > CF > 2B/3B > COF > 1B for prospect value.
    Premium position players with equal FV are worth more.
 
-6. **Organizational Need** — Use `get_draft_org_depth(team_id)` to identify
-   positions where the org is thin. Tiebreaker only — never reach for need
-   over a clearly better player.
+6. **Organizational Need** — Tiebreaker only. Never reach for need over talent.
 
-7. **Tool Profile** — For hitters: contact + eye = safe floor, power + gap = ceiling.
-   For pitchers: stuff ceiling drives upside, control floor drives safety.
-   Speed + defense = bonus value on top of bat.
+7. **Tool Profile** — Contact + eye = safe floor. Power + gap = ceiling.
+   Stuff ceiling drives pitcher upside. Control floor drives pitcher safety.
 
 ### Red Flags (discount or avoid)
 
-- **Acc=L** with FV < 60: high bust probability, not worth the risk unless
-  the ceiling is exceptional
-- **Extreme risk** at any FV: only draft if surplus is significantly above
-  the next available player
+- **Acc=L** with FV < 60: high bust probability, not worth the risk
+- **Extreme risk** at any FV: only draft if surplus is far above next available
 - **1B/DH-only profiles** below FV 60: limited positional value
 - **Pitchers with control ceiling < 45**: likely reliever regardless of stuff
 - **Age 23+ in draft pool**: limited development runway
 
 ### Green Flags (upgrade confidence)
 
-- **Acc=A or VH** with High ceiling: development is likely
-- **Premium position + elite defense**: floor is a useful MLB player even
-  if bat doesn't fully develop
+- **Acc=A or VH** with high ceiling: development is likely
+- **Premium position + elite defense**: floor is useful MLB player
 - **Multiple 70+ potential tools**: star upside
 - **College arms with 3+ pitches and control ≥ 60 potential**: safe SP floor
-
----
-
-## Output Formats
-
-### Draft Board (default)
-
-Ranked list with:
-- Rank, Name, Age, Position, FV, Risk, Ceiling, Surplus
-- Tool summary (cur/pot for primary tools)
-- Flags (Acc=L warning, positional notes, org need match)
-
-### Best Available Pick
-
-Given a specific pick number or "who should I take next":
-1. Show top 3-5 available players
-2. Recommend one with reasoning (FV, risk, ceiling, need, flags)
-3. Note any Acc=L or Extreme risk concerns
-
-### Org Need Context
-
-When requested, show the team's positional depth (MLB surplus + farm surplus)
-and highlight positions where drafting would fill a gap.
 
 ---
 
@@ -129,14 +211,22 @@ from team_queries import get_draft_org_depth
 depth = get_draft_org_depth(my_team_id)
 ```
 
+### Get taken players (mid-draft)
+```python
+from statsplus import client
+picks = client.get_draft()
+taken_pids = {d["ID"] for d in picks if d.get("ID")}
+```
+
 ---
 
-## Conventions
+## Output Conventions
 
 - All ratings are on the league's native scale (1-100 for eMLB).
 - FV grades are on the 20-80 scouting scale in increments of 5.
-- Surplus is in raw dollars (divide by 1e6 for display as $M).
+- Surplus displayed as $M (divide raw value by 1e6).
 - Never recommend drafting purely for need over talent.
-- Flag Acc=L players explicitly — the user should know the risk.
-- When comparing similar players, use ceiling as the tiebreaker for
-  early rounds and floor (risk label) as the tiebreaker for late rounds.
+- Flag Acc=L players explicitly — the user must know the risk.
+- When comparing similar players, use ceiling as tiebreaker for early rounds
+  and floor (risk label) as tiebreaker for late rounds.
+- For Mode 3 output, write the file and report the path. Do not print 500 IDs.
