@@ -637,6 +637,125 @@ def _sub_mlb_floor_penalty(tools: dict[str, int | None]) -> float:
     return penalty
 
 
+# ---------------------------------------------------------------------------
+# Tool compensation — pull below-average tools toward 50 when compensated
+# ---------------------------------------------------------------------------
+
+def _compensated_transform(val: float, compensators: list[tuple[float, float]]) -> float:
+    """Transform a tool value with compensation that pulls toward average.
+
+    Applies ``_tool_transform`` first, then pulls the result toward 50
+    (league average) proportionally to compensating tools. This creates a
+    smooth curve with no cliff at 40 -- compensation applies to any tool
+    below 50 after transform, whether the deficit comes from the 1.5x
+    penalty (below 40) or from being merely below-average (40-50).
+
+    Each compensator contributes ``surplus * strength`` to the pull
+    fraction, where surplus is points above 50.
+
+    The pull fraction is capped at 0.75.
+
+    Args:
+        val: Raw tool value on the 20-80 scale.
+        compensators: List of (compensator_grade, strength) pairs.
+
+    Returns:
+        Transformed value with compensation applied.
+    """
+    transformed = _tool_transform(val)
+
+    # Deficit from average (50). No compensation needed if already at/above avg.
+    deficit = 50.0 - transformed
+    if deficit <= 0:
+        return transformed
+
+    # Accumulate pull fraction from each compensator
+    pull_fraction = 0.0
+    for comp_val, strength in compensators:
+        if comp_val > 50.0:
+            surplus = comp_val - 50.0
+            pull_fraction += surplus * strength
+
+    # Cap at 75%
+    pull_fraction = min(pull_fraction, 0.75)
+    return transformed + deficit * pull_fraction
+
+
+def _apply_hitter_tool_compensation(tools: dict[str, int | None]) -> dict[str, float]:
+    """Apply compensation for hitter tools below average (< 50).
+
+    When a tool is below 50 and a compensating tool is above 50, the
+    effective value is pulled toward 50. Smooth and continuous with no cliff.
+
+    Returns a dict with ``_power_transformed`` and/or ``_eye_transformed``
+    keys when compensation applies.
+    """
+    cnt = float(tools.get("contact") or 0)
+    pow_ = float(tools.get("power") or 0)
+    eye = float(tools.get("eye") or 0)
+
+    effective = dict(tools)
+
+    # Power below average: contact (primary, 0.020/pt) and eye (secondary, 0.012/pt)
+    if pow_ < 50 and pow_ > 0:
+        compensators = []
+        if cnt > 50:
+            compensators.append((cnt, 0.020))
+        if eye > 50:
+            compensators.append((eye, 0.012))
+        if compensators:
+            effective["_power_transformed"] = _compensated_transform(pow_, compensators)
+
+    # Eye below average: contact compensates (0.020/pt)
+    if eye < 50 and eye > 0:
+        compensators = []
+        if cnt > 50:
+            compensators.append((cnt, 0.020))
+        if compensators:
+            effective["_eye_transformed"] = _compensated_transform(eye, compensators)
+
+    return effective
+
+
+def _apply_pitcher_tool_compensation(tools: dict[str, int | None]) -> dict[str, float]:
+    """Apply compensation for pitcher tools below average (< 50).
+
+    Movement is the floor tool -- not compensated.
+    Stuff compensated by movement (primary) and control (secondary).
+    Control compensated by stuff (primary) and movement (secondary).
+
+    Returns a dict with ``_stuff_transformed`` and/or ``_control_transformed``
+    keys when compensation applies.
+    """
+    stf = float(tools.get("stuff") or 0)
+    mov = float(tools.get("movement") or 0)
+    ctrl = float(tools.get("control") or 0)
+
+    effective = dict(tools)
+
+    # Stuff below average: movement (primary, 0.020/pt) and control (secondary, 0.012/pt)
+    if stf < 50 and stf > 0:
+        compensators = []
+        if mov > 50:
+            compensators.append((mov, 0.020))
+        if ctrl > 50:
+            compensators.append((ctrl, 0.012))
+        if compensators:
+            effective["_stuff_transformed"] = _compensated_transform(stf, compensators)
+
+    # Control below average: stuff (primary, 0.018/pt) and movement (secondary, 0.012/pt)
+    if ctrl < 50 and ctrl > 0:
+        compensators = []
+        if stf > 50:
+            compensators.append((stf, 0.018))
+        if mov > 50:
+            compensators.append((mov, 0.012))
+        if compensators:
+            effective["_control_transformed"] = _compensated_transform(ctrl, compensators)
+
+    return effective
+
+
 def compute_composite_hitter(
     tools: dict[str, int | None],
     weights: dict[str, float],
@@ -693,10 +812,26 @@ def compute_composite_hitter(
         offense_share = 1.0 - defense_weight
         baserunning_share = 0.0
 
+    # Contact-scaled baserunning: high-contact players extract more WAR
+    # from speed (r=0.320 for Cnt>=60 vs r=0.145 for Cnt<50).
+    cnt = float(tools.get("contact") or 0)
+    if cnt > 50 and baserunning_share > 0:
+        br_boost_factor = min(1.0, (cnt - 50.0) / 30.0)
+        br_addition = baserunning_share * br_boost_factor
+        baserunning_share += br_addition
+        offense_share -= br_addition
+
+    # Elite defense boost: when primary defensive rating > 50, increase
+    # defense share (taken from offense). At def=80, defense weight doubles.
+    if def_raw is not None and defense_weight > 0 and defense:
+        primary_def = max((v for v in defense.values() if v is not None), default=0)
+        if primary_def > 50:
+            def_boost_factor = min(1.0, (primary_def - 50.0) / 30.0)
+            def_addition = defense_weight * def_boost_factor
+            defense_weight += def_addition
+            offense_share -= def_addition
+
     # Recombine raw component values weighted by their shares.
-    # Components that are None contribute 0 to the sum and their share
-    # is NOT redistributed — this matches the original behavior where
-    # missing tools simply don't contribute.
     raw = 0.0
     if off_raw is not None:
         raw += off_raw * offense_share
@@ -730,16 +865,22 @@ def _offensive_grade_raw(
 ) -> float | None:
     """Return the unclamped offensive weighted average, or ``None``.
 
-    This is the internal helper used by both ``compute_offensive_grade``
-    (which clamps to [20, 80]) and ``compute_composite_hitter`` (which
-    needs the unclamped value for accurate recombination).
+    Applies post-transform compensation: tool holes below 50 have their
+    penalty reduced when a compensating tool is strong. See
+    ``_apply_hitter_tool_compensation``.
     """
+    effective = _apply_hitter_tool_compensation(tools)
+    _COMPENSATED_KEYS = {"power": "_power_transformed", "eye": "_eye_transformed"}
     available: list[tuple[float, float]] = []
     for key in _OFFENSIVE_TOOL_KEYS:
-        val = tools.get(key)
+        val = effective.get(key)
         w = weights.get(key, 0.0)
         if val is not None and w > 0:
-            transformed = _tool_transform(float(val))
+            comp_key = _COMPENSATED_KEYS.get(key)
+            if comp_key and comp_key in effective:
+                transformed = effective[comp_key]
+            else:
+                transformed = _tool_transform(float(val))
             available.append((transformed, w))
 
     if not available:
@@ -998,13 +1139,21 @@ def compute_composite_pitcher(
     """
     arsenal_weight = weights.get("arsenal", 0.0)
 
+    # Apply post-transform compensation for pitcher tool holes
+    effective_tools = _apply_pitcher_tool_compensation(tools)
+    _COMPENSATED_KEYS = {"stuff": "_stuff_transformed", "control": "_control_transformed"}
     # Collect available pitch tools
     available: list[tuple[float, float]] = []
     for key in _PITCHER_TOOL_KEYS:
-        val = tools.get(key)
+        val = effective_tools.get(key)
         w = weights.get(key, 0.0)
         if val is not None and w > 0:
-            available.append((_tool_transform(float(val)), w))
+            comp_key = _COMPENSATED_KEYS.get(key)
+            if comp_key and comp_key in effective_tools:
+                transformed = effective_tools[comp_key]
+            else:
+                transformed = _tool_transform(float(val))
+            available.append((transformed, w))
 
     if not available:
         return 20
@@ -1149,9 +1298,9 @@ def compute_composite_mlb(
 
     stat_signal = weighted_sum / total_weight if total_weight > 0 else tool_score
 
-    # Blend weight: min(0.5, qualifying_seasons * 0.15)
-    qualifying_seasons = len(stat_seasons)
-    blend_weight = min(0.5, qualifying_seasons * 0.15)
+    # Blend weight based on seasons available:
+    seasons_available = min(len(stat_seasons), 3)
+    blend_weight = {1: 0.20, 2: 0.35, 3: 0.60}[seasons_available]
 
     # Young player blend: reduce blend_weight when player is under peak age
     # and tools suggest more upside than stats show. The age_factor scales
@@ -1163,14 +1312,6 @@ def compute_composite_mlb(
         age_factor = max(0.3, 1.0 - (peak_age - player_age) * 0.1)
         blend_weight *= age_factor
 
-    # Asymmetric blend for pitchers: when stats pull DOWN from tools, reduce
-    # the blend weight by 50%. Pitcher stats (FIP) have higher variance than
-    # hitter stats (OPS+) — a single bad season can be driven by defense,
-    # sequencing, HR luck, or park effects rather than true ability decline.
-    # When stats pull UP from tools, use full blend (stats confirming/exceeding
-    # tools is a reliable signal).
-    if is_pitcher and stat_signal < tool_score:
-        blend_weight *= 0.5
 
     composite = tool_score * (1.0 - blend_weight) + stat_signal * blend_weight
     return max(20, min(80, round(composite)))
