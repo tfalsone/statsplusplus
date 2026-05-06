@@ -2478,6 +2478,20 @@ def _extract_arsenal(row: dict, norm_fn) -> dict[str, int]:
     return arsenal
 
 
+def _extract_potential_arsenal(row: dict, norm_fn) -> dict[str, int]:
+    """Extract potential pitch arsenal. Uses pot_ columns, falls back to current."""
+    arsenal: dict[str, int] = {}
+    for col in _PITCH_COLS:
+        pot_val = norm_fn(row.get("pot_" + col))
+        if pot_val is not None:
+            arsenal[col] = pot_val
+        else:
+            cur_val = norm_fn(row.get(col))
+            if cur_val is not None:
+                arsenal[col] = cur_val
+    return arsenal
+
+
 def _extract_defense_tools(row: dict) -> dict[str, int | None]:
     """Extract raw defensive tool ratings from a DB row.
 
@@ -2765,6 +2779,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
         potential_pitcher_tools = _extract_potential_pitcher_tools(row_dict, _norm)
         defense_tools = _extract_defense_tools(row_dict)
         arsenal = _extract_arsenal(row_dict, _norm)
+        potential_arsenal = _extract_potential_arsenal(row_dict, _norm)
         stamina = _norm(row_dict.get("stm")) or 50
 
         # Check if player has any tool ratings at all
@@ -2899,7 +2914,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 potential_pitcher_tools, p_weights, two_way_result["pitcher_composite"],
                 accuracy=row_dict.get("acc") or "A",
                 work_ethic=row_dict.get("wrk_ethic") or "N",
-                is_pitcher=True, arsenal=arsenal, stamina=stamina, role=pitcher_role,
+                is_pitcher=True, arsenal=potential_arsenal, stamina=stamina, role=pitcher_role,
             )
             true_ceiling = max(h_true_ceil, p_true_ceil)
 
@@ -2981,7 +2996,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 potential_pitcher_tools, p_weights, composite_score,
                 accuracy=row_dict.get("acc") or "A",
                 work_ethic=row_dict.get("wrk_ethic") or "N",
-                is_pitcher=True, arsenal=arsenal, stamina=stamina, role=role,
+                is_pitcher=True, arsenal=potential_arsenal, stamina=stamina, role=role,
             )
 
             # Component scores for pitchers:
