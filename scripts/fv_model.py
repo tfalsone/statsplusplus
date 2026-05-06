@@ -337,6 +337,11 @@ def calc_fv_v2(p):
     if bucket == "RP":
         fv = min(fv, 55)
 
+    # Ceiling cap: FV cannot exceed true_ceiling - 3. A player whose
+    # best-case outcome is average (ceiling=50) should not grade as FV 50
+    # (future average regular) — they're a 45 (future backup/platoon).
+    fv = min(fv, pot - 3)
+
     fv = max(20, fv)
     # Snap to nearest 5
     fv_grade = round(fv / 5) * 5
