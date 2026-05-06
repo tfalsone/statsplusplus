@@ -307,10 +307,10 @@ def calc_fv_v2(p):
         else:
             lo = int(age); hi = lo + 1; frac = age - lo
             closure = closure_table.get(lo, 0.85) * (1 - frac) + closure_table.get(hi, 0.85) * frac
-        if age <= 19: bust = 0.30
-        elif age <= 21: bust = 0.35
-        elif age <= 23: bust = 0.45
-        else: bust = 0.60
+        if age <= 19: bust = 0.55
+        elif age <= 21: bust = 0.65
+        elif age <= 23: bust = 0.75
+        else: bust = 0.85
         peak = ovr + gap * closure * bust
         ceil_weight = max(0.0, min(0.5, (pot - 50) / 30.0))
         fv = peak * (1.0 - ceil_weight) + pot * ceil_weight
