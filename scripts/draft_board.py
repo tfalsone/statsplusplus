@@ -228,6 +228,24 @@ def cmd_available(args):
     _print_tools(rows, limit=args.top)
 
 
+_GAME_POS = {1: "P", 2: "C", 3: "1B", 4: "2B", 5: "3B", 6: "SS",
+             7: "LF", 8: "CF", 9: "RF", 10: "DH"}
+_ROLE_TO_POS = {11: "SP", 12: "SP", 13: "RP"}
+
+
+def _game_position(conn, player_id):
+    """Get the game's listed position label for a player."""
+    r = conn.execute(
+        "SELECT pos, role FROM players WHERE player_id=?", (player_id,)
+    ).fetchone()
+    if not r:
+        return "?"
+    role_pos = _ROLE_TO_POS.get(r["role"])
+    if role_pos:
+        return role_pos
+    return _GAME_POS.get(r["pos"], "?")
+
+
 def cmd_pick(args):
     conn = _connect()
     pids = _load_pool_ids()
@@ -237,6 +255,13 @@ def cmd_pick(args):
     print(f"Pre-draft ranked list — Top {n} (for pick #{n})\n")
     _print_board(rows, limit=n)
     _print_tools(rows, limit=n)
+
+    # Commissioner-ready list
+    print(f"\n{'=' * 40}")
+    print(f"Commissioner List (copy/paste ready):\n")
+    for i, r in enumerate(rows, 1):
+        gpos = _game_position(conn, r["player_id"])
+        print(f"{i:2d}. {gpos:3s}  {r['name']}")
 
 
 def cmd_upload(args):

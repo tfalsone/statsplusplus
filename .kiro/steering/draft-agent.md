@@ -48,7 +48,27 @@ the commissioner selects the highest remaining player on their list.
 2. Rank by FV (desc), then surplus (desc) as primary sort
 3. Apply tiebreakers: risk, ceiling, positional value, Acc
 4. Generate exactly N players, ranked
-5. Output as a clean numbered list suitable for submission
+5. Provide TWO outputs:
+   a. **Scouting summary** — full analysis with tools, flags, and rationale
+   b. **Commissioner list** — clean numbered list with game position and name only
+
+**Commissioner list format:**
+```
+ 1. CF   Roman Anthony
+ 2. SP   Mauricio Sampayo
+ 3. 2B   Gabriel Brown
+...
+```
+
+**Position labels use the game's listed position** (from `players.pos` field), NOT
+the evaluation bucket. This avoids confusion when the commissioner cross-references
+the list against the game.
+
+Game position map: `{1:'P', 2:'C', 3:'1B', 4:'2B', 5:'3B', 6:'SS', 7:'LF', 8:'CF', 9:'RF', 10:'DH'}`
+
+For pitchers, use the role to distinguish SP vs RP:
+- role in (11, 12) = SP
+- role in (13) = RP/CL
 
 **Important:** The list must be LONGER than the pick position to account for
 uncertainty about who others will take. If picking 30th, the list should be
