@@ -4,6 +4,69 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 52 (2026-05-06)
+
+### Evaluation Engine — Compensation, Baserunning, Defense, and FV Model Overhaul
+
+Major rework of the tool compensation mechanism, baserunning weighting, defensive value, and FV grading. Addresses score compression, prospect evaluation accuracy, and FV grade inflation.
+
+**Post-transform compensation (replaces pre-transform approach):**
+- Compensation now operates on the penalty/deficit from 50 (average) after `_tool_transform`, not on the raw value before transform
+- Smooth curve with no cliff at 40 — compensation applies to any tool below 50
+- Formula: `effective = transformed + (50 - transformed) * pull_fraction`
+- Pull fraction = `min(0.75, sum(surplus_i * strength_i))` where surplus = compensator - 50
+- Hitter: power/eye compensated by contact (0.020/pt) and eye (0.012/pt for power)
+- Pitcher: stuff compensated by movement/control; control by stuff/movement
+
+**Contact-scaled baserunning weight:**
+- High-contact players extract more WAR from speed (r=0.320 for Cnt≥60 vs r=0.145 for Cnt<50)
+- Baserunning share increases by up to 100% of base when contact > 50
+- Formula: `boost_factor = min(1.0, (contact - 50) / 30)`
+- Taken from offense_share to keep total at 1.0
+
+**Elite defense boost in composite:**
+- When primary defensive rating > 50, defense share increases (up to 2× base)
+- Formula mirrors baserunning boost: `def_addition = base_def_weight * min(1.0, (primary_def - 50) / 30)`
+- Improves WAR correlation for C (+0.042), CF (+0.020), SS (+0.024)
+
+**Above-60 tool transform bonus restored (1.2×):**
+- Each point above 60 counts as 1.2 points in the weighted average
+- Decompresses the top end of the composite scale
+- Elite prospects with 70-80 tools properly separate from average players
+- No effect on tools ≤ 60 (average and below unchanged)
+
+**Stat blending improvements:**
+- ERA- replaces FIP- for pitcher stat signal (OOTP WAR is RA9-based)
+- League-calibrated P95 slopes for stat-to-2080 conversion
+- Blend weights increased: 0.20/0.35/0.60 for 1/2/3 seasons
+- Pitcher asymmetric blend removed (was over-protecting pitchers)
+- `_refresh_stat_percentiles()` added to refresh.py
+
+**FV model fixes:**
+- Floor-based FV grading: `base = int(fv / 5) * 5` — must earn the grade (no rounding up from 52.65 to 55)
+- Plus modifier at remainder ≥ 2.0
+- Versatility bonus disabled (CF→corner OF is not real extra value; inflated 4th outfielders)
+- Positional access premium redesigned: scales with BOTH defense level and offensive adequacy
+  - Elite defenders (≥65): full premium, low offensive floor (38)
+  - Average defenders (50-64): reduced premium, higher floor (46)
+  - Only fires when offensive ceiling > current + 5 (prevents double-counting defense already in composite)
+- Premium uses projected offense (blended with offensive_ceiling via dev_weight)
+- `_offensive_ceiling` passed through fv_calc for premium calculation
+
+**dev_weight granularity:**
+- More granular for diff 1-3: diff=2 now gives 0.60 (was 0.50, same as diff=1)
+- Properly rewards being 2 years young for level vs 1 year young
+- Old players (diff ≤ -1) get lower weights (0.25/0.15 vs 0.35/0.20)
+
+**Results:**
+- WAR correlation: 0.618 (VMLB hitters), 0.756 (eMLB hitters)
+- RP rate quality: r(Composite, ERA) = -0.728 (VMLB), -0.530 (eMLB)
+- FV 55 per org: 1.0 (VMLB), 1.5 (eMLB) — target 1-1.7
+- CF FV inflation eliminated (8 → 1 legitimate case)
+- Validated on both VMLB and eMLB — model is league-agnostic
+
+---
+
 ## Session 51 (2026-04-26)
 
 ### Per-League Development Curve Calibration

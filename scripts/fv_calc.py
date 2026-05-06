@@ -188,6 +188,8 @@ def run():
             # Pass offensive grade through for positional access premium
             if p.get("offensive_grade") is not None:
                 p["_offensive_grade"] = p["offensive_grade"]
+            if p.get("offensive_ceiling") is not None:
+                p["_offensive_ceiling"] = p["offensive_ceiling"]
         else:
             p["Ovr"] = p.get("Ovr") or 0
             p["Pot"] = p.get("Pot") or 0

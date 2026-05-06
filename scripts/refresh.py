@@ -716,6 +716,7 @@ def refresh_league(year, game_date=None):
 
     log.info("── league averages")
     _refresh_league_averages(year)
+    _refresh_stat_percentiles(year)
     _refresh_dollar_per_war(year)
     _detect_minimum_salary()
     log.info("=== refresh_league complete ===")
@@ -826,6 +827,73 @@ def _refresh_league_averages(year):
         if key in existing:
             averages[key] = existing[key]
     _write_json(avg_path, averages)
+
+
+def _refresh_stat_percentiles(year):
+    """Compute P95 OPS+ and P5 ERA- from qualifying player seasons.
+
+    These calibrate the stat-to-2080 conversion slopes so that the top
+    producers in this league map to the correct grade (70-75) rather than
+    being compressed by a formula designed for a wider stat range.
+
+    ERA- is used for pitchers rather than FIP- because OOTP WAR is RA9-based
+    and the best pitchers suppress runs via contact management, not strikeouts.
+    FIP is uncorrelated with WAR in this league.
+
+    Written into league_averages.json as:
+        batting.ops_plus_p95 — P95 OPS+ among PA>=300 hitters
+        pitching.era_minus_p5 — P5 ERA- among qualifying pitchers (lower=better)
+    """
+    league_dir = get_league_dir()
+    avg_path = league_dir / "config" / "league_averages.json"
+    averages = json.loads(avg_path.read_text()) if avg_path.exists() else {}
+
+    lg_obp = averages.get("batting", {}).get("obp", 0.320)
+    lg_slg = averages.get("batting", {}).get("slg", 0.420)
+    lg_era = averages.get("pitching", {}).get("era", 4.50)
+
+    if lg_obp <= 0 or lg_slg <= 0 or lg_era <= 0:
+        return
+
+    conn = _db.get_conn(league_dir)
+
+    # P95 OPS+ from qualifying hitters (PA >= 300)
+    # Use prior year if available for full-season samples; fall back to current year
+    for yr in (year - 1, year):
+        bat_rows = conn.execute("""
+            SELECT obp, slg FROM batting_stats
+            WHERE year = ? AND split_id = 1 AND pa >= 300
+        """, (yr,)).fetchall()
+        if len(bat_rows) >= 20:
+            break
+
+    if bat_rows:
+        ops_plus_vals = sorted(
+            100.0 * (r["obp"] / lg_obp + r["slg"] / lg_slg - 1.0)
+            for r in bat_rows
+        )
+        p95_idx = int(0.95 * len(ops_plus_vals))
+        averages.setdefault("batting", {})["ops_plus_p95"] = round(ops_plus_vals[p95_idx], 1)
+
+    # P5 ERA- from qualifying pitchers (outs >= 300)
+    for yr in (year - 1, year):
+        pit_rows = conn.execute("""
+            SELECT era FROM pitching_stats
+            WHERE year = ? AND split_id = 1 AND outs >= 300 AND era IS NOT NULL
+        """, (yr,)).fetchall()
+        if len(pit_rows) >= 10:
+            break
+
+    if pit_rows:
+        era_minus_vals = sorted(r["era"] / lg_era * 100.0 for r in pit_rows)
+        p5_idx = int(0.05 * len(era_minus_vals))
+        averages.setdefault("pitching", {})["era_minus_p5"] = round(era_minus_vals[p5_idx], 1)
+
+    conn.close()
+    avg_path.write_text(json.dumps(averages, indent=2))
+    bat_p95 = averages.get("batting", {}).get("ops_plus_p95")
+    pit_p5 = averages.get("pitching", {}).get("era_minus_p5")
+    log.info(f"  stat percentiles: OPS+ P95={bat_p95}, ERA- P5={pit_p5}")
 
 
 def update_state(game_date, year):
