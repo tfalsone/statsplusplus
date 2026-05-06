@@ -50,7 +50,7 @@ DEFENSIVE_WEIGHTS = {
 
 # Level norm ages — expected age at each level for an on-track prospect.
 LEVEL_NORM_AGE = {
-    "aaa": 26, "aa": 24, "a": 22, "a-short": 21,
+    "draft": 18, "aaa": 26, "aa": 24, "a": 22, "a-short": 21,
     "usl": 19, "dsl": 18, "intl": 17,
 }
 
