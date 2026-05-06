@@ -141,12 +141,22 @@ def assign_bucket(p, use_pot=None):
     if pgrade("LF") >= 45 or pgrade("RF") >= 45:   return "COF"
     if pgrade("3B") >= 45:                          return "3B"
     if pgrade("1B") >= 45:                          return "1B"
-    # Fallback: use listed position if no grade threshold met
+    # Fallback: use listed position if no grade threshold met, but validate
+    # that the player has the athleticism to actually play there.
     pos_map = {"2": "C", "3": "1B", "4": "2B", "5": "3B", "6": "SS",
                "7": "COF", "8": "CF", "9": "COF", "10": "COF"}
-    if pos_str in pos_map:
-        return pos_map[pos_str]
-    return "COF"
+    fallback = pos_map.get(pos_str, "COF")
+    # Downgrade to 1B if athleticism clearly doesn't support the listed position
+    ifr = p.get("IFR") or 0
+    spd = p.get("Speed") or 0
+    ofr = p.get("OFR") or 0
+    if fallback in ("SS", "2B") and ifr and ifr < 50:
+        fallback = "1B"
+    elif fallback == "3B" and ifr and ifr < 40:
+        fallback = "1B"
+    elif fallback in ("CF", "COF") and ofr and ofr < 40 and spd and spd < 40:
+        fallback = "1B"
+    return fallback
 
 # ---------------------------------------------------------------------------
 # FV calculation — re-exported from fv_model for backward compatibility
