@@ -456,10 +456,13 @@ def _build_urgency_list(rows, adp, needs, num_teams, limit):
         if best_urgent and best_wait:
             urgent_val = _draft_value(best_urgent, needs, current_round)
             wait_val = _draft_value(best_wait, needs, current_round)
+            # Rounds 1-2: only override urgency for a full FV tier gap (5+ pts)
+            # Rounds 3-4: slightly easier to override (3+ pts)
+            # Rounds 5+: pure BPA
             if current_round <= 2:
-                threshold = 3
+                threshold = 5
             elif current_round <= 4:
-                threshold = 2
+                threshold = 3
             else:
                 threshold = 0
             if wait_val >= urgent_val + threshold:
