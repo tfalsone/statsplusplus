@@ -385,7 +385,8 @@ def league():
                            summary=summary, my_abbr=my_abbr, lg_avg=lg_avg,
                            trade_orgs=trade_orgs, my_team_id=my_team_id(),
                            season_remaining=round(season_remaining, 3),
-                           draft_pool=draft_pool, draft_depth=draft_depth)
+                           draft_pool=draft_pool, draft_depth=draft_depth,
+                           num_teams=len(cfg.mlb_team_ids))
 
 
 @app.route("/player/<int:pid>")

@@ -990,7 +990,7 @@ function uploadDraftPool(input) {
 }
 
 function runDraftSim() {
-  var pick = prompt('Your pick position (1-' + {{ draft_pool.players|length if draft_pool else 34 }} + '):', '30');
+  var pick = prompt('Your pick position (1-' + {{ num_teams }} + '):', '30');
   if (!pick) return;
   var rounds = prompt('Number of rounds:', '7');
   if (!rounds) return;
