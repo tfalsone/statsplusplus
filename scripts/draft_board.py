@@ -435,7 +435,6 @@ def cmd_pick(args):
         num_teams = 30
 
     n = args.n
-    pick_round = (n - 1) // num_teams + 1
 
     # Sort by draft value (same logic as upload list)
     rows = sorted(rows, key=lambda r: _draft_value(r), reverse=True)
@@ -466,30 +465,90 @@ def cmd_upload(args):
     except Exception:
         num_teams = 30
 
-    # Sort by pure draft value for early rounds, with needs bonus for later.
-    # Split: first 2 rounds pure BPA, then needs-weighted.
-    bpa_cutoff = num_teams * 2
-    early = sorted(rows, key=lambda r: _draft_value(r), reverse=True)[:bpa_cutoff]
-    early_pids = {r["player_id"] for r in early}
-    remaining = [r for r in rows if r["player_id"] not in early_pids]
-    late = sorted(remaining, key=lambda r: _draft_value(r, needs, 3), reverse=True)
-    ordered = (early + late)[:limit]
-    ranked_ids = [str(r["player_id"]) for r in ordered]
+    pick_pos = args.pick
 
+    # Simulate the draft to determine our optimal pick order.
+    # Then build the upload list: our sim picks first (in order),
+    # followed by everyone else by value. This ensures the auto-draft
+    # takes the "now or never" optimal player at each of our picks.
+    import random
+    rng = random.Random(args.seed)
+
+    pot_board = sorted(rows, key=lambda r: (-(r["pot"] or 0), r["age"] or 99))
+    num_rounds = limit  # simulate enough rounds
+
+    our_pick_positions = [pick_pos + (rd * num_teams) for rd in range(num_rounds)]
+
+    available = set(r["player_id"] for r in rows)
+    our_picks = []  # ordered list of our sim picks
+    rd_idx = 0
+
+    for overall_pick in range(1, len(rows) + 1):
+        if not available or rd_idx >= num_rounds:
+            break
+
+        is_our_pick = overall_pick == our_pick_positions[rd_idx]
+
+        if is_our_pick:
+            rd = rd_idx + 1
+            next_pick = our_pick_positions[rd_idx + 1] if rd_idx + 1 < len(our_pick_positions) else 9999
+
+            avail_rows = [r for r in rows if r["player_id"] in available]
+            now_or_never = [r for r in avail_rows
+                           if adp.get(r["player_id"], {}).get("pot_rank", 9999) <= next_pick]
+            can_wait = [r for r in avail_rows
+                        if adp.get(r["player_id"], {}).get("pot_rank", 9999) > next_pick]
+
+            if now_or_never:
+                pick_from = sorted(now_or_never,
+                                   key=lambda r: _draft_value(r, needs, rd), reverse=True)
+            else:
+                pick_from = sorted(can_wait,
+                                   key=lambda r: _draft_value(r, needs, rd), reverse=True)
+
+            chosen = pick_from[0]
+            our_picks.append(chosen)
+            available.discard(chosen["player_id"])
+            rd_idx += 1
+        else:
+            # Other team picks
+            candidates = [r for r in pot_board if r["player_id"] in available][:8]
+            if candidates:
+                weights = [35, 25, 15, 10, 6, 4, 3, 2][:len(candidates)]
+                pick = rng.choices(candidates, weights=weights, k=1)[0]
+                available.discard(pick["player_id"])
+
+    # Build final list: our sim picks in order, then remaining by value.
+    # The auto-draft takes the highest remaining on our list at each turn.
+    # Sim picks are ordered so the Rd1 optimal choice is first, Rd2 second, etc.
+    # After our sim picks are exhausted, fall back to pure value.
+    our_pick_pids = {r["player_id"] for r in our_picks}
+    remaining = [r for r in rows if r["player_id"] not in our_pick_pids]
+    remaining = sorted(remaining, key=lambda r: _draft_value(r), reverse=True)
+
+    ordered = our_picks + remaining
+    ordered = ordered[:limit]
+
+    ranked_ids = [str(r["player_id"]) for r in ordered]
     out_path = get_league_dir() / "tmp" / "draft_upload.txt"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(ranked_ids) + "\n")
     print(f"Wrote {len(ranked_ids)} player IDs to {out_path}")
-    print(f"Strategy: pure value ordering ({num_teams} teams)")
+    print(f"Strategy: sim-based ordering (pick #{pick_pos}, {num_teams} teams)")
 
-    # Show first 30 for verification
-    print(f"\nTop 30 preview:")
-    print(f"{'#':>3} {'Name':24s} {'Pos':4s} {'FV':>4} {'ExpRd':>5}")
-    print("-" * 50)
-    for i, r in enumerate(ordered[:30], 1):
+    if needs:
+        need_strs = [f"{b}(+{v})" for b, v in sorted(needs.items(), key=lambda x: -x[1])]
+        print(f"Org needs: {', '.join(need_strs)}")
+
+    # Show our projected picks
+    print(f"\nProjected picks:")
+    print(f"{'Rd':>2} {'Pick':>4} {'Name':24s} {'Pos':4s} {'FV':>4} {'ExpRd':>5}")
+    print("-" * 55)
+    for i, r in enumerate(our_picks[:10], 1):
+        overall = our_pick_positions[i - 1]
         a = adp.get(r["player_id"], {})
-        print(f"{i:3d} {r['name']:24s} {r['bucket']:4s} {r['fv_str']:>4} "
-              f"Rd{a.get('exp_round', '?'):>2}")
+        print(f"{i:2d} {overall:4d} {r['name']:24s} {r['bucket']:4s} "
+              f"{r['fv_str']:>4} Rd{a.get('exp_round', '?'):>2}")
 
 
 def cmd_compare(args):
@@ -656,6 +715,8 @@ def main():
 
     p_upload = sub.add_parser("upload", help="Generate StatsPlus auto-draft file")
     p_upload.add_argument("--top", type=int, default=500)
+    p_upload.add_argument("--pick", type=int, required=True, help="Your pick position (1-34)")
+    p_upload.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
 
     p_cmp = sub.add_parser("compare", help="Head-to-head comparison")
     p_cmp.add_argument("players", nargs="+", help="Player IDs or names (2-3)")
