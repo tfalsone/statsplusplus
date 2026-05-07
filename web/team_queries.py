@@ -1969,3 +1969,225 @@ def get_org_overview(team_id):
         "payroll_shape": payroll_shape,
         "retention": retention,
     }
+
+
+# ── Minor League Team Queries ──────────────────────────────────────────────
+
+
+def get_affiliates(team_id):
+    """Get list of minor league affiliates for an MLB team."""
+    conn = get_db()
+    conn.row_factory = None
+    rows = conn.execute("""
+        SELECT DISTINCT t.team_id, t.name, p.level
+        FROM teams t
+        JOIN players p ON p.team_id = t.team_id
+        WHERE t.parent_team_id = ? AND p.level != '1'
+        GROUP BY t.team_id
+        ORDER BY p.level
+    """, (team_id,)).fetchall()
+    lmap = level_map()
+    return [{"team_id": r[0], "name": r[1],
+             "level": lmap.get(str(r[2]), str(r[2]))}
+            for r in rows]
+
+
+# Configurable thresholds for "notable" players on minor league rosters
+NOTABLE_MIN_COMPOSITE = 50
+NOTABLE_MIN_CEILING = 55
+NOTABLE_MIN_FV = 45
+NOTABLE_YOUNG_FOR_LEVEL_YEARS = 2  # years below level age norm
+
+
+# Age norms by level (approximate OOTP norms)
+_LEVEL_AGE_NORMS = {
+    "2": 24,   # AAA
+    "3": 23,   # AA
+    "4": 22,   # A / A+
+    "5": 21,   # A-Short
+    "6": 20,   # Rookie
+    "8": 19,   # Intl / DSL
+    "10": 18,  # Draft picks
+    "11": 18,  # FA signees
+}
+
+
+def get_minor_league_team(team_id):
+    """Get minor league team info: name, level, parent org, affiliates."""
+    conn = get_db()
+    conn.row_factory = None
+
+    row = conn.execute(
+        "SELECT team_id, name, level, parent_team_id FROM teams WHERE team_id=?",
+        (team_id,)
+    ).fetchone()
+    if not row:
+        return None
+
+    tid, name, _team_level, parent_id = row
+
+    # Determine level from players on this team
+    lvl_row = conn.execute(
+        "SELECT level FROM players WHERE team_id=? LIMIT 1", (tid,)
+    ).fetchone()
+    player_level = lvl_row[0] if lvl_row else None
+
+    # If this is an MLB team (level 1), not a minor league team
+    if player_level == "1":
+        return None
+
+    # Get parent org name
+    parent_name = None
+    if parent_id:
+        p = conn.execute("SELECT name FROM teams WHERE team_id=?", (parent_id,)).fetchone()
+        parent_name = p[0] if p else None
+
+    # Get all affiliates of the same parent org
+    affiliates = []
+    if parent_id:
+        aff_rows = conn.execute("""
+            SELECT DISTINCT t.team_id, t.name, p.level
+            FROM teams t
+            JOIN players p ON p.team_id = t.team_id
+            WHERE t.parent_team_id = ? AND p.level != '1'
+            GROUP BY t.team_id
+            ORDER BY p.level
+        """, (parent_id,)).fetchall()
+        lmap = level_map()
+        for a in aff_rows:
+            affiliates.append({
+                "team_id": a[0], "name": a[1],
+                "level": lmap.get(str(a[2]), str(a[2])),
+                "level_num": a[2],
+                "current": a[0] == tid,
+            })
+
+    lmap = level_map()
+    return {
+        "team_id": tid,
+        "name": name,
+        "level": lmap.get(str(player_level), str(player_level)),
+        "level_num": player_level,
+        "parent_id": parent_id,
+        "parent_name": parent_name,
+        "affiliates": affiliates,
+    }
+
+
+def get_minor_league_roster(team_id):
+    """Full roster for a minor league team, sorted by composite."""
+    conn = get_db()
+    conn.row_factory = None
+
+    rows = conn.execute("""
+        SELECT p.player_id, p.name, p.age, p.pos, p.role, p.level,
+               r.ovr, r.pot, r.composite_score, r.true_ceiling, r.ceiling_score,
+               pf.fv, pf.fv_str, pf.risk, pf.prospect_surplus, pf.bucket
+        FROM players p
+        LEFT JOIN latest_ratings r ON p.player_id = r.player_id
+        LEFT JOIN prospect_fv pf ON p.player_id = pf.player_id
+        WHERE p.team_id = ?
+        ORDER BY COALESCE(r.composite_score, r.ovr, 0) DESC
+    """, (team_id,)).fetchall()
+
+    lmap = level_map()
+    result = []
+    for r in rows:
+        pid, name, age, pos, role, level = r[0:6]
+        ovr, pot, composite, true_ceil, ceil_score = r[6:11]
+        fv, fv_str, risk, prospect_surplus, bucket = r[11:16]
+        ceiling = true_ceil or ceil_score
+        result.append({
+            "pid": pid, "name": name, "age": age,
+            "pos": _display_pos(bucket, pos) if bucket else _display_pos(None, pos),
+            "role": role,
+            "level": lmap.get(str(level), str(level)),
+            "ovr": ovr, "pot": pot,
+            "composite": composite, "ceiling": ceiling,
+            "fv": fv, "fv_str": fv_str, "risk": risk,
+            "surplus": round(prospect_surplus / 1e6, 1) if prospect_surplus else None,
+        })
+    return result
+
+
+def get_minor_league_notables(team_id):
+    """Notable players on a minor league team: prospects + worth-tracking players."""
+    conn = get_db()
+    conn.row_factory = None
+
+    # Get player level for age norm lookup
+    lvl_row = conn.execute(
+        "SELECT level FROM players WHERE team_id=? LIMIT 1", (team_id,)
+    ).fetchone()
+    team_level = lvl_row[0] if lvl_row else "4"
+    age_norm = _LEVEL_AGE_NORMS.get(str(team_level), 22)
+
+    rows = conn.execute("""
+        SELECT p.player_id, p.name, p.age, p.pos, p.role, p.level,
+               r.ovr, r.pot, r.composite_score, r.true_ceiling, r.ceiling_score,
+               r.cntct, r.gap, r.pow, r.eye, r.speed,
+               r.stf, r.mov, r.ctrl,
+               r.pot_cntct, r.pot_gap, r.pot_pow, r.pot_eye,
+               r.pot_stf, r.pot_mov, r.pot_ctrl,
+               pf.fv, pf.fv_str, pf.risk, pf.prospect_surplus, pf.bucket
+        FROM players p
+        LEFT JOIN latest_ratings r ON p.player_id = r.player_id
+        LEFT JOIN prospect_fv pf ON p.player_id = pf.player_id
+        WHERE p.team_id = ?
+        ORDER BY COALESCE(pf.fv, 0) DESC, COALESCE(r.composite_score, r.ovr, 0) DESC
+    """, (team_id,)).fetchall()
+
+    notables = []
+    for r in rows:
+        pid, name, age, pos, role, level = r[0:6]
+        ovr, pot, composite, true_ceil, ceil_score = r[6:11]
+        cntct, gap, pw, eye, speed = r[11:16]
+        stf, mov, ctrl = r[16:19]
+        pot_cntct, pot_gap, pot_pow, pot_eye = r[19:23]
+        pot_stf, pot_mov, pot_ctrl = r[23:26]
+        fv, fv_str, risk, prospect_surplus, bucket = r[26:31]
+
+        ceiling = true_ceil or ceil_score
+        is_pitcher = role in (11, 12, 13)
+
+        # Determine if this player is "notable"
+        has_fv = fv is not None and fv >= NOTABLE_MIN_FV
+        has_composite = composite is not None and composite >= NOTABLE_MIN_COMPOSITE
+        has_ceiling = ceiling is not None and ceiling >= NOTABLE_MIN_CEILING
+        is_young = age is not None and age <= age_norm - NOTABLE_YOUNG_FOR_LEVEL_YEARS
+
+        if not (has_fv or has_composite or has_ceiling or is_young):
+            continue
+
+        # Determine why they're notable
+        tags = []
+        if has_fv:
+            tags.append("prospect")
+        if is_young:
+            tags.append("young")
+        if not has_fv and has_ceiling:
+            tags.append("upside")
+        if not has_fv and has_composite and not has_ceiling:
+            tags.append("performer")
+
+        # Build tool display
+        if is_pitcher:
+            tools = {"stf": stf, "mov": mov, "ctrl": ctrl,
+                     "pot_stf": pot_stf, "pot_mov": pot_mov, "pot_ctrl": pot_ctrl}
+        else:
+            tools = {"con": cntct, "gap": gap, "pow": pw, "eye": eye, "spd": speed,
+                     "pot_con": pot_cntct, "pot_gap": pot_gap, "pot_pow": pot_pow, "pot_eye": pot_eye}
+
+        notables.append({
+            "pid": pid, "name": name, "age": age,
+            "pos": _display_pos(bucket, pos) if bucket else _display_pos(None, pos),
+            "role": role, "is_pitcher": is_pitcher,
+            "ovr": ovr, "pot": pot,
+            "composite": composite, "ceiling": ceiling,
+            "fv": fv, "fv_str": fv_str, "risk": risk,
+            "surplus": round(prospect_surplus / 1e6, 1) if prospect_surplus else None,
+            "tools": tools, "tags": tags,
+            "young_by": age_norm - age if age and age < age_norm else 0,
+        })
+
+    return notables

@@ -224,11 +224,31 @@ def dashboard():
     return redirect(f"/team/{queries.get_my_team_id()}")
 
 
+def _render_minor_league_team(info):
+    """Render a minor league team page."""
+    tid = info["team_id"]
+    notables = queries.get_minor_league_notables(tid)
+    roster = queries.get_minor_league_roster(tid)
+    cfg = _get_cfg()
+    league_name = cfg.settings.get("league", "League")
+    breadcrumbs = [{"label": league_name, "url": "/league"}]
+    if info["parent_id"]:
+        breadcrumbs.append({"label": info["parent_name"], "url": f"/team/{info['parent_id']}"})
+    breadcrumbs.append({"label": f"{info['level']} {info['name']}", "url": f"/team/{tid}"})
+    return render_template("team_minor.html",
+                           info=info, notables=notables, roster=roster,
+                           breadcrumbs=breadcrumbs)
+
+
 @app.route("/team/<int:tid>")
 def team(tid):
     cfg = _get_cfg()
     name = cfg.team_names_map.get(tid)
     if not name:
+        # Check if it's a minor league team
+        minor_info = queries.get_minor_league_team(tid)
+        if minor_info:
+            return _render_minor_league_team(minor_info)
         return "Team not found", 404
     summary = queries.get_summary(tid)
     div_standings, div_name = queries.get_division_standings(tid)
@@ -259,6 +279,7 @@ def team(tid):
     record = queries.get_record_breakdown(tid)
     depth_chart = queries.get_depth_chart(tid)
     org_overview = queries.get_org_overview(tid)
+    affiliates = queries.get_affiliates(tid)
     my_abbr = queries.get_my_team_abbr()
     return render_template("team.html",
                            tid=tid, team_name=name,
@@ -279,7 +300,8 @@ def team(tid):
                            roster_hitters=roster_hitters,
                            roster_pitchers=roster_pitchers,
                            league_avg=league_avg,
-                           org_overview=org_overview)
+                           org_overview=org_overview,
+                           affiliates=affiliates)
 
 
 @app.route("/league")

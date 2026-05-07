@@ -830,6 +830,16 @@
 
 {# ══════ Player Development ══════ #}
 <div class="tab-content" id="tab-dev">
+  {% if affiliates %}
+  <div class="panel" style="padding:10px 16px">
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px">
+      <span style="color:var(--text-dim); font-weight:600">Affiliates:</span>
+      {% for aff in affiliates %}
+      <a href="/team/{{ aff.team_id }}" style="padding:3px 8px; border-radius:4px; background:var(--surface-alt, var(--bg)); border:1px solid var(--border); text-decoration:none; color:var(--text)">{{ aff.level }} {{ aff.name }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
   <div class="columns">
     <div class="panel">
       <h2>Farm System — Top 15</h2>

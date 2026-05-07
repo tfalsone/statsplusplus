@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h1>{{ info.level }} {{ info.name }}</h1>
+  <div style="color:var(--text-dim); font-size:13px; margin-top:4px">
+    {{ info.parent_name }} organization
+  </div>
+</div>
+
+{# ── Affiliate Navigation ── #}
+{% if info.affiliates %}
+<nav class="affiliate-nav" style="margin-bottom:20px; display:flex; gap:8px; flex-wrap:wrap">
+  {% for aff in info.affiliates %}
+  {% if aff.current %}
+  <span class="affiliate-link active" style="padding:4px 10px; border-radius:4px; background:var(--accent); color:#fff; font-size:12px; font-weight:600">{{ aff.level }}</span>
+  {% else %}
+  <a href="/team/{{ aff.team_id }}" class="affiliate-link" style="padding:4px 10px; border-radius:4px; background:var(--surface); color:var(--text); font-size:12px; text-decoration:none">{{ aff.level }}</a>
+  {% endif %}
+  {% endfor %}
+</nav>
+{% endif %}
+
+{# ── Notables Section ── #}
+{% if notables %}
+<div class="panel">
+  <h2>Notables</h2>
+  <div class="notables-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:12px">
+    {% for p in notables %}
+    <div class="notable-card" style="background:var(--surface); border-radius:8px; padding:12px; border-left:3px solid {% if 'prospect' in p.tags %}var(--accent){% elif 'young' in p.tags %}#4caf50{% elif 'upside' in p.tags %}#ffc107{% else %}var(--border){% endif %}">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px">
+        <a href="/player/{{ p.pid }}" class="player-link" style="font-weight:600; font-size:14px">{{ p.name }}</a>
+        <span style="font-size:11px; color:var(--text-dim)">{{ p.pos }} · {{ p.age }}</span>
+      </div>
+
+      {# FV + Risk #}
+      {% if p.fv_str %}
+      <div style="margin-bottom:6px; font-size:12px">
+        <span style="font-weight:600">FV {{ p.fv_str }}</span>
+        {% if p.risk %}<span style="color:{% if p.risk == 'Low' %}#4caf50{% elif p.risk == 'Medium' %}#ffc107{% elif p.risk == 'High' %}#ff9800{% else %}#f44336{% endif %}; margin-left:4px">{{ p.risk }}</span>{% endif %}
+        {% if p.surplus %}<span style="color:var(--text-dim); margin-left:8px">${{ p.surplus }}M</span>{% endif %}
+      </div>
+      {% endif %}
+
+      {# Composite / Ceiling #}
+      <div style="font-size:12px; margin-bottom:6px">
+        {% if p.composite %}<span>Comp <span class="ovr-color" data-g="{{ p.composite }}">{{ p.composite }}</span></span>{% endif %}
+        {% if p.ceiling %}<span style="margin-left:8px">Ceil <span class="ovr-color" data-g="{{ p.ceiling }}">{{ p.ceiling }}</span></span>{% endif %}
+      </div>
+
+      {# Tools #}
+      <div style="font-size:11px; color:var(--text-dim); display:flex; gap:6px; flex-wrap:wrap">
+        {% if p.is_pitcher %}
+          {% if p.tools.stf %}<span title="Stuff">ST {{ p.tools.stf }}{% if p.tools.pot_stf and p.tools.pot_stf != p.tools.stf %}/{{ p.tools.pot_stf }}{% endif %}</span>{% endif %}
+          {% if p.tools.mov %}<span title="Movement">MV {{ p.tools.mov }}{% if p.tools.pot_mov and p.tools.pot_mov != p.tools.mov %}/{{ p.tools.pot_mov }}{% endif %}</span>{% endif %}
+          {% if p.tools.ctrl %}<span title="Control">CT {{ p.tools.ctrl }}{% if p.tools.pot_ctrl and p.tools.pot_ctrl != p.tools.ctrl %}/{{ p.tools.pot_ctrl }}{% endif %}</span>{% endif %}
+        {% else %}
+          {% if p.tools.con %}<span title="Contact">C {{ p.tools.con }}{% if p.tools.pot_con and p.tools.pot_con != p.tools.con %}/{{ p.tools.pot_con }}{% endif %}</span>{% endif %}
+          {% if p.tools.gap %}<span title="Gap">G {{ p.tools.gap }}{% if p.tools.pot_gap and p.tools.pot_gap != p.tools.gap %}/{{ p.tools.pot_gap }}{% endif %}</span>{% endif %}
+          {% if p.tools.pow %}<span title="Power">P {{ p.tools.pow }}{% if p.tools.pot_pow and p.tools.pot_pow != p.tools.pow %}/{{ p.tools.pot_pow }}{% endif %}</span>{% endif %}
+          {% if p.tools.eye %}<span title="Eye">E {{ p.tools.eye }}{% if p.tools.pot_eye and p.tools.pot_eye != p.tools.eye %}/{{ p.tools.pot_eye }}{% endif %}</span>{% endif %}
+          {% if p.tools.spd %}<span title="Speed">S {{ p.tools.spd }}</span>{% endif %}
+        {% endif %}
+      </div>
+
+      {# Tags #}
+      <div style="margin-top:6px; display:flex; gap:4px">
+        {% for tag in p.tags %}
+        <span style="font-size:10px; padding:1px 5px; border-radius:3px; background:{% if tag == 'prospect' %}var(--accent){% elif tag == 'young' %}#4caf50{% elif tag == 'upside' %}#ffc107{% else %}#666{% endif %}; color:{% if tag == 'upside' %}#000{% else %}#fff{% endif %}">{{ tag }}</span>
+        {% endfor %}
+        {% if p.young_by > 0 %}
+        <span style="font-size:10px; padding:1px 5px; border-radius:3px; background:#4caf50; color:#fff">-{{ p.young_by }}yr</span>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<div class="panel">
+  <h2>Notables</h2>
+  <p style="color:var(--text-dim)">No notable prospects or players on this roster.</p>
+</div>
+{% endif %}
+
+{# ── Full Roster ── #}
+<div class="panel">
+  <h2>Full Roster ({{ roster|length }})</h2>
+  <table>
+    <thead>
+      <tr>
+        <th data-sort="str" class="left">Name</th>
+        <th data-sort="pos">Pos</th>
+        <th data-sort="num" data-sort-best="low">Age</th>
+        <th data-sort="num">Ovr</th>
+        <th data-sort="num">Pot</th>
+        <th data-sort="num">Comp</th>
+        <th data-sort="num">Ceil</th>
+        <th data-sort="str" data-sort-best="high">FV</th>
+        <th data-sort="num">Surplus</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in roster %}
+      <tr>
+        <td class="left"><a class="player-link" href="/player/{{ p.pid }}">{{ p.name }}</a></td>
+        <td>{{ p.pos }}</td>
+        <td>{{ p.age }}</td>
+        <td>{% if p.ovr %}<span class="ovr-color" data-g="{{ p.ovr }}">{{ p.ovr }}</span>{% else %}—{% endif %}</td>
+        <td>{% if p.pot %}<span class="ovr-color" data-g="{{ p.pot }}">{{ p.pot }}</span>{% else %}—{% endif %}</td>
+        <td>{% if p.composite %}<span class="ovr-color" data-g="{{ p.composite }}">{{ p.composite }}</span>{% else %}—{% endif %}</td>
+        <td>{% if p.ceiling %}<span class="ovr-color" data-g="{{ p.ceiling }}">{{ p.ceiling }}</span>{% else %}—{% endif %}</td>
+        <td>{{ p.fv_str or '—' }}{% if p.risk %} <span style="font-size:10px;color:{% if p.risk == 'Low' %}#4caf50{% elif p.risk == 'Medium' %}#ffc107{% elif p.risk == 'High' %}#ff9800{% else %}#f44336{% endif %}">{{ p.risk[0] }}</span>{% endif %}</td>
+        <td>{% if p.surplus %}${{ p.surplus }}M{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}
