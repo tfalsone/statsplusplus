@@ -61,6 +61,7 @@ Legacy components designed for OVR/POT that need updating for composite/ceiling:
 
 ## Web UI — League Page
 
+- [ ] **Positional rankings page** — League-wide page showing top players by position group (C, IF, OF, SP, RP), split into MLB and prospect sections. For MLB: rank by composite/WAR. For prospects: rank by FV/surplus. Gives a quick "who are the best shortstops in the league?" view. **LOE: Medium.**
 - [ ] **Power rankings trend indicators** — store historical rank snapshots (per eval_date or game_date) and show ▲/▼/— movement arrows next to rank. Needs: new DB table or JSON file for rank history, delta calculation. **LOE: Medium.**
 - [ ] **League news / milestone ticker** — horizontal strip between standings and power rankings showing notable milestones (e.g. "Player X: 3 HR from 50"). Needs: milestone detection logic from stats. **LOE: Medium-High.**
 
@@ -82,7 +83,7 @@ Legacy components designed for OVR/POT that need updating for composite/ceiling:
 
 ## Web UI — Navigation
 
-- [ ] **Minor league team pages** — extend `/team/<id>` to affiliate team IDs (AAA/AA/A/etc.). Show notable prospects as player cards with at-a-glance overview (FV, key tools, age, level). Include a promotion/demotion indicator based on age-vs-level norms, ratings, and development trajectory — flag players who should be moving up or down the system. Stats data will be limited (API returns empty for minors), so lean on ratings and prospect data. **LOE: Medium-High.**
+- [ ] **Minor league team pages** — extend `/team/<id>` to affiliate team IDs (AAA/AA/A/etc.). Two-section layout: (1) **Notables** panel at top — prospect cards (FV 45+) plus "worth tracking" players (composite ≥ 50, or young-for-level, or true_ceiling ≥ 55) with key tools, risk, surplus, age-vs-level flags; (2) **Full Roster** table below — all players sorted by composite. Breadcrumb nav back to parent org, affiliate level links in header. Filter thresholds configurable. No stats (API returns empty for minors). **LOE: Medium-High.**
 
 ---
 
