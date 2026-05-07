@@ -858,9 +858,9 @@ def _refresh_stat_percentiles(year):
     avg_path = league_dir / "config" / "league_averages.json"
     averages = json.loads(avg_path.read_text()) if avg_path.exists() else {}
 
-    lg_obp = averages.get("batting", {}).get("obp", 0.320)
-    lg_slg = averages.get("batting", {}).get("slg", 0.420)
-    lg_era = averages.get("pitching", {}).get("era", 4.50)
+    lg_obp = averages.get("batting", {}).get("obp") or 0
+    lg_slg = averages.get("batting", {}).get("slg") or 0
+    lg_era = averages.get("pitching", {}).get("era") or 0
 
     if lg_obp <= 0 or lg_slg <= 0 or lg_era <= 0:
         return
