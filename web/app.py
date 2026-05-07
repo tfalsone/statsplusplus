@@ -689,6 +689,7 @@ def settings():
                 s["pyth_exp"] = round(float(pe), 2)
             except (ValueError, TypeError):
                 pass
+            s["perpetual_arb"] = bool(request.form.get("perpetual_arb"))
             settings_path = cfg.league_dir / "config" / "league_settings.json"
             settings_path.write_text(_json.dumps(s, indent=2) + "\n")
             cfg.reload()

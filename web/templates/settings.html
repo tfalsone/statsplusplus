@@ -80,6 +80,8 @@
         <input type="number" name="minimum_salary" value="{{ cfg.minimum_salary }}" style="width:120px">
         <label>Pythagorean Exponent</label>
         <input type="number" name="pyth_exp" value="{{ cfg.pyth_exp }}" step="0.01" style="width:100px">
+        <label>No Free Agency (Perpetual Arb)</label>
+        <input type="checkbox" name="perpetual_arb" value="1"{% if cfg.perpetual_arb %} checked{% endif %}>
       </div>
       <button type="submit" style="margin-top:8px">Save</button>
     </form>
