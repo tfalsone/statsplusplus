@@ -620,19 +620,25 @@ def refresh_league(year, game_date=None):
     log.info("── players (all orgs)")
     players = client.get_players()
     _upsert_players(conn, players)
+    log.info(f"  {len(players)} players loaded")
 
     log.info("── contracts (all orgs)")
     contracts = client.get_contracts()
     _upsert_contracts(conn, contracts)
+    log.info(f"  {len(contracts)} contracts loaded")
 
     log.info("── contract extensions")
     _upsert_extensions(conn, client.get_contract_extensions())
 
     log.info("── batting (all orgs)")
-    _upsert_batting(conn, client.get_player_batting_stats(year=year, split=1))
+    bat_rows = client.get_player_batting_stats(year=year, split=1)
+    _upsert_batting(conn, bat_rows)
+    log.info(f"  {len(bat_rows)} batting rows (year={year})")
 
     log.info("── pitching (all orgs)")
-    _upsert_pitching(conn, client.get_player_pitching_stats(year=year, split=1))
+    pit_rows = client.get_player_pitching_stats(year=year, split=1)
+    _upsert_pitching(conn, pit_rows)
+    log.info(f"  {len(pit_rows)} pitching rows (year={year})")
 
     # Historical stats — up to 15 prior years for $/WAR, player history, etc.
     # Only pull years not already in the DB.
@@ -649,6 +655,8 @@ def refresh_league(year, game_date=None):
             _upsert_pitching(conn, pit)
             log.info(f"  {y}: {len(bat)} bat, {len(pit)} pit")
         conn.commit()
+    else:
+        log.info(f"── historical stats: skipped (all years {hist_start}-{year-1} already in DB)")
 
     log.info("── fielding (all orgs)")
     fielding = client.get_player_fielding_stats(year=year)
@@ -678,9 +686,11 @@ def refresh_league(year, game_date=None):
     snapshot_date = game_date or state.get("game_date", "unknown")
     org_id = _cfg.my_team_id
     all_ratings = client.get_ratings(poll_url=ratings_poll_url, skip_initial_wait=elapsed >= 30)
+    log.info(f"  {len(all_ratings)} ratings received")
     my_ids = {p["ID"] for p in players if p.get("Team ID") == org_id or p.get("Parent Team ID") == org_id}
     my_ratings    = [r for r in all_ratings if r["ID"] in my_ids]
     other_ratings = [r for r in all_ratings if r["ID"] not in my_ids]
+    log.info(f"  storing: {len(my_ratings)} org, {len(other_ratings)} other (snapshot={snapshot_date})")
     _upsert_ratings(conn, my_ratings,    snapshot_date, keep_history=False)
     _upsert_ratings(conn, other_ratings, snapshot_date, keep_history=False)
     _snapshot_ratings_history(conn, all_ratings, snapshot_date)
@@ -719,7 +729,7 @@ def refresh_league(year, game_date=None):
     _refresh_stat_percentiles(year)
     _refresh_dollar_per_war(year)
     _detect_minimum_salary()
-    log.info("=== refresh_league complete ===")
+    log.info("=== refresh_league complete (year=%s, date=%s) ===", year, game_date)
 
 
 def _refresh_dollar_per_war(year):
@@ -919,22 +929,27 @@ def _run_calibrate():
     )
     if result.stdout:
         for line in result.stdout.strip().splitlines():
-            log.info(f"  {line}")
+            log.info(f"  cal: {line}")
     if result.returncode != 0:
         msg = result.stderr.strip().splitlines()
         last = msg[-1] if msg else "unknown error"
         log.warning("calibrate failed (using defaults): %s", last)
+    else:
+        log.info("  calibrate complete")
 
 
 def _run_evaluation_engine():
     """Run evaluation_engine.py to compute composite scores for all players."""
+    import time as _time
     log.info("── evaluation engine")
     try:
         league_dir = get_league_dir()
         _db.init_schema(league_dir)  # ensure new columns exist before engine runs
+        t0 = _time.monotonic()
         from evaluation_engine import run as eval_run
         eval_run(league_dir=league_dir)
-        log.info("  evaluation engine complete")
+        elapsed = _time.monotonic() - t0
+        log.info(f"  evaluation engine complete ({elapsed:.1f}s)")
     except Exception as e:
         log.warning("evaluation engine failed (scores will be NULL): %s", e)
 
@@ -948,12 +963,15 @@ def _run_fv_calc():
         capture_output=True, text=True
     )
     if result.stdout:
-        log.info(f"  {result.stdout.strip()}")
+        for line in result.stdout.strip().splitlines():
+            log.info(f"  fv: {line}")
     if result.returncode != 0:
         msg = result.stderr.strip().splitlines()
         last = msg[-1] if msg else "unknown error"
         log.error("fv_calc failed: %s", last)
         sys.exit(1)
+    else:
+        log.info("  fv_calc complete")
 
 
 if __name__ == "__main__":
@@ -972,9 +990,13 @@ if __name__ == "__main__":
             args = args[1:]
         year = int(args[0]) if args else default_year
         game_date = client.get_date()
+        log.info("=== Full pipeline: year=%s, game_date=%s ===", year, game_date)
         refresh_league(year, game_date=game_date)
         update_state(game_date, year)
         if not skip_fv:
             _run_evaluation_engine()
             _run_calibrate()
             _run_fv_calc()
+            log.info("=== Pipeline complete ===")
+        else:
+            log.info("=== Pipeline complete (--no-fv: skipped eval/calibrate/fv) ===")
