@@ -655,6 +655,7 @@ def refresh_league(year, game_date=None):
             _upsert_batting(conn, bat)
             pit = client.get_player_pitching_stats(year=y, split=1)
             _upsert_pitching(conn, pit)
+            _upsert_team_stats(conn, y)
             log.info(f"  {y}: {len(bat)} bat, {len(pit)} pit")
         conn.commit()
     else:

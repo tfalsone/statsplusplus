@@ -23,7 +23,7 @@
   </div>
   <div class="summary-item">
     <span class="label">Payroll</span>
-    <span class="value">${{ "%.0f"|format(payroll / 1000000) }}M</span>
+    <span class="value">{{ payroll|money }}</span>
   </div>
   <div class="summary-item">
     <span class="label">Roster</span>

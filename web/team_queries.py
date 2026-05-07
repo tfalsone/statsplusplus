@@ -43,14 +43,22 @@ def _get_state():
     import json
     cfg = get_cfg()
     with open(cfg.state_path) as f:
-        return json.load(f)
+        state = json.load(f)
+    # During preseason, current year has no stats. Use most recent year with data
+    # so all queries that reference state["year"] for stats get valid results.
+    conn = get_db()
+    row = conn.execute(
+        "SELECT MAX(year) FROM batting_stats WHERE year <= ?", (state["year"],)
+    ).fetchone()
+    state["stats_year"] = row[0] if row and row[0] else state["year"]
+    return state
 
 
 def get_summary(team_id=None):
     state = _get_state()
     conn = get_db()
     conn.row_factory = None
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
     tid = team_id or my_team_id()
     ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
     mlb_surplus = conn.execute(
@@ -84,7 +92,7 @@ def get_power_rankings():
         return []
 
     state = _get_state()
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
     conn = get_db()
     conn.row_factory = None
 
@@ -171,10 +179,15 @@ def get_standings():
     state = _get_state()
     conn = get_db()
     conn.row_factory = None
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
 
     bat = {r[0]: (r[1], r[2]) for r in conn.execute(
         "SELECT team_id, name, r FROM team_batting_stats WHERE year=? AND split_id=1", (year,)).fetchall()}
+    # Fall back to prior year if current year has no stats (preseason)
+    if not bat:
+        year = year - 1
+        bat = {r[0]: (r[1], r[2]) for r in conn.execute(
+            "SELECT team_id, name, r FROM team_batting_stats WHERE year=? AND split_id=1", (year,)).fetchall()}
     pit = {r[0]: (r[1], r[2]) for r in conn.execute(
         "SELECT team_id, r, ip FROM team_pitching_stats WHERE year=? AND split_id=1", (year,)).fetchall()}
 
@@ -245,7 +258,7 @@ def get_roster(team_id=None):
     state = _get_state()
     conn = get_db()
     conn.row_factory = None
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
     tid = team_id or my_team_id()
     ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
 
@@ -307,7 +320,7 @@ def get_roster_hitters(team_id=None):
     Includes two-way players (pitchers with PA >= 30)."""
     state = _get_state()
     conn = get_db()
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
     tid = team_id or my_team_id()
     ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
 
@@ -413,7 +426,7 @@ def get_roster_pitchers(team_id=None):
     """Pitchers with all 3 splits for the roster Pitchers tab."""
     state = _get_state()
     conn = get_db()
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
     tid = team_id or my_team_id()
     ed = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
 
@@ -534,7 +547,7 @@ def get_farm(team_id=None):
 
 def get_team_stats(team_id):
     state = _get_state()
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
     conn = get_db()
     conn.row_factory = None
 
@@ -624,7 +637,7 @@ def get_contracts(team_id):
 def get_payroll_summary(team_id):
     """Committed payroll by year with per-player breakdown, including arb projections."""
     state = _get_state()
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
     conn = get_db()
     conn.row_factory = None
     rows = conn.execute("""
@@ -710,7 +723,7 @@ def get_payroll_summary(team_id):
 
 def get_roster_summary(team_id):
     state = _get_state()
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
     conn = get_db()
     conn.row_factory = None
     rows = conn.execute("""
@@ -798,7 +811,7 @@ def get_surplus_leaders(team_id):
 
 def get_age_distribution(team_id):
     state = _get_state()
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
     conn = get_db()
     conn.row_factory = None
 
@@ -871,7 +884,7 @@ def get_age_distribution(team_id):
 def get_record_breakdown(team_id):
     """Record splits: home/away, vs division, 1-run games, last 10, streak."""
     state = _get_state()
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
     conn = get_db()
     conn.row_factory = None
     rows = conn.execute("""
@@ -938,7 +951,7 @@ def get_record_breakdown(team_id):
 def get_recent_games(team_id, n=10):
     """Last n games for a team with W/L, score, opponent."""
     state = _get_state()
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
     conn = get_db()
     conn.row_factory = None
     rows = conn.execute("""
@@ -1021,7 +1034,7 @@ def get_recent_games(team_id, n=10):
 def get_stat_leaders(team_id):
     """Top 3 players in key batting/pitching categories for a team."""
     state = _get_state()
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
     conn = get_db()
     conn.row_factory = None
 
@@ -1292,7 +1305,7 @@ def get_depth_chart(team_id):
     from prospect_value import prospect_surplus as _pv
 
     state = _get_state()
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
     conn = get_db()
 
     lg = _load_la()
@@ -1720,7 +1733,7 @@ def get_depth_chart(team_id):
 def get_org_overview(team_id):
     """Cross-level org summary: position depth, payroll shape, retention priorities."""
     state = _get_state()
-    year = state["year"]
+    year = state.get("stats_year", state["year"])
     conn = get_db()
     ed_s = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
     ed_f = conn.execute("SELECT MAX(eval_date) FROM prospect_fv").fetchone()[0]

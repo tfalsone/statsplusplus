@@ -32,6 +32,8 @@ def project_ovr(ovr, pot, age, bucket, year_offset):
     """Project Ovr for a future year using development ramp."""
     peak_age = PEAK_AGE_PITCHER if bucket in ("SP", "RP") else PEAK_AGE_HITTER
     future_age = age + year_offset
+    ovr = ovr or 0
+    pot = pot or ovr
     if pot <= ovr or age >= peak_age:
         return ovr
     years_to_peak = max(1, peak_age - age)

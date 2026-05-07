@@ -135,6 +135,21 @@ def _short_name(name):
 app.jinja_env.filters["short"] = _short_name
 
 
+def _fmt_money(val):
+    """Format a dollar amount: $1.2M for millions, $150K for thousands."""
+    if val is None:
+        return "—"
+    if isinstance(val, str):
+        return val
+    if abs(val) >= 1_000_000:
+        return f"${val / 1e6:.1f}M"
+    if abs(val) >= 1_000:
+        return f"${val / 1e3:.0f}K"
+    return f"${val:,.0f}"
+
+app.jinja_env.filters["money"] = _fmt_money
+
+
 def _get_web_logger():
     from log_config import get_logger as _gl
     return _gl("web")

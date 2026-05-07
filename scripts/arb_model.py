@@ -27,17 +27,22 @@ def arb_salary(ovr, bucket, arb_year, prior_salary, min_sal):
     Uses RP-specific exponential model for RPs (calibrated from 35 RP arb contracts).
     Uses hitter/SP exponential base + annual raise model for all other positions.
 
+    Scales output by league salary level (min_sal / default_min) so the model
+    works for leagues with different financial scales.
+
     arb_year: 1 = first arb year, 2 = second, 3 = third
     prior_salary: previous year's salary (used for raise calculation)
     min_sal: league minimum salary
     """
+    from constants import DEFAULT_MINIMUM_SALARY
+    scale = min_sal / DEFAULT_MINIMUM_SALARY if min_sal and DEFAULT_MINIMUM_SALARY else 1.0
     if bucket == "RP":
         rp_base = ARB_RP_BASE * math.exp(ARB_RP_EXP * ovr)
-        return round(rp_base * (0.75 + 0.25 * (arb_year - 1)))
+        return round(rp_base * (0.75 + 0.25 * (arb_year - 1)) * scale)
     if arb_year == 1:
-        return round(ARB_HITTER_BASE * math.exp(ARB_HITTER_EXP * ovr))
+        return round(ARB_HITTER_BASE * math.exp(ARB_HITTER_EXP * ovr) * scale)
     raise_amt = max(ARB_RAISE_MIN, round(ARB_RAISE_INTERCEPT + ARB_RAISE_SLOPE * ovr))
-    return prior_salary + raise_amt
+    return prior_salary + round(raise_amt * scale)
 
 
 def estimate_service_time(conn, player_id):
