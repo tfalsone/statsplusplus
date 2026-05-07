@@ -437,10 +437,10 @@ def cmd_pick(args):
     n = args.n
     pick_round = (n - 1) // num_teams + 1
 
-    # Sort by pick-adjusted value for this round
-    rows = sorted(rows, key=lambda r: _pick_value(r, adp, pick_round), reverse=True)
+    # Sort by draft value (same logic as upload list)
+    rows = sorted(rows, key=lambda r: _draft_value(r), reverse=True)
     rows = rows[:n]
-    print(f"Pre-draft ranked list — Top {n} (for pick #{n}, Round {pick_round})\n")
+    print(f"Pre-draft ranked list — Top {n}\n")
     _print_board(rows, limit=n, adp=adp)
     _print_tools(rows, limit=n)
 
