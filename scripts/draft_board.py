@@ -65,7 +65,7 @@ _BOARD_SQL = """
            r.cntct, r.gap, r.pow, r.eye, r.speed,
            r.pot_stf, r.pot_mov, r.pot_ctrl,
            r.stf, r.mov, r.ctrl,
-           r.ofr, r.ifr, r.c_frm, r.acc
+           r.ofr, r.ifr, r.c_frm, r.acc, r.pot
     FROM prospect_fv pf
     JOIN players p ON pf.player_id = p.player_id
     JOIN latest_ratings r ON r.player_id = p.player_id
@@ -106,18 +106,88 @@ def _draft_value(r):
     return val
 
 
-def _print_board(rows, limit=None):
+def _compute_adp(rows, teams=None):
+    """Compute Average Draft Position (ADP) based on POT rank.
+
+    Other GMs primarily draft by POT. This estimates where each player
+    would go if everyone drafted strictly by POT, then converts to a
+    round number.
+
+    Args:
+        rows: Board rows (must have 'pot' and 'player_id' keys).
+        teams: Number of teams in the league (picks per round). Auto-detected
+               from league settings if None.
+
+    Returns:
+        Dict mapping player_id -> {"pot_rank": int, "exp_round": int, "value_gap": str}
+    """
+    if teams is None:
+        try:
+            from league_config import LeagueConfig
+            cfg = LeagueConfig()
+            teams = len(cfg.mlb_team_ids)
+        except Exception:
+            teams = 30
+
+    # Rank by POT descending (ties broken by age ascending = younger first)
+    ranked = sorted(rows, key=lambda r: (-(r["pot"] or 0), r["age"] or 99))
+    pot_rank = {}
+    for i, r in enumerate(ranked, 1):
+        pot_rank[r["player_id"]] = i
+
+    # Rank by our FV/draft_value
+    fv_ranked = sorted(rows, key=lambda r: _draft_value(r), reverse=True)
+    fv_rank = {}
+    for i, r in enumerate(fv_ranked, 1):
+        fv_rank[r["player_id"]] = i
+
+    result = {}
+    for r in rows:
+        pid = r["player_id"]
+        pr = pot_rank[pid]
+        fr = fv_rank[pid]
+        exp_rd = (pr - 1) // teams + 1
+        gap = pr - fr  # positive = will fall (others undervalue), negative = will go early
+
+        if gap >= teams:
+            label = "Sleeper"
+        elif gap >= teams // 2:
+            label = "Value"
+        elif gap <= -teams:
+            label = "Reach"
+        elif gap <= -(teams // 2):
+            label = "Goes Early"
+        else:
+            label = ""
+
+        result[pid] = {
+            "pot_rank": pr,
+            "fv_rank": fr,
+            "exp_round": exp_rd,
+            "gap": gap,
+            "label": label,
+        }
+    return result
+
+
+def _print_board(rows, limit=None, adp=None):
     if limit:
         rows = rows[:limit]
     print(f"{'#':>3} {'Name':24s} {'Age':>3} {'Pos':4s} {'FV':>3} {'Risk':>7} "
-          f"{'Ceil':>4} {'$M':>6} {'Flags'}")
-    print("-" * 82)
+          f"{'Ceil':>4} {'$M':>6} {'ExpRd':>5} {'Flags'}")
+    print("-" * 90)
     for i, r in enumerate(rows, 1):
         surplus_m = r["prospect_surplus"] / 1e6
         f = _flags(r)
+        exp_rd = ""
+        if adp and r["player_id"] in adp:
+            a = adp[r["player_id"]]
+            exp_rd = f"Rd{a['exp_round']}"
+            if a["label"]:
+                f = f"{a['label']} {f}".strip()
         print(f"{i:3d} {r['name']:24s} {r['age']:3d} {r['bucket']:4s} "
               f"{r['fv_str']:>3} {r['risk']:>7} {r['true_ceiling']:4d} "
-              f"{surplus_m:6.1f} {f}")
+              f"{surplus_m:6.1f} {exp_rd:>5} {f}")
 
 
 def _print_tools(rows, limit=None):
@@ -224,7 +294,8 @@ def cmd_board(args):
     conn = _connect()
     pids = _load_pool_ids()
     rows = _query_board(conn, pids)
-    _print_board(rows, limit=args.top)
+    adp = _compute_adp(rows)
+    _print_board(rows, limit=args.top, adp=adp)
     _print_tools(rows, limit=args.top)
 
 
@@ -237,8 +308,9 @@ def cmd_available(args):
         print("No players remaining (or could not fetch picks).")
         return
     rows = _query_board(conn, remaining)
+    adp = _compute_adp(rows)
     print(f"({len(taken)} players already taken, {len(remaining)} remaining)\n")
-    _print_board(rows, limit=args.top)
+    _print_board(rows, limit=args.top, adp=adp)
     _print_tools(rows, limit=args.top)
 
 
@@ -264,12 +336,13 @@ def cmd_pick(args):
     conn = _connect()
     pids = _load_pool_ids()
     rows = _query_board(conn, pids)
+    adp = _compute_adp(rows)
     # Sort by draft value (FV + ceiling bonus + acc adjustment)
     rows = sorted(rows, key=lambda r: _draft_value(r), reverse=True)
     n = args.n
     rows = rows[:n]
     print(f"Pre-draft ranked list — Top {n} (for pick #{n})\n")
-    _print_board(rows, limit=n)
+    _print_board(rows, limit=n, adp=adp)
     _print_tools(rows, limit=n)
 
     # Commissioner-ready list

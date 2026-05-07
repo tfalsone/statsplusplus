@@ -919,6 +919,12 @@ function gradeClr(v) {
   if (v >= 40) return 'dg-below';
   return 'dg-poor';
 }
+
+function adpLabel(label) {
+  if (!label) return '';
+  var cls = label === 'Sleeper' || label === 'Value' ? 'pos' : 'neg';
+  return '<span class="' + cls + '" style="font-size:11px;font-weight:600">' + label + '</span>';
+}
 function gtd(v) { return '<td class="' + gradeClr(v) + '">' + v + '</td>'; }
 function charClr(v) {
   if (!v) return '';
@@ -1030,7 +1036,7 @@ function renderDraftBoard(view) {
       '<th data-sort="num">SCR</th><th data-sort="num">KC</th><th data-sort="num">KN</th><th data-sort="num">#P</th>' +
       '<th data-sort="str" class="col-sep">Acc</th><th data-sort="str">W/E</th><th data-sort="str">Lead</th><th data-sort="str">Int</th></tr>';
   } else {
-    thead.innerHTML = '<tr>' + base + '<th data-sort="str">Bat</th><th data-sort="str">Thr</th><th data-sort="num" class="col-sep" title="P(Contributor)">C%</th><th data-sort="num" title="P(Regular)">R%</th><th data-sort="num" title="P(All-Star)">AS%</th><th data-sort="num" title="Bust probability (1 - P(Contributor))">Bust%</th><th data-sort="str">Profile</th></tr>';
+    thead.innerHTML = '<tr>' + base + '<th data-sort="str">Bat</th><th data-sort="str">Thr</th><th data-sort="num" class="col-sep" title="P(Contributor)">C%</th><th data-sort="num" title="P(Regular)">R%</th><th data-sort="num" title="P(All-Star)">AS%</th><th data-sort="num" title="Bust probability (1 - P(Contributor))">Bust%</th><th data-sort="str">Profile</th><th data-sort="num" class="col-sep" title="Expected draft round based on POT rank">ExpRd</th><th data-sort="str" title="Value gap vs other GMs">ADP</th></tr>';
   }
   applyDraftFilters();
   if (typeof initSort === 'function') initSort(document.getElementById('draft-table'));
@@ -1108,7 +1114,7 @@ function applyDraftFilters() {
       tr += '<td class="col-sep">' + charPill(p.acc) + '</td>';
       tr += '<td>' + charPill(p.we) + '</td><td>' + charPill(p.lead) + '</td><td>' + charPill(p.int) + '</td>';
     } else {
-      // All view - B/T + outcome probabilities
+      // All view - B/T + outcome probabilities + ADP
       tr += '<td>' + (p.bats||'') + '</td><td>' + (p.throws||'') + '</td>';
       var oc = p.outcome && p.outcome.thresholds || {};
       tr += '<td class="col-sep">' + (oc.Contributor ? Math.round(oc.Contributor*100) + '%' : '-') + '</td>';
@@ -1116,6 +1122,9 @@ function applyDraftFilters() {
       tr += '<td>' + (oc['All-Star'] ? Math.round(oc['All-Star']*100) + '%' : '-') + '</td>';
       tr += '<td>' + bustPct(p.outcome) + '</td>';
       tr += '<td>' + profilePill(p.outcome) + '</td>';
+      var adp = p.adp || {};
+      tr += '<td class="col-sep">' + (adp.exp_round ? 'Rd' + adp.exp_round : '-') + '</td>';
+      tr += '<td>' + adpLabel(adp.label) + '</td>';
     }
     tr += '</tr>';
     tbody.insertAdjacentHTML('beforeend', tr);

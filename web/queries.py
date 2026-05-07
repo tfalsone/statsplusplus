@@ -748,6 +748,51 @@ def _detect_amateur_levels(conn):
     return levels
 
 
+def _annotate_adp(results):
+    """Add expected draft position (ADP) data to each prospect entry.
+
+    Ranks by POT descending (how other GMs draft), compares to our FV rank,
+    and labels value gaps.
+    """
+    if not results:
+        return
+    try:
+        num_teams = len(get_cfg().mlb_team_ids)
+    except Exception:
+        num_teams = 30
+
+    # POT rank (other GMs' likely order): POT desc, age asc for ties
+    pot_sorted = sorted(range(len(results)),
+                        key=lambda i: (-(results[i].get("pot") or 0), results[i].get("age") or 99))
+    pot_rank = {}
+    for rank, idx in enumerate(pot_sorted, 1):
+        pot_rank[idx] = rank
+
+    for i, entry in enumerate(results):
+        fv_rank = i + 1  # results are already sorted by our value
+        pr = pot_rank[i]
+        exp_round = (pr - 1) // num_teams + 1
+        gap = pr - fv_rank  # positive = others undervalue (will fall)
+
+        if gap >= num_teams:
+            label = "Sleeper"
+        elif gap >= num_teams // 2:
+            label = "Value"
+        elif gap <= -num_teams:
+            label = "Reach"
+        elif gap <= -(num_teams // 2):
+            label = "Goes Early"
+        else:
+            label = ""
+
+        entry["adp"] = {
+            "pot_rank": pr,
+            "exp_round": exp_round,
+            "gap": gap,
+            "label": label,
+        }
+
+
 def get_draft_pool():
     """Return draft board: either from API picks (if draft is active/complete)
     or top 800 amateurs by Pot (pre-draft scouting approximation).
@@ -950,6 +995,7 @@ def get_draft_pool():
         rows = conn.execute(sql, uploaded_pids).fetchall()
         results = [_build_prospect(r) for r in rows]
         results.sort(key=lambda x: (x['surplus'], x['fv'] + (0.5 if '+' in x['fv_str'] else 0)), reverse=True)
+        _annotate_adp(results)
         for i, r in enumerate(results):
             r['rank'] = i + 1
         return {"state": state, "players": results, "picks": []}
@@ -967,6 +1013,7 @@ def get_draft_pool():
         for r in rows:
             results.append(_build_prospect(r))
         results.sort(key=lambda x: (x['surplus'], x['fv'] + (0.5 if '+' in x['fv_str'] else 0)), reverse=True)
+        _annotate_adp(results)
         for i, r in enumerate(results):
             r['rank'] = i + 1
         return {"state": state, "players": results, "picks": picks}
@@ -982,6 +1029,7 @@ def get_draft_pool():
         rows = conn.execute(sql).fetchall()
         results = [_build_prospect(r) for r in rows]
         results.sort(key=lambda x: (x['surplus'], x['fv'] + (0.5 if '+' in x['fv_str'] else 0)), reverse=True)
+        _annotate_adp(results)
         for i, r in enumerate(results):
             r['rank'] = i + 1
         return {"state": state, "players": results, "picks": []}
