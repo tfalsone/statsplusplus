@@ -95,8 +95,60 @@ def _flags(r):
 _ACC_ADJ = {"VH": 3, "A": 1, "H": 0, "L": -4, "N": 0}
 
 
-def _draft_value(r):
-    """Compute draft value score: FV + ceiling bonus + RP discount + Acc penalty."""
+def _compute_org_needs(conn):
+    """Compute positional need scores based on MLB departures vs farm depth.
+
+    Returns dict of bucket -> need_bonus (0, 1, or 2).
+    """
+    try:
+        from league_config import LeagueConfig
+        my_team = LeagueConfig().my_team_id
+    except Exception:
+        return {}
+
+    pos_map = {2: "C", 3: "1B", 4: "2B", 5: "3B", 6: "SS",
+               7: "COF", 8: "CF", 9: "COF"}
+
+    # Count meaningful MLB players (composite >= 45) leaving within 2 years
+    rows = conn.execute("""
+        SELECT p.pos, p.role, c.years, c.current_year, r.composite_score
+        FROM players p
+        LEFT JOIN contracts c ON p.player_id = c.player_id
+        LEFT JOIN latest_ratings r ON p.player_id = r.player_id
+        WHERE p.team_id = ? AND p.level = '1'
+    """, (my_team,)).fetchall()
+
+    leaving = {}
+    for r in rows:
+        bucket = {11: "SP", 12: "RP", 13: "RP"}.get(r["role"]) or pos_map.get(r["pos"], "COF")
+        yrs_left = (r["years"] or 0) - (r["current_year"] or 0) if r["years"] else 0
+        comp = r["composite_score"] or 0
+        if yrs_left <= 2 and comp >= 45:
+            leaving[bucket] = leaving.get(bucket, 0) + 1
+
+    # Count FV 45+ farm prospects by bucket
+    farm_rows = conn.execute("""
+        SELECT pf.bucket, COUNT(*) as cnt
+        FROM prospect_fv pf
+        JOIN players p ON pf.player_id = p.player_id
+        WHERE (p.parent_team_id = ? OR p.team_id = ?) AND pf.fv >= 45
+        GROUP BY pf.bucket
+    """, (my_team, my_team)).fetchall()
+    farm = {r["bucket"]: r["cnt"] for r in farm_rows}
+
+    needs = {}
+    for bucket in ["C", "1B", "2B", "3B", "SS", "CF", "COF", "SP", "RP"]:
+        n_leaving = leaving.get(bucket, 0)
+        n_farm = farm.get(bucket, 0)
+        if n_leaving > 0 and n_farm <= 1:
+            needs[bucket] = 2  # critical need
+        elif n_leaving > 0 and n_farm <= 3:
+            needs[bucket] = 1  # moderate need
+    return needs
+
+
+def _draft_value(r, needs=None, pick_round=None):
+    """Compute draft value score: FV + ceiling bonus + RP discount + Acc penalty + needs."""
     fv = r["fv"] or 0
     ceil = r["true_ceiling"] or 0
     val = fv + (ceil - 55) * 0.2
@@ -109,6 +161,9 @@ def _draft_value(r):
         val -= 2
     elif acc == "VL":
         val -= 4
+    # Org needs bonus: only in rounds 3+ to avoid overriding BPA early
+    if needs and pick_round and pick_round >= 3:
+        val += needs.get(r["bucket"], 0)
     return val
 
 
@@ -396,6 +451,7 @@ def cmd_upload(args):
     pids = _load_pool_ids()
     rows = _query_board(conn, pids)
     adp = _compute_adp(rows)
+    needs = _compute_org_needs(conn)
     limit = min(args.top or 500, 500)
 
     try:
@@ -404,9 +460,14 @@ def cmd_upload(args):
     except Exception:
         num_teams = 30
 
-    # Sort by pure draft value. The sim proves sleepers fall to us naturally
-    # because other teams draft by POT — no urgency adjustment needed.
-    ordered = sorted(rows, key=lambda r: _draft_value(r), reverse=True)[:limit]
+    # Sort by pure draft value for early rounds, with needs bonus for later.
+    # Split: first 2 rounds pure BPA, then needs-weighted.
+    bpa_cutoff = num_teams * 2
+    early = sorted(rows, key=lambda r: _draft_value(r), reverse=True)[:bpa_cutoff]
+    early_pids = {r["player_id"] for r in early}
+    remaining = [r for r in rows if r["player_id"] not in early_pids]
+    late = sorted(remaining, key=lambda r: _draft_value(r, needs, 3), reverse=True)
+    ordered = (early + late)[:limit]
     ranked_ids = [str(r["player_id"]) for r in ordered]
 
     out_path = get_league_dir() / "tmp" / "draft_upload.txt"
@@ -463,6 +524,7 @@ def cmd_sim(args):
     pids = _load_pool_ids()
     rows = _query_board(conn, pids)
     adp = _compute_adp(rows)
+    needs = _compute_org_needs(conn)
 
     try:
         from league_config import LeagueConfig
@@ -473,17 +535,20 @@ def cmd_sim(args):
     pick_pos = args.pick  # our pick position (1-indexed)
     num_rounds = args.rounds
 
+    if needs:
+        need_strs = [f"{b}(+{v})" for b, v in sorted(needs.items(), key=lambda x: -x[1])]
+        print(f"Org needs: {', '.join(need_strs)}\n")
+
     # Other teams' board: sorted by POT desc (how they draft)
     pot_board = sorted(rows, key=lambda r: (-(r["pot"] or 0), r["age"] or 99))
-
-    # Our board: sorted by draft value
-    our_board = sorted(rows, key=lambda r: _draft_value(r), reverse=True)
 
     available = set(r["player_id"] for r in rows)
     our_picks = []
     other_picks_by_round = []
 
     for rd in range(1, num_rounds + 1):
+        # Re-sort our board each round with current round context
+        our_board = sorted(rows, key=lambda r: _draft_value(r, needs, rd), reverse=True)
         round_picks = []
         for slot in range(1, num_teams + 1):
             if not available:
