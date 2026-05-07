@@ -384,7 +384,7 @@
     <div class="outcome-row{% if t.war == t.war|int and t.war > 0 %} outcome-major{% endif %}">
       <span class="outcome-war">{% if loop.first %}&gt;0{% elif t.war == t.war|int %}{{ t.war|int }}{% else %}&nbsp;{% endif %}</span>
       <div class="outcome-track">
-        <div class="outcome-bar{% if t.zone == 'mid' %} bar-mid{% endif %}{% if oc.pos_avg_war and (t.war - oc.pos_avg_war)|abs < 0.07 %} bar-pos-avg{% endif %}" style="width:{{ (t.prob * 100)|round|int }}%"></div>
+        <div class="outcome-bar{% if t.zone == 'mid' %} bar-mid{% endif %}{% if oc.pos_avg_war and (t.war - [oc.pos_avg_war, oc.tiers[-1].war]|min)|abs < 0.07 %} bar-pos-avg{% endif %}" style="width:{{ (t.prob * 100)|round|int }}%"></div>
       </div>
       <span class="outcome-pct">{% if loop.first or t.war == t.war|int %}{{ (t.prob * 100)|round|int }}%{% else %}&nbsp;{% endif %}</span>
     </div>
