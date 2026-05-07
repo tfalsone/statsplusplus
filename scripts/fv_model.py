@@ -288,8 +288,8 @@ def calc_fv_v2(p):
 
     Returns (fv_grade: int, risk: str).
     """
-    ovr = p["Ovr"]       # composite_score
-    pot = p["Pot"]        # true_ceiling
+    ovr = p["Ovr"] or 0   # composite_score
+    pot = p["Pot"] or 0   # true_ceiling
     age = p["Age"]
     bucket = p["_bucket"]
     is_pitcher = bool(p.get("_is_pitcher"))
