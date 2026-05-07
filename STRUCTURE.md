@@ -47,6 +47,7 @@ statsplusplus/
 │   ├── farm_analysis.py        # CLI: Farm system report generator
 │   ├── roster_analysis.py      # CLI: MLB roster scaffold generator
 │   ├── prospect_query.py       # CLI: League-wide prospect rankings
+│   ├── draft_board.py          # CLI: Draft board analysis (board, available, pick, upload, compare)
 │   ├── trade_calculator.py     # CLI: Trade surplus balance evaluator (--offer/--receive or JSON)
 │   ├── trade_targets.py        # CLI: Trade target finder by position (contract status, seller classification, split ratings)
 │   ├── trade_assets.py         # CLI: Tradeable assets for any team (MLB surplus + farm prospects)

@@ -4,6 +4,31 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 53
+
+**FV Model Improvements:**
+- Bust discount recalibrated: 0.55-0.85 (was 0.30-0.60). Empirical validation shows MLB players realize 92% of ceiling on average.
+- FV ceiling cap: grade cannot exceed `true_ceiling - 3`. Low-ceiling organizational players correctly grade FV 45 instead of 50.
+- Offensive ceiling cap: hitters with offensive ceiling < 45 capped at FV 50. Prevents defense/speed from inflating grades for players who can't hit (Victor Scott II: FV 55 → 50).
+
+**Evaluation Engine:**
+- SP true_ceiling now uses potential arsenal (was using current pitch ratings). SP prospect ceilings increase 1-4 points. Harry Nathan correctly grades FV 65.
+- `assign_bucket` fallback validates athleticism: SS/2B listed players with IFR < 50 downgraded to 1B (Juan Pereira fix).
+
+**Draft System (new):**
+- `scripts/draft_board.py` CLI tool with 5 modes: board, available, pick, upload, compare.
+- Draft pool players (level 0) now included in `prospect_fv` via fv_calc.
+- `LEVEL_NORM_AGE["draft"] = 18` and `LEVEL_INT_KEY[0] = "draft"` added.
+- `.kiro/steering/draft-agent.md` — full agent definition with evaluation framework, scouting priority system, and output conventions.
+- Draft value sort: `FV + (ceiling-55) × 0.2 + ctl_penalty`. No Acc penalty — scouting informs manual adjustments.
+- Commissioner list output uses game positions (not evaluation buckets).
+
+**Bug Fixes:**
+- `prospect_fv.risk` column missing on eMLB — ran eval_engine + fv_calc to populate.
+- `ratings.true_ceiling` missing on eMLB — ran eval_engine to add column.
+
+---
+
 ## Session 52 (2026-05-06)
 
 ### Evaluation Engine — Compensation, Baserunning, Defense, and FV Model Overhaul
