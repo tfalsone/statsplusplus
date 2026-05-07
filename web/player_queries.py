@@ -3,6 +3,17 @@
 import os, sys, json
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _fmt_money_py(val):
+    """Python-side money formatter for discount_note strings."""
+    if val is None:
+        return "—"
+    if abs(val) >= 1_000_000:
+        return f"${val / 1e6:.1f}M"
+    if abs(val) >= 1_000:
+        return f"${val / 1e3:.0f}K"
+    return f"${val:,.0f}"
 sys.path.insert(0, os.path.join(BASE, "scripts"))
 from player_utils import norm as _norm, norm_floor as _norm_floor, height_str as _height_str, display_pos as _display_pos, calc_pap, dollars_per_war as _dollars_per_war
 from percentiles import get_hitter_percentiles, get_pitcher_percentiles, get_fielding_percentiles
@@ -826,11 +837,11 @@ def get_player(pid):
             if cv and cv.get("breakdown"):
                 surplus_detail = {
                     "rows": [{"year": b["year"], "age": b["age"], "war": round(b["war_base"], 1),
-                              "value": round(b["market_value"] / 1e6, 1),
-                              "salary": round(b["salary_net"] / 1e6, 1),
-                              "surplus": round(b["surplus"] / 1e6, 1)}
+                              "value": b["market_value"],
+                              "salary": b["salary_net"],
+                              "surplus": b["surplus"]}
                              for b in cv["breakdown"]],
-                    "total": {k: round(v / 1e6, 1) for k, v in cv["total_surplus"].items()},
+                    "total": {k: v for k, v in cv["total_surplus"].items()},
                     "flags": cv.get("flags", []),
                 }
         elif valuation.get("type") == "prospect":
@@ -855,17 +866,17 @@ def get_player(pid):
                 surplus_detail = {
                     "rows": [{"year": eta_yr + b['control_year'] - 1, "age": b["player_age"],
                               "war": round(b["war"], 1),
-                              "value": round(b["market_value"] / 1e6, 1),
-                              "salary": round(b["salary"] / 1e6, 1),
-                              "surplus": round((b["market_value"] - b["salary"]) / 1e6, 1)}
+                              "value": b["market_value"],
+                              "salary": b["salary"],
+                              "surplus": b["market_value"] - b["salary"]}
                              for b in pv["breakdown"]],
-                    "total": {"base": round(opt_total / 1e6, 1)},
+                    "total": {"base": opt_total},
                     "flags": [f"ETA: {pv['years_to_mlb']:.1f} yrs"],
                     "discount_note": f"× {pv['dev_discount']:.0%} dev"
                                      + (f" × {scar:.2f} scarcity" if scar < 1.0 else "")
                                      + (f" × {cert:.2f} certainty" if cert != 1.0 else "")
-                                     + f" = ${opt_total/1e6:.1f}M",
-                    "raw_total": round(raw_total / 1e6, 1),
+                                     + f" = {_fmt_money_py(opt_total)}",
+                    "raw_total": raw_total,
                 }
             # Career outcome probabilities
             _comp_kw = dict(offensive_grade=eval_data.get("offensive_grade"),

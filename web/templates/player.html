@@ -439,8 +439,8 @@
       <tr>
         <td>{{ r.year }}</td><td>{{ r.age }}</td>
         <td class="{% if r.war >= 4.0 %}war-hot{% elif r.war >= 2.0 %}war-warm{% else %}war-cool{% endif %}">{{ r.war }}</td>
-        <td>${{ r.value }}M</td><td>${{ r.salary }}M</td>
-        <td class="{% if r.surplus > 0 %}pos{% elif r.surplus < 0 %}neg{% endif %}">${{ r.surplus }}M</td>
+        <td>{{ r.value|money }}</td><td>{{ r.salary|money }}</td>
+        <td class="{% if r.surplus > 0 %}pos{% elif r.surplus < 0 %}neg{% endif %}">{{ r.surplus|money }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -449,18 +449,18 @@
       <tr style="font-size:11px; color:var(--text-dim)">
         <td></td><td></td><td></td><td></td>
         <td style="text-align:right">Raw Total</td>
-        <td>${{ p.surplus_detail.raw_total }}M</td>
+        <td>{{ p.surplus_detail.raw_total|money }}</td>
       </tr>
       <tr>
         <td></td><td></td><td></td><td></td>
         <td style="text-align:right; color:var(--text-dim)">Adjusted</td>
-        <td class="{% if p.surplus_detail.total.base > 0 %}pos{% elif p.surplus_detail.total.base < 0 %}neg{% endif %}" style="font-weight:600">${{ p.surplus_detail.total.base }}M</td>
+        <td class="{% if p.surplus_detail.total.base > 0 %}pos{% elif p.surplus_detail.total.base < 0 %}neg{% endif %}" style="font-weight:600">{{ p.surplus_detail.total.base|money }}</td>
       </tr>
       {% else %}
       <tr>
         <td></td><td></td><td></td><td></td>
         <td style="text-align:right; color:var(--text-dim)">Total</td>
-        <td class="{% if p.surplus_detail.total.base > 0 %}pos{% elif p.surplus_detail.total.base < 0 %}neg{% endif %}" style="font-weight:600">${{ p.surplus_detail.total.base }}M</td>
+        <td class="{% if p.surplus_detail.total.base > 0 %}pos{% elif p.surplus_detail.total.base < 0 %}neg{% endif %}" style="font-weight:600">{{ p.surplus_detail.total.base|money }}</td>
       </tr>
       {% endif %}
       {% if p.surplus_detail.total.pessimistic is defined %}
