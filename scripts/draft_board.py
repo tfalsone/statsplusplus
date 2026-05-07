@@ -465,90 +465,77 @@ def cmd_upload(args):
     except Exception:
         num_teams = 30
 
-    pick_pos = args.pick
+    # Build the list greedily: at each position, pick the best player
+    # we'd most regret missing. A player who'll be taken soon (low ExpRd)
+    # ranks above an equal-value player who'll stick around.
+    #
+    # At list position P, the "round" context is ceil(P / num_teams).
+    # We pick the player with the highest value who won't survive past
+    # the next chunk of picks. If no one is urgent, take best available.
+    available = list(rows)
+    ordered = []
 
-    # Simulate the draft to determine our optimal pick order.
-    # Then build the upload list: our sim picks first (in order),
-    # followed by everyone else by value. This ensures the auto-draft
-    # takes the "now or never" optimal player at each of our picks.
-    import random
-    rng = random.Random(args.seed)
-
-    pot_board = sorted(rows, key=lambda r: (-(r["pot"] or 0), r["age"] or 99))
-    num_rounds = limit  # simulate enough rounds
-
-    our_pick_positions = [pick_pos + (rd * num_teams) for rd in range(num_rounds)]
-
-    available = set(r["player_id"] for r in rows)
-    our_picks = []  # ordered list of our sim picks
-    rd_idx = 0
-
-    for overall_pick in range(1, len(rows) + 1):
-        if not available or rd_idx >= num_rounds:
+    for pos in range(1, limit + 1):
+        if not available:
             break
 
-        is_our_pick = overall_pick == our_pick_positions[rd_idx]
+        current_round = (pos - 1) // num_teams + 1
+        next_chunk_end = pos + num_teams  # picks until our next turn
 
-        if is_our_pick:
-            rd = rd_idx + 1
-            next_pick = our_pick_positions[rd_idx + 1] if rd_idx + 1 < len(our_pick_positions) else 9999
-
-            avail_rows = [r for r in rows if r["player_id"] in available]
-            now_or_never = [r for r in avail_rows
-                           if adp.get(r["player_id"], {}).get("pot_rank", 9999) <= next_pick]
-            can_wait = [r for r in avail_rows
-                        if adp.get(r["player_id"], {}).get("pot_rank", 9999) > next_pick]
-
-            if now_or_never:
-                pick_from = sorted(now_or_never,
-                                   key=lambda r: _draft_value(r, needs, rd), reverse=True)
+        # Split: players who'll be gone vs players who'll survive
+        now_or_never = []
+        can_wait = []
+        for r in available:
+            a = adp.get(r["player_id"], {})
+            pot_rank = a.get("pot_rank", 9999)
+            if pot_rank <= next_chunk_end:
+                now_or_never.append(r)
             else:
-                pick_from = sorted(can_wait,
-                                   key=lambda r: _draft_value(r, needs, rd), reverse=True)
+                can_wait.append(r)
 
-            chosen = pick_from[0]
-            our_picks.append(chosen)
-            available.discard(chosen["player_id"])
-            rd_idx += 1
+        # Pick best "now or never" if it's close in value to best overall.
+        # If the best sleeper is significantly better, take the sleeper —
+        # talent gap overrides urgency.
+        best_urgent = max(now_or_never,
+                          key=lambda r: _draft_value(r, needs, current_round)) if now_or_never else None
+        best_wait = max(can_wait,
+                        key=lambda r: _draft_value(r, needs, current_round)) if can_wait else None
+
+        if best_urgent and best_wait:
+            urgent_val = _draft_value(best_urgent, needs, current_round)
+            wait_val = _draft_value(best_wait, needs, current_round)
+            # Take the sleeper if it's 3+ points better (full FV tier gap)
+            if wait_val >= urgent_val + 3:
+                chosen = best_wait
+            else:
+                chosen = best_urgent
+        elif best_urgent:
+            chosen = best_urgent
         else:
-            # Other team picks
-            candidates = [r for r in pot_board if r["player_id"] in available][:8]
-            if candidates:
-                weights = [35, 25, 15, 10, 6, 4, 3, 2][:len(candidates)]
-                pick = rng.choices(candidates, weights=weights, k=1)[0]
-                available.discard(pick["player_id"])
+            chosen = best_wait
 
-    # Build final list: our sim picks in order, then remaining by value.
-    # The auto-draft takes the highest remaining on our list at each turn.
-    # Sim picks are ordered so the Rd1 optimal choice is first, Rd2 second, etc.
-    # After our sim picks are exhausted, fall back to pure value.
-    our_pick_pids = {r["player_id"] for r in our_picks}
-    remaining = [r for r in rows if r["player_id"] not in our_pick_pids]
-    remaining = sorted(remaining, key=lambda r: _draft_value(r), reverse=True)
-
-    ordered = our_picks + remaining
-    ordered = ordered[:limit]
+        ordered.append(chosen)
+        available.remove(chosen)
 
     ranked_ids = [str(r["player_id"]) for r in ordered]
     out_path = get_league_dir() / "tmp" / "draft_upload.txt"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(ranked_ids) + "\n")
     print(f"Wrote {len(ranked_ids)} player IDs to {out_path}")
-    print(f"Strategy: sim-based ordering (pick #{pick_pos}, {num_teams} teams)")
+    print(f"Strategy: urgency-greedy ordering ({num_teams} teams)")
 
     if needs:
         need_strs = [f"{b}(+{v})" for b, v in sorted(needs.items(), key=lambda x: -x[1])]
-        print(f"Org needs: {', '.join(need_strs)}")
+        print(f"Org needs (Rd3+): {', '.join(need_strs)}")
 
-    # Show our projected picks
-    print(f"\nProjected picks:")
-    print(f"{'Rd':>2} {'Pick':>4} {'Name':24s} {'Pos':4s} {'FV':>4} {'ExpRd':>5}")
+    # Show top 30
+    print(f"\nTop 30:")
+    print(f"{'#':>3} {'Name':24s} {'Pos':4s} {'FV':>4} {'Risk':>7} {'ExpRd':>5}")
     print("-" * 55)
-    for i, r in enumerate(our_picks[:10], 1):
-        overall = our_pick_positions[i - 1]
+    for i, r in enumerate(ordered[:30], 1):
         a = adp.get(r["player_id"], {})
-        print(f"{i:2d} {overall:4d} {r['name']:24s} {r['bucket']:4s} "
-              f"{r['fv_str']:>4} Rd{a.get('exp_round', '?'):>2}")
+        print(f"{i:3d} {r['name']:24s} {r['bucket']:4s} {r['fv_str']:>4} "
+              f"{r['risk']:>7} Rd{a.get('exp_round', '?'):>2}")
 
 
 def cmd_compare(args):
@@ -715,8 +702,6 @@ def main():
 
     p_upload = sub.add_parser("upload", help="Generate StatsPlus auto-draft file")
     p_upload.add_argument("--top", type=int, default=500)
-    p_upload.add_argument("--pick", type=int, required=True, help="Your pick position (1-34)")
-    p_upload.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
 
     p_cmp = sub.add_parser("compare", help="Head-to-head comparison")
     p_cmp.add_argument("players", nargs="+", help="Player IDs or names (2-3)")
