@@ -638,7 +638,7 @@ def refresh_league(year, game_date=None):
     # Only pull years not already in the DB.
     existing_years = {r[0] for r in conn.execute(
         "SELECT DISTINCT year FROM batting_stats").fetchall()}
-    hist_start = max(year - 15, 2005)  # don't go before OOTP data exists
+    hist_start = year - 15
     hist_years = [y for y in range(hist_start, year) if y not in existing_years]
     if hist_years:
         log.info(f"── historical stats ({hist_years[0]}–{hist_years[-1]}, {len(hist_years)} years)")
