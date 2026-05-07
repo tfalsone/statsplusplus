@@ -59,6 +59,15 @@
 {% endmacro %}
 
 {# ── Tabs ── #}
+{% if affiliates %}
+<nav class="org-nav">
+  <a href="/team/{{ tid }}" class="org-nav-item active">MLB</a>
+  {% for aff in affiliates %}
+  <a href="/team/{{ aff.team_id }}" class="org-nav-item" title="{{ aff.name }}">{{ aff.level }}</a>
+  {% endfor %}
+</nav>
+{% endif %}
+
 <div class="tab-bar">
   <button class="tab active" data-tab="main">Main</button>
   <button class="tab" data-tab="depth">Depth Chart</button>
@@ -68,11 +77,6 @@
   <button class="tab" data-tab="contracts">Contracts</button>
   <button class="tab" data-tab="finances">Finances</button>
   <button class="tab" data-tab="dev">Player Development</button>
-  {% if affiliates %}
-  <span class="tab-separator" style="margin-left:auto; border-left:1px solid var(--border); padding-left:8px; display:flex; align-items:center; gap:4px; font-size:11px; color:var(--text-dim)">
-    {% for aff in affiliates %}<a href="/team/{{ aff.team_id }}" style="padding:2px 6px; border-radius:3px; background:var(--surface); color:var(--text); text-decoration:none; font-size:11px" title="{{ aff.name }}">{{ aff.level }}</a>{% endfor %}
-  </span>
-  {% endif %}
 </div>
 
 {# ══════ Main ══════ #}
@@ -835,16 +839,6 @@
 
 {# ══════ Player Development ══════ #}
 <div class="tab-content" id="tab-dev">
-  {% if affiliates %}
-  <div class="panel" style="padding:10px 16px">
-    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px">
-      <span style="color:var(--text-dim); font-weight:600">Affiliates:</span>
-      {% for aff in affiliates %}
-      <a href="/team/{{ aff.team_id }}" style="padding:3px 8px; border-radius:4px; background:var(--surface-alt, var(--bg)); border:1px solid var(--border); text-decoration:none; color:var(--text)">{{ aff.level }} {{ aff.name }}</a>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
   <div class="columns">
     <div class="panel">
       <h2>Farm System — Top 15</h2>

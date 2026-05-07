@@ -8,15 +8,12 @@
   </div>
 </div>
 
-{# ── Affiliate Navigation ── #}
+{# ── Org Navigation ── #}
 {% if info.affiliates %}
-<nav class="affiliate-nav" style="margin-bottom:20px; display:flex; gap:8px; flex-wrap:wrap">
+<nav class="org-nav">
+  <a href="/team/{{ info.parent_id }}" class="org-nav-item">MLB</a>
   {% for aff in info.affiliates %}
-  {% if aff.current %}
-  <span class="affiliate-link active" style="padding:4px 10px; border-radius:4px; background:var(--accent); color:#fff; font-size:12px; font-weight:600">{{ aff.level }}</span>
-  {% else %}
-  <a href="/team/{{ aff.team_id }}" class="affiliate-link" style="padding:4px 10px; border-radius:4px; background:var(--surface); color:var(--text); font-size:12px; text-decoration:none">{{ aff.level }}</a>
-  {% endif %}
+  <a href="/team/{{ aff.team_id }}" class="org-nav-item{% if aff.current %} active{% endif %}" title="{{ aff.name }}">{{ aff.level }}</a>
   {% endfor %}
 </nav>
 {% endif %}
