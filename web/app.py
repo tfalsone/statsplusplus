@@ -643,6 +643,28 @@ def api_draft_upload_list():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/open-file-location", methods=["POST"])
+def api_open_file_location():
+    """Open the containing folder of a file in the system file explorer."""
+    import subprocess, platform
+    data = request.get_json(silent=True) or {}
+    path = data.get("path", "")
+    if not path:
+        return jsonify({"ok": False, "error": "No path"}), 400
+    folder = str(Path(path).parent)
+    try:
+        system = platform.system()
+        if system == "Linux":
+            subprocess.Popen(["xdg-open", folder])
+        elif system == "Darwin":
+            subprocess.Popen(["open", folder])
+        elif system == "Windows":
+            subprocess.Popen(["explorer", folder])
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/org-players/<int:team_id>")
 def api_org_players(team_id):
     import trade_queries

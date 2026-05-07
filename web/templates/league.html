@@ -1042,9 +1042,17 @@ function generateUploadList() {
       html += '<td>Rd' + (p.exp_round || '?') + '</td></tr>';
     });
     html += '</tbody></table>';
-    html += '<div style="margin-top:6px;font-size:11px;color:var(--text-dim)">File: ' + d.path + '</div>';
+    html += '<div style="margin-top:6px;font-size:11px;color:var(--text-dim)">' + d.path + '</div>';
+    html += '<button class="btn btn-sm" style="margin-top:6px" onclick="openFileLocation(\'' + d.path.replace(/\\/g, '\\\\') + '\')">📂 Open Folder</button>';
     results.innerHTML = html;
   }).catch(function() { results.innerHTML = '<p class="text-dim">Generation failed</p>'; });
+}
+
+function openFileLocation(path) {
+  fetch('/api/open-file-location', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({path: path})
+  });
 }
 
 function toggleHideDrafted() {
