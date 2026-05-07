@@ -304,7 +304,7 @@ def league():
     for lg in cfg.leagues:
         lg_divs = []
         for div_name, _tids in lg["divisions"].items():
-            full_name = f"{lg['short']} {div_name}"
+            full_name = f"{lg['short']} {div_name}".strip()
             if full_name in div_teams:
                 lg_divs.append({"name": full_name, "rows": div_teams[full_name]})
         league_groups.append({
