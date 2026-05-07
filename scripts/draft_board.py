@@ -137,7 +137,7 @@ def _compute_org_needs(conn):
     farm = {r["bucket"]: r["cnt"] for r in farm_rows}
 
     needs = {}
-    for bucket in ["C", "1B", "2B", "3B", "SS", "CF", "COF", "SP", "RP"]:
+    for bucket in ["C", "1B", "2B", "3B", "SS", "CF", "COF", "SP"]:
         n_leaving = leaving.get(bucket, 0)
         n_farm = farm.get(bucket, 0)
         if n_leaving > 0 and n_farm <= 1:
