@@ -1013,7 +1013,8 @@ def get_player(pid):
         _internal_bucket = "COF" if _pos_bucket == "OF" else _pos_bucket
         try:
             _ctx_conn = get_db()
-            mlb_ctx = _mlb_context(_ctx_conn, _internal_bucket, composite_score, ceiling_score)
+            mlb_ctx = _mlb_context(_ctx_conn, _internal_bucket, composite_score,
+                                   eval_data.get("true_ceiling") or ceiling_score)
         except Exception:
             pass
 
