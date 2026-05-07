@@ -422,11 +422,67 @@ def _pick_value(r, adp, pick_round):
     return base
 
 
+def _build_urgency_list(rows, adp, needs, num_teams, limit):
+    """Build an urgency-greedy ordered list.
+
+    At each position, prefer players who'll be gone soon unless a sleeper
+    is significantly better (threshold fades in later rounds).
+    """
+    available = list(rows)
+    ordered = []
+
+    for pos in range(1, limit + 1):
+        if not available:
+            break
+
+        current_round = (pos - 1) // num_teams + 1
+        next_chunk_end = pos + num_teams
+
+        now_or_never = []
+        can_wait = []
+        for r in available:
+            a = adp.get(r["player_id"], {})
+            pot_rank = a.get("pot_rank", 9999)
+            if pot_rank <= next_chunk_end:
+                now_or_never.append(r)
+            else:
+                can_wait.append(r)
+
+        best_urgent = max(now_or_never,
+                          key=lambda r: _draft_value(r, needs, current_round)) if now_or_never else None
+        best_wait = max(can_wait,
+                        key=lambda r: _draft_value(r, needs, current_round)) if can_wait else None
+
+        if best_urgent and best_wait:
+            urgent_val = _draft_value(best_urgent, needs, current_round)
+            wait_val = _draft_value(best_wait, needs, current_round)
+            if current_round <= 2:
+                threshold = 3
+            elif current_round <= 4:
+                threshold = 2
+            else:
+                threshold = 0
+            if wait_val >= urgent_val + threshold:
+                chosen = best_wait
+            else:
+                chosen = best_urgent
+        elif best_urgent:
+            chosen = best_urgent
+        else:
+            chosen = best_wait
+
+        ordered.append(chosen)
+        available.remove(chosen)
+
+    return ordered
+
+
 def cmd_pick(args):
     conn = _connect()
     pids = _load_pool_ids()
     rows = _query_board(conn, pids)
     adp = _compute_adp(rows)
+    needs = _compute_org_needs(conn)
 
     try:
         from league_config import LeagueConfig
@@ -435,18 +491,16 @@ def cmd_pick(args):
         num_teams = 30
 
     n = args.n
+    ordered = _build_urgency_list(rows, adp, needs, num_teams, n)
 
-    # Sort by draft value (same logic as upload list)
-    rows = sorted(rows, key=lambda r: _draft_value(r), reverse=True)
-    rows = rows[:n]
     print(f"Pre-draft ranked list — Top {n}\n")
-    _print_board(rows, limit=n, adp=adp)
-    _print_tools(rows, limit=n)
+    _print_board(ordered, limit=n, adp=adp)
+    _print_tools(ordered, limit=n)
 
     # Commissioner-ready list
     print(f"\n{'=' * 40}")
     print(f"Commissioner List (copy/paste ready):\n")
-    for i, r in enumerate(rows, 1):
+    for i, r in enumerate(ordered, 1):
         gpos = _game_position(conn, r["player_id"])
         print(f"{i:2d}. {gpos:3s}  {r['name']}")
 
@@ -465,65 +519,7 @@ def cmd_upload(args):
     except Exception:
         num_teams = 30
 
-    # Build the list greedily: at each position, pick the best player
-    # we'd most regret missing. A player who'll be taken soon (low ExpRd)
-    # ranks above an equal-value player who'll stick around.
-    #
-    # At list position P, the "round" context is ceil(P / num_teams).
-    # We pick the player with the highest value who won't survive past
-    # the next chunk of picks. If no one is urgent, take best available.
-    available = list(rows)
-    ordered = []
-
-    for pos in range(1, limit + 1):
-        if not available:
-            break
-
-        current_round = (pos - 1) // num_teams + 1
-        next_chunk_end = pos + num_teams  # picks until our next turn
-
-        # Split: players who'll be gone vs players who'll survive
-        now_or_never = []
-        can_wait = []
-        for r in available:
-            a = adp.get(r["player_id"], {})
-            pot_rank = a.get("pot_rank", 9999)
-            if pot_rank <= next_chunk_end:
-                now_or_never.append(r)
-            else:
-                can_wait.append(r)
-
-        # Pick best "now or never" if it's close in value to best overall.
-        # If the best sleeper is significantly better, take the sleeper —
-        # talent gap overrides urgency.
-        # In later rounds, shrink the threshold — less value difference between
-        # rounds means less reason to wait. By round 5+, just take BPA.
-        best_urgent = max(now_or_never,
-                          key=lambda r: _draft_value(r, needs, current_round)) if now_or_never else None
-        best_wait = max(can_wait,
-                        key=lambda r: _draft_value(r, needs, current_round)) if can_wait else None
-
-        if best_urgent and best_wait:
-            urgent_val = _draft_value(best_urgent, needs, current_round)
-            wait_val = _draft_value(best_wait, needs, current_round)
-            # Threshold shrinks as rounds progress: 3 in Rd1-2, 2 in Rd3-4, 0 in Rd5+
-            if current_round <= 2:
-                threshold = 3
-            elif current_round <= 4:
-                threshold = 2
-            else:
-                threshold = 0  # pure BPA in late rounds
-            if wait_val >= urgent_val + threshold:
-                chosen = best_wait
-            else:
-                chosen = best_urgent
-        elif best_urgent:
-            chosen = best_urgent
-        else:
-            chosen = best_wait
-
-        ordered.append(chosen)
-        available.remove(chosen)
+    ordered = _build_urgency_list(rows, adp, needs, num_teams, limit)
 
     ranked_ids = [str(r["player_id"]) for r in ordered]
     out_path = get_league_dir() / "tmp" / "draft_upload.txt"
