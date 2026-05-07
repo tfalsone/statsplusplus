@@ -180,6 +180,7 @@ def _build_evaluation_data(rd: dict | None, is_pitcher: bool, norm_fn,
 
     result["composite_score"] = composite_score
     result["ceiling_score"] = ceiling_score
+    result["true_ceiling"] = rd.get("true_ceiling")
     result["tool_only_score"] = tool_only_score
     result["secondary_composite"] = secondary_composite
 
