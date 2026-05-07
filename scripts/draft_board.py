@@ -389,13 +389,45 @@ def cmd_upload(args):
     conn = _connect()
     pids = _load_pool_ids()
     rows = _query_board(conn, pids)
+    adp = _compute_adp(rows)
     limit = min(args.top or 500, 500)
-    ranked_ids = [str(r["player_id"]) for r in rows[:limit]]
+
+    try:
+        from league_config import LeagueConfig
+        num_teams = len(LeagueConfig().mlb_team_ids)
+    except Exception:
+        num_teams = 30
+
+    # Greedy round-by-round selection: at each pick position, choose the
+    # best available player for that round. This maximizes value across
+    # the entire draft by not wasting early picks on players available later.
+    available = list(rows)
+    ordered = []
+    for pick in range(1, limit + 1):
+        if not available:
+            break
+        pick_round = (pick - 1) // num_teams + 1
+        # Score each remaining player for this round
+        best_idx = max(range(len(available)),
+                       key=lambda i: _pick_value(available[i], adp, pick_round))
+        ordered.append(available.pop(best_idx))
+
+    ranked_ids = [str(r["player_id"]) for r in ordered]
 
     out_path = get_league_dir() / "tmp" / "draft_upload.txt"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(ranked_ids) + "\n")
     print(f"Wrote {len(ranked_ids)} player IDs to {out_path}")
+    print(f"Strategy: round-aware ordering across {(limit-1)//num_teams + 1} rounds ({num_teams} teams)")
+
+    # Show first 30 for verification
+    print(f"\nTop 30 preview:")
+    print(f"{'#':>3} {'Name':24s} {'Pos':4s} {'FV':>4} {'ExpRd':>5}")
+    print("-" * 50)
+    for i, r in enumerate(ordered[:30], 1):
+        a = adp.get(r["player_id"], {})
+        print(f"{i:3d} {r['name']:24s} {r['bucket']:4s} {r['fv_str']:>4} "
+              f"Rd{a.get('exp_round', '?'):>2}")
 
 
 def cmd_compare(args):
