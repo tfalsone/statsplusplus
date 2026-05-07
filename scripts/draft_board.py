@@ -596,10 +596,10 @@ def cmd_sim(args):
                 available.discard(chosen["player_id"])
                 round_picks.append((slot, chosen, True))
             else:
-                # Other team: pick from top available by POT with some variance.
-                candidates = [r for r in pot_board if r["player_id"] in available][:5]
+                # Other team: pick from top available by POT with variance.
+                candidates = [r for r in pot_board if r["player_id"] in available][:8]
                 if candidates:
-                    weights = [70, 20, 5, 3, 2][:len(candidates)]
+                    weights = [35, 25, 15, 10, 6, 4, 3, 2][:len(candidates)]
                     pick = rng.choices(candidates, weights=weights, k=1)[0]
                     available.discard(pick["player_id"])
                     round_picks.append((slot, pick, False))
