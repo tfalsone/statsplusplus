@@ -188,13 +188,17 @@ def league_minimum():
 
 def dollars_per_war():
     from league_context import get_league_dir
-    from constants import DEFAULT_DOLLARS_PER_WAR
+    from constants import DEFAULT_DOLLARS_PER_WAR, DEFAULT_MINIMUM_SALARY
     path = get_league_dir() / "config" / "league_averages.json"
     if path.exists():
         with open(path) as f:
             data = json.load(f)
         if "dollar_per_war" in data:
             return data["dollar_per_war"]
+    # Scale default by league salary level when no calibrated value exists
+    min_sal = league_minimum()
+    if min_sal and min_sal != DEFAULT_MINIMUM_SALARY:
+        return round(DEFAULT_DOLLARS_PER_WAR * min_sal / DEFAULT_MINIMUM_SALARY)
     return DEFAULT_DOLLARS_PER_WAR
 
 

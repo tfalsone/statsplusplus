@@ -645,7 +645,7 @@
           <div class="payroll-bar-track">
             <div class="payroll-bar-fill" style="width:{{ (yr.total / max_pay * 100) if max_pay else 0 }}%"></div>
           </div>
-          <span class="payroll-val">${{ "%.0f"|format(yr.total / 1000000) }}M</span>
+          <span class="payroll-val">{{ yr.total|money }}</span>
         </div>
         {% endfor %}
       </div>
@@ -745,9 +745,9 @@
           {% for c in contracts %}
           <tr>
             <td><a class="player-link" href="/player/{{ c.pid }}">{{ c.name }}</a></td>
-            <td>${{ "%.1f"|format(c.salary / 1000000) }}M</td>
+            <td>{{ c.salary|money }}</td>
             <td>{{ c.years_left }}</td>
-            <td>${{ "%.1f"|format(c.total_left / 1000000) }}M</td>
+            <td>{{ c.total_left|money }}</td>
             <td class="{{ 'pos' if c.surplus > 0 else 'neg' if c.surplus < 0 else '' }}">${{ c.surplus }}M</td>
             <td class="left">
               {%- if c.ntc %}<span class="opt-badge opt-ntc">NTC</span>{% endif %}
@@ -776,7 +776,7 @@
             <td><a class="player-link" href="/player/{{ p.pid }}">{{ p.name }}</a></td>
             <td>{{ p.age }}</td>
             <td>{{ p.ovr }}</td>
-            <td>${{ "%.1f"|format(p.salary / 1000000) }}M</td>
+            <td>{{ p.salary|money }}</td>
             <td>{{ p.yrs_left }}</td>
             <td class="{{ 'pos' if p.surplus > 0 else 'neg' if p.surplus < 0 else '' }}">${{ p.surplus }}M</td>
           </tr>
@@ -791,7 +791,7 @@
 <div class="tab-content" id="tab-finances">
   <div class="columns">
     <div class="panel wide">
-      <h2>Committed Payroll — ${{ "%.1f"|format(payroll / 1000000) }}M ({{ payroll_summary.years[0] }})</h2>
+      <h2>Committed Payroll — {{ payroll|money }} ({{ payroll_summary.years[0] }})</h2>
       <table>
         <thead>
           <tr>
@@ -808,7 +808,7 @@
               {%- if p.ntc %} <span class="opt-badge opt-ntc">NTC</span>{% endif %}</td>
             {% for s in p.by_year %}
             <td{% if s and s.option %} class="opt-year"{% elif s and s.projected %} class="proj-year"{% endif %}>
-              {%- if s %}${{ "%.1f"|format(s.sal / 1000000) }}M{% if s.option %}<sup>{{ s.option }}</sup>{% elif s.projected %}<sup>est</sup>{% endif %}{% else %}-{% endif -%}
+              {%- if s %}{{ s.sal|money }}{% if s.option %}<sup>{{ s.option }}</sup>{% elif s.projected %}<sup>est</sup>{% endif %}{% else %}-{% endif -%}
             </td>
             {% endfor %}
           </tr>
@@ -818,7 +818,7 @@
           <tr class="total-row">
             <td class="left">Total</td>
             {% for t in payroll_summary.totals %}
-            <td>${{ "%.1f"|format(t / 1000000) }}M</td>
+            <td>{{ t|money }}</td>
             {% endfor %}
           </tr>
         </tfoot>

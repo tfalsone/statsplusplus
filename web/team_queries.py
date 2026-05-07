@@ -210,24 +210,35 @@ def get_standings():
 
 
     rows = []
-    for tid, (name, rs) in bat.items():
-        if tid not in pit:
-            continue
-        ra, ip = pit[tid]
-        g = round(ip / 9)
-        if g == 0 or rs + ra == 0:
-            continue
-        pyth = rs**pyth_exp() / (rs**pyth_exp() + ra**pyth_exp())
-        pyth_w = round(pyth * g, 1)
-        pyth_l = round(g - pyth_w, 1)
-        aw, al = actual_wl.get(tid, (pyth_w, pyth_l))
-        ag = aw + al
-        pct = aw / ag if ag else pyth
-        rows.append({"tid": tid, "name": name, "g": ag,
-                      "w": aw, "l": al, "pyth_w": pyth_w, "pyth_l": pyth_l,
-                      "pct": pct, "rs": rs, "ra": ra, "diff": rs - ra,
-                      "div": get_cfg().team_div_map.get(tid, ""),
-                      "has_actual": tid in actual_wl})
+    if not bat:
+        # Preseason: show all MLB teams with zero records
+        names = team_names_map()
+        for tid in mlb_team_ids():
+            name = names.get(tid, "?")
+            rows.append({"tid": tid, "name": name, "g": 0,
+                          "w": 0, "l": 0, "pyth_w": 0, "pyth_l": 0,
+                          "pct": 0.0, "rs": 0, "ra": 0, "diff": 0,
+                          "div": get_cfg().team_div_map.get(tid, ""),
+                          "has_actual": False})
+    else:
+        for tid, (name, rs) in bat.items():
+            if tid not in pit:
+                continue
+            ra, ip = pit[tid]
+            g = round(ip / 9)
+            if g == 0 or rs + ra == 0:
+                continue
+            pyth = rs**pyth_exp() / (rs**pyth_exp() + ra**pyth_exp())
+            pyth_w = round(pyth * g, 1)
+            pyth_l = round(g - pyth_w, 1)
+            aw, al = actual_wl.get(tid, (pyth_w, pyth_l))
+            ag = aw + al
+            pct = aw / ag if ag else pyth
+            rows.append({"tid": tid, "name": name, "g": ag,
+                          "w": aw, "l": al, "pyth_w": pyth_w, "pyth_l": pyth_l,
+                          "pct": pct, "rs": rs, "ra": ra, "diff": rs - ra,
+                          "div": get_cfg().team_div_map.get(tid, ""),
+                          "has_actual": tid in actual_wl})
     rows.sort(key=lambda x: x["pct"], reverse=True)
 
     if rows:
@@ -245,7 +256,21 @@ def get_division_standings(team_id=None):
     tid = team_id or my_team_id()
     my_div = get_cfg().team_div_map.get(tid, "")
     div_rows = [r for r in all_rows if r["div"] == my_div]
+    # If division has only 1 team (misconfigured), show the full league instead
+    if len(div_rows) <= 1:
+        # Find the league this team belongs to
+        lg = get_cfg().league_for_team(tid)
+        if lg:
+            lg_tids = set()
+            for tids in lg["divisions"].values():
+                lg_tids.update(tids)
+            div_rows = [r for r in all_rows if r["tid"] in lg_tids]
+            my_div = lg["name"]
+        else:
+            div_rows = all_rows
+            my_div = "League"
     if div_rows:
+        div_rows.sort(key=lambda x: x["pct"], reverse=True)
         leader_w, leader_l = div_rows[0]["w"], div_rows[0]["l"]
         for i, r in enumerate(div_rows):
             r["rank"] = i + 1
