@@ -113,6 +113,10 @@ def assign_bucket(p, use_pot=None):
         # regardless of ratings that might suggest SP viability.
         if not use_pot and role_str in ("reliever", "closer"):
             return "RP"
+        # Trust the game's starter assignment unless stamina is truly
+        # reliever-level (< 35). Covers leagues where SP go deeper.
+        if role_str == "starter" and (p.get("Stm") or 0) >= 35:
+            return "SP"
         stm    = p.get("Stm") or 0
         # Knuckleball/knuckle-curve alone qualifies as SP if stamina is sufficient
         if stm >= 40 and ((p.get("PotKnbl") or 0) >= 45 or (p.get("PotKncrv") or 0) >= 45):
