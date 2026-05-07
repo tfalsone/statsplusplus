@@ -383,15 +383,13 @@ def get_roster_hitters(team_id=None):
     team_g, dpw, salaries = _pap_context(conn, tid, year)
     for p in players:
         splits = bat.get(p["player_id"])
-        if not splits or 1 not in splits:
-            continue
         pid = p["player_id"]
         if pid in twp_pids:
             fld = conn_fld.get(pid)
             pos = pos_map().get(fld, "DH") if fld else "DH"
         else:
             pos = pos_map().get(p["pos"], "?")
-        s1 = splits.get(1)
+        s1 = splits.get(1) if splits else None
         war = s1["war"] if s1 and s1["war"] is not None else None
         _display_ovr = p["composite_score"] if p["composite_score"] is not None else (p["ovr"] or 0)
         result.append({
@@ -402,12 +400,12 @@ def get_roster_hitters(team_id=None):
             "pap": calc_pap(war, salaries.get(pid, 0), team_g, dpw),
             "is_two_way": pid in twp_pids,
             "splits": {
-                "1": _fmt_split(splits.get(1)),
-                "2": _fmt_split(splits.get(2)),
-                "3": _fmt_split(splits.get(3)),
+                "1": _fmt_split(splits.get(1) if splits else None),
+                "2": _fmt_split(splits.get(2) if splits else None),
+                "3": _fmt_split(splits.get(3) if splits else None),
             }
         })
-    result.sort(key=lambda x: x["splits"]["1"]["war"], reverse=True)
+    result.sort(key=lambda x: (x["splits"]["1"]["war"] if x["splits"]["1"] else 0), reverse=True)
     return result
 
 
@@ -475,11 +473,9 @@ def get_roster_pitchers(team_id=None):
     team_g, dpw, salaries = _pap_context(conn, tid, year)
     for p in players:
         splits = pit.get(p["player_id"])
-        if not splits or 1 not in splits:
-            continue
         pid = p["player_id"]
         role_str = ROLE_MAP.get(p["role"], "P")
-        s1 = splits.get(1)
+        s1 = splits.get(1) if splits else None
         war = s1["war"] if s1 and s1["war"] is not None else None
         _display_ovr = p["composite_score"] if p["composite_score"] is not None else (p["ovr"] or 0)
         result.append({
@@ -490,12 +486,12 @@ def get_roster_pitchers(team_id=None):
             "pap": calc_pap(war, salaries.get(pid, 0), team_g, dpw),
             "is_two_way": pid in twp_pids,
             "splits": {
-                "1": _fmt_split(splits.get(1)),
-                "2": _fmt_split(splits.get(2)),
-                "3": _fmt_split(splits.get(3)),
+                "1": _fmt_split(splits.get(1) if splits else None),
+                "2": _fmt_split(splits.get(2) if splits else None),
+                "3": _fmt_split(splits.get(3) if splits else None),
             }
         })
-    result.sort(key=lambda x: x["splits"]["1"]["war"], reverse=True)
+    result.sort(key=lambda x: (x["splits"]["1"]["war"] if x["splits"]["1"] else 0), reverse=True)
     return result
 
 
