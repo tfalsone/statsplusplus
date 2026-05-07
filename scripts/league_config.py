@@ -204,6 +204,12 @@ class LeagueConfig:
         return self._settings
 
     @property
+    def perpetual_arb(self):
+        """True if the league has no free agency (perpetual arbitration)."""
+        self._load()
+        return self._settings.get("perpetual_arb", False)
+
+    @property
     def state_path(self):
         _, sp = self._resolve_paths()
         return sp

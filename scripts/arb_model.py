@@ -79,10 +79,18 @@ def estimate_control(conn, player_id, age, salary, bucket=None):
     Pre-arb: salary == league_min. Uses games-based service time.
     Arb: salary > league_min, age < 30. Rounds up service time (games undercount roster days).
     FA deal: age >= 30 and salary > league_min → return None.
+
+    In perpetual_arb leagues (no free agency), all players remain under team
+    control indefinitely. Returns control years until age 38.
     """
     from player_utils import league_minimum
+    from league_config import config as _cfg
     min_sal = league_minimum()
     svc = estimate_service_time(conn, player_id)
+
+    if _cfg.perpetual_arb:
+        remaining = max(1, 38 - age)
+        return remaining, [None] * remaining, 0
 
     if salary <= min_sal:
         if age >= 30 or (age >= 28 and svc >= 3) or svc >= 6:
