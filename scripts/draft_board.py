@@ -398,29 +398,16 @@ def cmd_upload(args):
     except Exception:
         num_teams = 30
 
-    # Sort by value with urgency bonus. Players expected to go early get
-    # a boost so they appear higher on the list (you'll miss them if you
-    # don't). But talent still dominates — a FV 60 sleeper beats a FV 45
-    # Rd1 player because you'd rather have the sleeper even if you "waste"
-    # a pick on them.
-    def _upload_sort(r):
-        a = adp.get(r["player_id"], {})
-        exp_rd = a.get("exp_round", 99)
-        val = _draft_value(r)
-        # Bonus for urgency: +1 per round earlier than median
-        # This nudges Rd1 players above same-value Rd2 players,
-        # but won't override a full FV tier difference
-        urgency_bonus = max(0, 4 - exp_rd)  # Rd1=+3, Rd2=+2, Rd3=+1, Rd4+=0
-        return -(val + urgency_bonus)
-
-    ordered = sorted(rows, key=_upload_sort)[:limit]
+    # Sort by pure draft value. The sim proves sleepers fall to us naturally
+    # because other teams draft by POT — no urgency adjustment needed.
+    ordered = sorted(rows, key=lambda r: _draft_value(r), reverse=True)[:limit]
     ranked_ids = [str(r["player_id"]) for r in ordered]
 
     out_path = get_league_dir() / "tmp" / "draft_upload.txt"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(ranked_ids) + "\n")
     print(f"Wrote {len(ranked_ids)} player IDs to {out_path}")
-    print(f"Strategy: urgency-first ordering ({num_teams} teams)")
+    print(f"Strategy: pure value ordering ({num_teams} teams)")
 
     # Show first 30 for verification
     print(f"\nTop 30 preview:")
