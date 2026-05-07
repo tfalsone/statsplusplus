@@ -1032,6 +1032,7 @@ def get_player(pid):
         "snapshot_deltas": snapshot_deltas,
         "composite_score": composite_score,
         "ceiling_score": ceiling_score,
+        "true_ceiling": eval_data.get("true_ceiling"),
         "tool_only_score": tool_only_score,
         "secondary_composite": secondary_composite,
         "divergence": divergence,
