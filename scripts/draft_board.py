@@ -96,13 +96,19 @@ _ACC_ADJ = {"VH": 3, "A": 1, "H": 0, "L": -4, "N": 0}
 
 
 def _draft_value(r):
-    """Compute draft value score: FV + ceiling bonus + RP discount."""
+    """Compute draft value score: FV + ceiling bonus + RP discount + Acc penalty."""
     fv = r["fv"] or 0
     ceil = r["true_ceiling"] or 0
     val = fv + (ceil - 55) * 0.2
     # RP: lower positional value, don't draft early
     if r["bucket"] == "RP":
         val -= 5
+    # Low scouting accuracy: tools may not be real
+    acc = r["acc"] or ""
+    if acc == "L":
+        val -= 2
+    elif acc == "VL":
+        val -= 4
     return val
 
 
