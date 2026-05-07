@@ -820,6 +820,11 @@ def _detect_minimum_salary():
 def _refresh_league_averages(year):
     bat = client.get_team_batting_stats(year=year, split=1)
     pit = client.get_team_pitching_stats(year=year, split=1)
+    # Fall back to prior year if current season hasn't started (spring training)
+    if not bat or not pit:
+        log.info(f"  no team stats for {year}, trying {year - 1}")
+        bat = client.get_team_batting_stats(year=year - 1, split=1)
+        pit = client.get_team_pitching_stats(year=year - 1, split=1)
     league_dir = get_league_dir()
     avg_path = league_dir / "config" / "league_averages.json"
     existing = json.loads(avg_path.read_text()) if avg_path.exists() else {}
