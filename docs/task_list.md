@@ -83,7 +83,7 @@ Legacy components designed for OVR/POT that need updating for composite/ceiling:
 
 ## Web UI — Navigation
 
-- [ ] **Minor league team pages** — extend `/team/<id>` to affiliate team IDs (AAA/AA/A/etc.). Two-section layout: (1) **Notables** panel at top — prospect cards (FV 45+) plus "worth tracking" players (composite ≥ 50, or young-for-level, or true_ceiling ≥ 55) with key tools, risk, surplus, age-vs-level flags; (2) **Full Roster** table below — all players sorted by composite. Breadcrumb nav back to parent org, affiliate level links in header. Filter thresholds configurable. No stats (API returns empty for minors). **LOE: Medium-High.**
+- [ ] **Minor league team pages** — ~~extend `/team/<id>` to affiliate team IDs~~ Done. Remaining: review notable player filter thresholds (NOTABLE_MIN_COMPOSITE=50, NOTABLE_MIN_CEILING=55, NOTABLE_MIN_FV=45, NOTABLE_YOUNG_FOR_LEVEL_YEARS=2) after seeing real results across leagues. May need tuning to avoid too many or too few cards. **LOE: Low.**
 
 ---
 
