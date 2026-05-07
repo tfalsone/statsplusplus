@@ -464,6 +464,90 @@ def cmd_compare(args):
     _print_compare(ordered)
 
 
+def cmd_sim(args):
+    """Simulate a draft: other teams pick by POT, we pick by our value list."""
+    conn = _connect()
+    pids = _load_pool_ids()
+    rows = _query_board(conn, pids)
+    adp = _compute_adp(rows)
+
+    try:
+        from league_config import LeagueConfig
+        num_teams = len(LeagueConfig().mlb_team_ids)
+    except Exception:
+        num_teams = 30
+
+    pick_pos = args.pick  # our pick position (1-indexed)
+    num_rounds = args.rounds
+
+    # Other teams' board: sorted by POT desc (how they draft)
+    pot_board = sorted(rows, key=lambda r: (-(r["pot"] or 0), r["age"] or 99))
+
+    # Our board: sorted by draft value
+    our_board = sorted(rows, key=lambda r: _draft_value(r), reverse=True)
+
+    available = set(r["player_id"] for r in rows)
+    our_picks = []
+    other_picks_by_round = []
+
+    for rd in range(1, num_rounds + 1):
+        round_picks = []
+        for slot in range(1, num_teams + 1):
+            if not available:
+                break
+            if slot == pick_pos:
+                # Our pick: best available on our board
+                for r in our_board:
+                    if r["player_id"] in available:
+                        our_picks.append((rd, slot, r))
+                        available.discard(r["player_id"])
+                        round_picks.append((slot, r, True))
+                        break
+            else:
+                # Other team: highest POT available
+                for r in pot_board:
+                    if r["player_id"] in available:
+                        available.discard(r["player_id"])
+                        round_picks.append((slot, r, False))
+                        break
+        other_picks_by_round.append(round_picks)
+
+    # Print results
+    print(f"Draft Simulation — Pick #{pick_pos}, {num_rounds} rounds, {num_teams} teams\n")
+    print(f"{'Rd':>2} {'Pick':>4} {'Name':24s} {'Pos':4s} {'FV':>4} {'Pot':>3} {'Ceil':>4} {'$M':>6}")
+    print("-" * 60)
+    for rd, slot, r in our_picks:
+        overall = (rd - 1) * num_teams + slot
+        surplus_m = r["prospect_surplus"] / 1e6
+        print(f"{rd:2d} {overall:4d} {r['name']:24s} {r['bucket']:4s} "
+              f"{r['fv_str']:>4} {r['pot']:3d} {r['true_ceiling']:4d} {surplus_m:6.1f}")
+
+    # Show who went right before/after our picks
+    print(f"\n{'─' * 60}")
+    print("Context: picks around ours\n")
+    for rd_idx, round_picks in enumerate(other_picks_by_round):
+        rd = rd_idx + 1
+        # Find our pick in this round
+        our_idx = None
+        for i, (slot, r, is_ours) in enumerate(round_picks):
+            if is_ours:
+                our_idx = i
+                break
+        if our_idx is None:
+            continue
+        # Show 3 before and 3 after
+        start = max(0, our_idx - 3)
+        end = min(len(round_picks), our_idx + 4)
+        print(f"  Round {rd}:")
+        for i in range(start, end):
+            slot, r, is_ours = round_picks[i]
+            overall = (rd - 1) * num_teams + slot
+            marker = ">>>" if is_ours else "   "
+            print(f"    {marker} #{overall:3d} {r['name']:24s} {r['bucket']:4s} "
+                  f"FV {r['fv_str']:>3} Pot {r['pot']:2d}")
+        print()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Draft board analysis tool")
     sub = parser.add_subparsers(dest="cmd")
@@ -483,13 +567,17 @@ def main():
     p_cmp = sub.add_parser("compare", help="Head-to-head comparison")
     p_cmp.add_argument("players", nargs="+", help="Player IDs or names (2-3)")
 
+    p_sim = sub.add_parser("sim", help="Simulate draft (other teams pick by POT)")
+    p_sim.add_argument("pick", type=int, help="Your pick position (1-34)")
+    p_sim.add_argument("--rounds", type=int, default=5, help="Number of rounds to simulate")
+
     args = parser.parse_args()
     if not args.cmd:
         parser.print_help()
         return
 
     {"board": cmd_board, "available": cmd_available, "pick": cmd_pick,
-     "upload": cmd_upload, "compare": cmd_compare}[args.cmd](args)
+     "upload": cmd_upload, "compare": cmd_compare, "sim": cmd_sim}[args.cmd](args)
 
 
 if __name__ == "__main__":
