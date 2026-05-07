@@ -35,7 +35,11 @@ def arb_salary(ovr, bucket, arb_year, prior_salary, min_sal):
     min_sal: league minimum salary
     """
     from constants import DEFAULT_MINIMUM_SALARY
-    scale = min_sal / DEFAULT_MINIMUM_SALARY if min_sal and DEFAULT_MINIMUM_SALARY else 1.0
+    # Only scale for leagues with drastically different salary environments
+    # (e.g. historical leagues at $6K vs modern $825K). Don't scale for
+    # minor differences between modern leagues.
+    ratio = min_sal / DEFAULT_MINIMUM_SALARY if min_sal and DEFAULT_MINIMUM_SALARY else 1.0
+    scale = ratio if ratio < 0.5 else 1.0
     if bucket == "RP":
         rp_base = ARB_RP_BASE * math.exp(ARB_RP_EXP * ovr)
         return round(rp_base * (0.75 + 0.25 * (arb_year - 1)) * scale)
