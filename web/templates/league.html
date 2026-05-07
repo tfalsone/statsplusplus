@@ -254,6 +254,8 @@
             {% if dp_state in ('uploaded', 'active') %}
             <button class="btn" onclick="updateDraftPicks()">⟳ Update Picks</button>
             {% endif %}
+            <button class="btn" onclick="runDraftSim()" title="Simulate draft based on your pick position">🎲 Sim</button>
+            <button class="btn" onclick="generateUploadList()" title="Generate auto-draft list file">📋 Auto-Draft List</button>
             <label class="btn" style="cursor:pointer">📁 Upload Pool
               <input type="file" accept=".csv" style="display:none" onchange="uploadDraftPool(this)">
             </label>
@@ -280,6 +282,10 @@
       <div class="panel draft-my-picks-panel" id="draft-my-picks">
         <div class="panel-section-title">My Picks</div>
         <div id="my-picks-list"><p class="text-dim">No picks yet</p></div>
+      </div>
+      <div class="panel" id="draft-sim-panel" style="display:none">
+        <div class="panel-section-title">Draft Simulation</div>
+        <div id="draft-sim-results"></div>
       </div>
     </div>
   </div>
@@ -981,6 +987,64 @@ function uploadDraftPool(input) {
       if (d.ok) { alert('Uploaded ' + d.count + ' players. Reloading…'); location.reload(); }
       else { alert('Upload failed: ' + d.error); }
     }).catch(function() { alert('Upload failed'); });
+}
+
+function runDraftSim() {
+  var pick = prompt('Your pick position (1-' + {{ draft_pool.players|length if draft_pool else 34 }} + '):', '30');
+  if (!pick) return;
+  var rounds = prompt('Number of rounds:', '7');
+  if (!rounds) return;
+  var panel = document.getElementById('draft-sim-panel');
+  var results = document.getElementById('draft-sim-results');
+  results.innerHTML = '<p class="text-dim">Running simulation…</p>';
+  panel.style.display = 'block';
+
+  fetch('/api/draft-sim', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pick: parseInt(pick), rounds: parseInt(rounds), seed: Math.floor(Math.random() * 10000)})
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.error) { results.innerHTML = '<p class="text-dim">Error: ' + d.error + '</p>'; return; }
+    var html = '';
+    if (d.needs && d.needs.length) {
+      html += '<div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">Needs: ' + d.needs.join(', ') + '</div>';
+    }
+    html += '<table style="width:100%;font-size:12px"><thead><tr><th>Rd</th><th>#</th><th class="left">Name</th><th>Pos</th><th>FV</th><th>Ceil</th></tr></thead><tbody>';
+    d.picks.forEach(function(p) {
+      html += '<tr><td>' + p.round + '</td><td>' + p.overall + '</td>';
+      html += '<td class="left"><a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a></td>';
+      html += '<td>' + p.pos + '</td><td>' + p.fv_str + '</td><td>' + p.ceiling + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    html += '<div style="margin-top:8px;font-size:11px;color:var(--text-dim)">Total surplus: $' +
+      d.picks.reduce(function(s, p) { return s + p.surplus; }, 0).toFixed(1) + 'M</div>';
+    html += '<button class="btn btn-sm" style="margin-top:6px" onclick="runDraftSim()">Re-run</button>';
+    results.innerHTML = html;
+  }).catch(function() { results.innerHTML = '<p class="text-dim">Simulation failed</p>'; });
+}
+
+function generateUploadList() {
+  var panel = document.getElementById('draft-sim-panel');
+  var results = document.getElementById('draft-sim-results');
+  results.innerHTML = '<p class="text-dim">Generating list…</p>';
+  panel.style.display = 'block';
+
+  fetch('/api/draft-upload-list', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({top: 500})
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d.ok) { results.innerHTML = '<p class="text-dim">Error: ' + d.error + '</p>'; return; }
+    var html = '<div style="font-size:12px;margin-bottom:8px"><strong>' + d.count + ' players</strong> written to auto-draft file</div>';
+    html += '<table style="width:100%;font-size:12px"><thead><tr><th>#</th><th class="left">Name</th><th>Pos</th><th>FV</th><th>ExpRd</th></tr></thead><tbody>';
+    d.preview.forEach(function(p) {
+      html += '<tr><td>' + p.rank + '</td>';
+      html += '<td class="left"><a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a></td>';
+      html += '<td>' + p.pos + '</td><td>' + p.fv_str + '</td>';
+      html += '<td>Rd' + (p.exp_round || '?') + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    html += '<div style="margin-top:6px;font-size:11px;color:var(--text-dim)">File: ' + d.path + '</div>';
+    results.innerHTML = html;
+  }).catch(function() { results.innerHTML = '<p class="text-dim">Generation failed</p>'; });
 }
 
 function toggleHideDrafted() {
