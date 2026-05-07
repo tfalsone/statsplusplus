@@ -345,6 +345,8 @@ def _detect_league_structure(conn, year):
     # Get team ordering + abbreviations from API (teams come grouped by division)
     bat_stats = client.get_team_batting_stats(year=year, split=1)
     if not bat_stats:
+        bat_stats = client.get_team_batting_stats(year=year - 1, split=1)
+    if not bat_stats:
         return None
     seen = set()
     api_order = []  # [(tid, abbr, name), ...] in API order
