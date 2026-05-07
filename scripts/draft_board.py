@@ -496,6 +496,8 @@ def cmd_upload(args):
         # Pick best "now or never" if it's close in value to best overall.
         # If the best sleeper is significantly better, take the sleeper —
         # talent gap overrides urgency.
+        # In later rounds, shrink the threshold — less value difference between
+        # rounds means less reason to wait. By round 5+, just take BPA.
         best_urgent = max(now_or_never,
                           key=lambda r: _draft_value(r, needs, current_round)) if now_or_never else None
         best_wait = max(can_wait,
@@ -504,8 +506,14 @@ def cmd_upload(args):
         if best_urgent and best_wait:
             urgent_val = _draft_value(best_urgent, needs, current_round)
             wait_val = _draft_value(best_wait, needs, current_round)
-            # Take the sleeper if it's 3+ points better (full FV tier gap)
-            if wait_val >= urgent_val + 3:
+            # Threshold shrinks as rounds progress: 3 in Rd1-2, 2 in Rd3-4, 0 in Rd5+
+            if current_round <= 2:
+                threshold = 3
+            elif current_round <= 4:
+                threshold = 2
+            else:
+                threshold = 0  # pure BPA in late rounds
+            if wait_val >= urgent_val + threshold:
                 chosen = best_wait
             else:
                 chosen = best_urgent
