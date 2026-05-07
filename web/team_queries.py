@@ -70,8 +70,24 @@ def get_summary(team_id=None):
     fv50 = conn.execute(
         "SELECT COUNT(*) FROM prospect_fv pf JOIN players p ON pf.player_id=p.player_id WHERE pf.eval_date=? AND (p.parent_team_id=? OR (p.team_id=? AND p.level='1')) AND pf.fv>=50",
         (ed, tid, tid)).fetchone()[0]
+    # Determine season phase from game date
+    gd = state["game_date"]
+    month = int(gd[5:7]) if gd and len(gd) >= 7 else 0
+    # Check if any games have been played this year
+    games_played = conn.execute(
+        "SELECT COUNT(*) FROM games WHERE date LIKE ? AND played=1 AND game_type=0",
+        (f"{state['year']}%",)).fetchone()[0]
+    if games_played == 0 and month <= 4:
+        phase = "Spring Training"
+    elif month >= 10 or (month == 9 and games_played > 140 * 8):
+        phase = "Postseason"
+    elif month >= 11 or month <= 1:
+        phase = "Offseason"
+    else:
+        phase = "Regular Season"
+
     return {
-        "game_date": state["game_date"], "year": year,
+        "game_date": state["game_date"], "year": state["year"], "phase": phase,
         "mlb_surplus": round(mlb_surplus / 1e6, 1),
         "farm_surplus": round(farm_surplus / 1e6, 1),
         "fv50_count": fv50,

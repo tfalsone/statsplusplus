@@ -743,13 +743,20 @@ def _refresh_dollar_per_war(year):
     league_dir = get_league_dir()
     conn = _db.get_conn(league_dir)
 
+    # Use league minimum to scale the salary threshold — $5M is for modern leagues
+    from player_utils import league_minimum
+    from constants import DEFAULT_MINIMUM_SALARY
+    min_sal = league_minimum()
+    sal_threshold = round(5_000_000 * min_sal / DEFAULT_MINIMUM_SALARY) if min_sal else 5_000_000
+    # Minimum threshold: 3× league minimum (avoid noise from minimum-salary contracts)
+    sal_threshold = max(sal_threshold, min_sal * 3) if min_sal else sal_threshold
+
     signed_rows = conn.execute("""
         SELECT p.player_id, c.salary_0
         FROM contracts c JOIN players p ON c.player_id = p.player_id
         WHERE p.level = 1 AND c.is_major = 1
-          AND c.season_year = ? AND c.salary_0 >= 5000000
-          AND c.years > 1
-    """, (year,)).fetchall()
+          AND c.salary_0 >= ?
+    """, (sal_threshold,)).fetchall()
 
     if not signed_rows:
         conn.close()
@@ -780,12 +787,12 @@ def _refresh_dollar_per_war(year):
     averages = json.loads(avg_path.read_text())
     averages["dollar_per_war"] = dpw
     averages["dollar_per_war_note"] = (
-        f"Current-market rate: {len(pids)} MLB contracts signed in {year} "
-        f"(salary >= $5M), total salary ${total_salary:,} / prior-season WAR {total_war:.1f}. "
+        f"Market rate: {len(pids)} MLB contracts (salary >= ${sal_threshold:,}), "
+        f"total salary ${total_salary:,} / prior-season WAR {total_war:.1f}. "
         f"Recalculated each league refresh."
     )
     avg_path.write_text(json.dumps(averages, indent=2))
-    log.info(f"  $/WAR calibrated: ${dpw:,} ({len(pids)} contracts signed {year}, "
+    log.info(f"  $/WAR calibrated: ${dpw:,} ({len(pids)} contracts, "
           f"payroll ${total_salary:,} / WAR {total_war:.1f})")
 
 

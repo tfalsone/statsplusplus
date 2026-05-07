@@ -13,7 +13,7 @@
   </div>
   <div class="summary-item">
     <span class="label">Phase</span>
-    <span class="value" style="font-size:16px">Regular Season</span>
+    <span class="value" style="font-size:16px">{{ summary.phase }}</span>
   </div>
   <div class="summary-item">
     <span class="label">Lg AVG</span>
@@ -29,7 +29,7 @@
   </div>
   <div class="summary-item">
     <span class="label">$/WAR</span>
-    <span class="value" style="font-size:18px">{% if lg_avg.dollar_per_war %}${{ "%.1f"|format(lg_avg.dollar_per_war / 1e6) }}M{% else %}—{% endif %}</span>
+    <span class="value" style="font-size:18px">{% if lg_avg.dollar_per_war %}{{ lg_avg.dollar_per_war|money }}/WAR{% else %}—{% endif %}</span>
   </div>
 </div>
 <hr class="kpi-divider">
