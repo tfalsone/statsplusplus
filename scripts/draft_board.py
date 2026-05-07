@@ -332,16 +332,48 @@ def _game_position(conn, player_id):
     return _GAME_POS.get(r["pos"], "?")
 
 
+def _pick_value(r, adp, pick_round):
+    """Draft value adjusted for availability.
+
+    Players expected to be available in later rounds get penalized when
+    picking in early rounds — save premium picks for players who won't last.
+    """
+    base = _draft_value(r)
+    a = adp.get(r["player_id"])
+    if not a:
+        return base
+    exp_rd = a["exp_round"]
+    # If player's expected round is well beyond current pick round,
+    # penalize proportionally. A Rd6 player picked in Rd1 wastes value.
+    if exp_rd > pick_round:
+        rounds_late = exp_rd - pick_round
+        # -2 per round they'd still be available
+        base -= rounds_late * 2
+    # If player will go before our next pick, small boost (urgency)
+    elif exp_rd < pick_round:
+        base += 1
+    return base
+
+
 def cmd_pick(args):
     conn = _connect()
     pids = _load_pool_ids()
     rows = _query_board(conn, pids)
     adp = _compute_adp(rows)
-    # Sort by draft value (FV + ceiling bonus + acc adjustment)
-    rows = sorted(rows, key=lambda r: _draft_value(r), reverse=True)
+
+    try:
+        from league_config import LeagueConfig
+        num_teams = len(LeagueConfig().mlb_team_ids)
+    except Exception:
+        num_teams = 30
+
     n = args.n
+    pick_round = (n - 1) // num_teams + 1
+
+    # Sort by pick-adjusted value for this round
+    rows = sorted(rows, key=lambda r: _pick_value(r, adp, pick_round), reverse=True)
     rows = rows[:n]
-    print(f"Pre-draft ranked list — Top {n} (for pick #{n})\n")
+    print(f"Pre-draft ranked list — Top {n} (for pick #{n}, Round {pick_round})\n")
     _print_board(rows, limit=n, adp=adp)
     _print_tools(rows, limit=n)
 
