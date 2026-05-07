@@ -542,6 +542,9 @@ def cmd_sim(args):
     # Other teams' board: sorted by POT desc (how they draft)
     pot_board = sorted(rows, key=lambda r: (-(r["pot"] or 0), r["age"] or 99))
 
+    import random
+    rng = random.Random(args.seed if hasattr(args, 'seed') and args.seed else None)
+
     available = set(r["player_id"] for r in rows)
     our_picks = []
     other_picks_by_round = []
@@ -562,12 +565,14 @@ def cmd_sim(args):
                         round_picks.append((slot, r, True))
                         break
             else:
-                # Other team: highest POT available
-                for r in pot_board:
-                    if r["player_id"] in available:
-                        available.discard(r["player_id"])
-                        round_picks.append((slot, r, False))
-                        break
+                # Other team: pick from top available by POT with some variance.
+                # ~70% take the best, ~20% take 2nd, ~10% take 3rd-5th.
+                candidates = [r for r in pot_board if r["player_id"] in available][:5]
+                if candidates:
+                    weights = [70, 20, 5, 3, 2][:len(candidates)]
+                    pick = rng.choices(candidates, weights=weights, k=1)[0]
+                    available.discard(pick["player_id"])
+                    round_picks.append((slot, pick, False))
         other_picks_by_round.append(round_picks)
 
     # Print results
@@ -628,6 +633,7 @@ def main():
     p_sim = sub.add_parser("sim", help="Simulate draft (other teams pick by POT)")
     p_sim.add_argument("pick", type=int, help="Your pick position (1-34)")
     p_sim.add_argument("--rounds", type=int, default=5, help="Number of rounds to simulate")
+    p_sim.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
 
     args = parser.parse_args()
     if not args.cmd:
