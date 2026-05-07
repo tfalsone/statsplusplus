@@ -467,6 +467,13 @@ def _calibrate_ovr_to_war(conn, game_year, role_map):
     year_lo = game_year - CALIBRATION_YEARS - 1  # exclusive lower bound
     year_hi = game_year - 1  # inclusive upper bound (exclude current partial season)
 
+    # Guard: skip entirely if league doesn't expose OVR
+    ovr_count = conn.execute(
+        "SELECT COUNT(*) FROM latest_ratings WHERE ovr IS NOT NULL"
+    ).fetchone()[0]
+    if ovr_count < MIN_REGRESSION_N:
+        return {}, {}
+
     # Hitters
     hitter_rows = conn.execute("""
         SELECT r.player_id, r.ovr, r.pot, p.age, p.pos, p.role,
@@ -483,6 +490,7 @@ def _calibrate_ovr_to_war(conn, game_year, role_map):
         JOIN batting_stats bs ON bs.player_id = p.player_id
         WHERE p.level = 1 AND bs.split_id = 1
           AND bs.year > ? AND bs.year <= ? AND bs.ab >= 300
+          AND r.ovr IS NOT NULL
     """, (year_lo, year_hi)).fetchall()
 
     # Pitchers
@@ -499,6 +507,7 @@ def _calibrate_ovr_to_war(conn, game_year, role_map):
         JOIN pitching_stats ps ON ps.player_id = p.player_id
         WHERE p.level = 1 AND ps.split_id = 1
           AND ps.year > ? AND ps.year <= ?
+          AND r.ovr IS NOT NULL
           AND ((p.role IN (12,13) AND ps.ip >= 20 AND ps.gs <= 3)
                OR (COALESCE(p.role,0) NOT IN (12,13) AND ps.ip >= 40))
     """, (year_lo, year_hi)).fetchall()
