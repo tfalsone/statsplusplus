@@ -68,6 +68,11 @@
   <button class="tab" data-tab="contracts">Contracts</button>
   <button class="tab" data-tab="finances">Finances</button>
   <button class="tab" data-tab="dev">Player Development</button>
+  {% if affiliates %}
+  <span class="tab-separator" style="margin-left:auto; border-left:1px solid var(--border); padding-left:8px; display:flex; align-items:center; gap:4px; font-size:11px; color:var(--text-dim)">
+    {% for aff in affiliates %}<a href="/team/{{ aff.team_id }}" style="padding:2px 6px; border-radius:3px; background:var(--surface); color:var(--text); text-decoration:none; font-size:11px" title="{{ aff.name }}">{{ aff.level }}</a>{% endfor %}
+  </span>
+  {% endif %}
 </div>
 
 {# ══════ Main ══════ #}
