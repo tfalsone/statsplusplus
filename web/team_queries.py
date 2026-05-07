@@ -1310,7 +1310,7 @@ def get_depth_chart(team_id):
     # ── Query MLB roster ────────────────────────────────────────────────
     mlb_rows = conn.execute('''
         SELECT p.player_id, p.name, p.age, p.role,
-               r.ovr, r.pot,
+               r.ovr, r.pot, r.composite_score,
                r.cntct, r.gap, r.pow, r.eye,
                r.cntct_l, r.cntct_r, r.gap_l, r.gap_r,
                r.pow_l, r.pow_r, r.eye_l, r.eye_r,
@@ -1348,7 +1348,9 @@ def get_depth_chart(team_id):
         pid, role = row["player_id"], row["role"]
         bucket = "SP" if role == 11 else ("RP" if role in (12, 13) else "CF")
         sw = stat_peak_war(pid, bucket, bat_hist, pit_hist, two_way=two_way)
-        war = project_war(row["ovr"], row["pot"], row["age"], bucket, 0, sw)
+        _ovr = row["composite_score"] if row["composite_score"] is not None else (row["ovr"] or 0)
+        _pot = row["pot"] or _ovr
+        war = project_war(_ovr, _pot, row["age"], bucket, 0, sw)
 
         if role == 0:
             ovr_ops = project_ops_plus(row["cntct"], row["gap"], row["pow"], row["eye"])
@@ -1384,7 +1386,7 @@ def get_depth_chart(team_id):
 
         all_players.append({
             "player_id": pid, "name": row["name"], "age": row["age"],
-            "level": "MLB", "ovr": row["ovr"], "pot": row["pot"],
+            "level": "MLB", "ovr": _ovr, "pot": _pot,
             "bucket": bucket, "war_proj": war, "role": role, "stat_peak": sw,
             "ovr_ops_plus": ovr_ops, "split_ops_plus": split_ops,
             "ops_vs_l": vl, "ops_vs_r": vr,

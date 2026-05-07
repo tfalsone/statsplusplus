@@ -150,12 +150,26 @@ class LeagueConfig:
     @property
     def team_abbr_map(self):
         self._load()
-        return {int(k): v for k, v in self._settings.get("team_abbr", {}).items()}
+        abbr = {int(k): v for k, v in self._settings.get("team_abbr", {}).items()}
+        if not abbr:
+            # Fall back to DB teams table (use name as abbr placeholder)
+            import db as _db
+            conn = _db.get_conn(self._base_dir)
+            rows = conn.execute("SELECT team_id, name FROM teams").fetchall()
+            abbr = {r[0]: r[1][:3].upper() for r in rows}
+        return abbr
 
     @property
     def team_names_map(self):
         self._load()
-        return {int(k): v for k, v in self._settings.get("team_names", {}).items()}
+        names = {int(k): v for k, v in self._settings.get("team_names", {}).items()}
+        if not names:
+            # Fall back to DB teams table when league_settings hasn't been populated
+            import db as _db
+            conn = _db.get_conn(self._base_dir)
+            rows = conn.execute("SELECT team_id, name FROM teams").fetchall()
+            names = {r[0]: r[1] for r in rows}
+        return names
 
     @property
     def team_div_map(self):

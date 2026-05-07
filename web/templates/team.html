@@ -38,6 +38,7 @@
 </div>
 
 {% macro stat_row(label, s, fmt) %}
+{% if s and s.val is not none %}
 <tr>
   <td>{{ label }}</td>
   <td>{% if fmt == "pct" %}{{ "%.3f"|format(s.val) }}{% elif fmt == "rate" %}{{ "%.1f"|format(s.val) }}%{% elif fmt == "dec2" %}{{ "%.2f"|format(s.val) }}{% elif fmt == "int" %}{{ s.val }}{% endif %}</td>
@@ -54,6 +55,7 @@
     </span>
   </td>
 </tr>
+{% endif %}
 {% endmacro %}
 
 {# ── Tabs ── #}
@@ -145,6 +147,7 @@
 
     {# ── Right column: Team Stats + Leaders ── #}
     <div class="main-col">
+      {% if team_stats %}
       <div class="columns team-stats-pair">
         <div class="panel">
           <h2>Team Batting</h2>
@@ -179,6 +182,7 @@
           </table>
         </div>
       </div>
+      {% endif %}
 
       {# ── Stat Leaders ── #}
       <div class="columns team-stats-pair">
