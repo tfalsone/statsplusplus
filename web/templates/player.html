@@ -578,9 +578,9 @@
     {# CEILING #}
     <div style="flex:1; background:var(--surface); border-radius:8px; padding:12px; text-align:center">
       <div style="color:var(--text-dim); font-size:11px; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px">Ceiling</div>
-      <div style="font-size:32px; font-weight:700"><span class="ovr-color" data-g="{{ p.ceiling_score }}">{{ p.ceiling_score }}</span></div>
+      <div style="font-size:32px; font-weight:700"><span class="ovr-color" data-g="{{ p.true_ceiling or p.ceiling_score }}">{{ p.true_ceiling or p.ceiling_score }}</span></div>
       {% if p.mlb_context %}
-      {% set cldiff = p.ceiling_score - ctx.median %}
+      {% set cldiff = (p.true_ceiling or p.ceiling_score) - ctx.median %}
       <div style="font-size:12px; margin-top:4px">
         <span style="{% if cldiff > 3 %}color:#4caf50{% elif cldiff < -3 %}color:#f44336{% else %}color:var(--text-dim){% endif %}">{{ "%+d"|format(cldiff) }} vs MLB {{ p.valuation.bucket if p.valuation else '' }} median ({{ ctx.median }})</span>
       </div>
