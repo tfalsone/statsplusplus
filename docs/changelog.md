@@ -4,6 +4,63 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 54
+
+**Multi-League Compatibility (PPL — 1950s historical league):**
+- Full support for leagues without OVR/POT ratings (evaluation engine does all heavy lifting)
+- Reordered refresh pipeline: eval_engine → calibrate → fv_calc (single pass, no second refresh needed)
+- Removed hardcoded 2005 floor from historical stats pull (supports any era)
+- Year derived from API game_date, not stale state.json
+- League structure detection falls back to prior year team stats during spring training
+- Added `manual_structure` flag to prevent auto-detection from overwriting manual config
+- League averages and stat percentiles handle NULL gracefully (spring training)
+- Team stats pulled for historical years too (needed for standings)
+
+**Preseason Support:**
+- Standings show all teams with 0-0 during preseason
+- Roster pages show players without current-year stats
+- `stats_year` helper in team_queries uses most recent year with data
+- Phase detection: "Spring Training" when no games played
+- Division standings fall back to full league when divisions have 1 team
+
+**Financial Model — Low-Salary Leagues:**
+- `perpetual_arb` league setting: no free agency, all players under team control until age 38
+- Arb salary scaling for drastically different salary environments (ratio < 0.5 only)
+- `dollars_per_war` scales default by league salary level when uncalibrated
+- `$/WAR` calculation threshold scales with league minimum (was hardcoded $5M)
+- `|money` Jinja filter: auto-selects $K vs $M format based on value
+- All salary displays in team.html and player.html use `|money` filter
+- Surplus projection stores raw values, formatted at display time
+
+**Evaluation Engine Fixes:**
+- ERA- replaces FIP for pitcher stat blending (OOTP WAR is RA9-based)
+- Two-way player detection: 250 AB threshold for pitchers in no-DH leagues
+- SP bucketing trusts game starter role when stamina ≥ 35
+- `calc_fv_v2` guards against None Ovr/Pot
+- `project_ovr` handles None inputs gracefully
+- `true_ceiling` displayed everywhere instead of raw `ceiling_score`
+
+**Draft Board (continued from Session 53):**
+- Draft value sort: `FV + (ceiling-55) × 0.2 + ctl_penalty`
+- Removed Acc penalty from sort (scouting informs manual adjustments)
+- SP control < 45 penalty (-3) for reliever risk
+- Updated draft-agent.md with final design
+
+**UI Fixes:**
+- Player page: hide Ovr/Pot when NULL, show true_ceiling consistently
+- Career outcomes fix for MLB players with prospect_fv entry (_comp_kw NameError)
+- pos_avg_war marker clamped to chart max when off-scale
+- stat_row macro guards against None values
+- Team page: team_names_map/team_abbr_map fall back to DB when settings empty
+- Depth chart uses composite_score as OVR fallback
+
+**Infrastructure:**
+- Detailed logging throughout refresh pipeline (row counts, timing, skip reasons)
+- `perpetual_arb` toggle in Settings UI
+- `ratings_scale: "20-80"` support confirmed working
+
+---
+
 ## Session 53
 
 **FV Model Improvements:**
