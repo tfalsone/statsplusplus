@@ -588,65 +588,29 @@ def api_draft_pool_upload():
 def api_draft_sim():
     """Run a draft simulation."""
     data = request.get_json(silent=True) or {}
-    pick_pos = data.get("pick", 30)
-    num_rounds = data.get("rounds", 7)
-    seed = data.get("seed")
 
     try:
-        from draft_board import (_connect, _load_pool_ids, _query_board,
-                                 _compute_adp, _compute_org_needs, _draft_value)
-        import random
+        from draft_board import (load_board, simulate_draft, draft_value)
 
-        conn = _connect()
-        pids = _load_pool_ids()
-        rows = _query_board(conn, pids)
-        adp = _compute_adp(rows)
-        needs = _compute_org_needs(conn)
+        rows, adp, needs, num_teams, conn = load_board()
+        pick_pos = data.get("pick", 30)
+        num_rounds = data.get("rounds", 7)
+        seed = data.get("seed")
+        seed = data.get("seed")
 
-        from league_config import LeagueConfig
-        num_teams = len(LeagueConfig().mlb_team_ids)
+        our_picks, _ = simulate_draft(rows, adp, needs, num_teams, pick_pos, num_rounds, seed)
 
-        pot_board = sorted(rows, key=lambda r: (-(r["pot"] or 0), r["age"] or 99))
-        rng = random.Random(seed)
-
-        our_pick_positions = [pick_pos + (rd * num_teams) for rd in range(num_rounds)]
-        available = set(r["player_id"] for r in rows)
-        our_picks = []
-        rd_idx = 0
-
-        for overall_pick in range(1, len(rows) + 1):
-            if not available or rd_idx >= num_rounds:
-                break
-            if overall_pick == our_pick_positions[rd_idx]:
-                rd = rd_idx + 1
-                next_pick = our_pick_positions[rd_idx + 1] if rd_idx + 1 < len(our_pick_positions) else 9999
-                avail_rows = [r for r in rows if r["player_id"] in available]
-                now_or_never = [r for r in avail_rows
-                                if adp.get(r["player_id"], {}).get("pot_rank", 9999) <= next_pick]
-                can_wait = [r for r in avail_rows
-                            if adp.get(r["player_id"], {}).get("pot_rank", 9999) > next_pick]
-                if now_or_never:
-                    chosen = max(now_or_never, key=lambda r: _draft_value(r, needs, rd))
-                else:
-                    chosen = max(can_wait, key=lambda r: _draft_value(r, needs, rd))
-                our_picks.append({"round": rd, "overall": overall_pick,
-                                  "pid": chosen["player_id"], "name": chosen["name"],
-                                  "pos": chosen["bucket"], "fv": chosen["fv"],
-                                  "fv_str": chosen["fv_str"], "pot": chosen["pot"],
-                                  "ceiling": chosen["true_ceiling"],
-                                  "surplus": round(chosen["prospect_surplus"] / 1e6, 1),
-                                  "risk": chosen["risk"]})
-                available.discard(chosen["player_id"])
-                rd_idx += 1
-            else:
-                candidates = [r for r in pot_board if r["player_id"] in available][:8]
-                if candidates:
-                    weights = [35, 25, 15, 10, 6, 4, 3, 2][:len(candidates)]
-                    pick = rng.choices(candidates, weights=weights, k=1)[0]
-                    available.discard(pick["player_id"])
+        picks_out = [{"round": rd, "overall": (rd - 1) * num_teams + slot,
+                      "pid": r["player_id"], "name": r["name"],
+                      "pos": r["bucket"], "fv": r["fv"],
+                      "fv_str": r["fv_str"], "pot": r["pot"],
+                      "ceiling": r["true_ceiling"],
+                      "surplus": round(r["prospect_surplus"] / 1e6, 1),
+                      "risk": r["risk"]}
+                     for rd, slot, r in our_picks]
 
         need_strs = [f"{b}(+{v})" for b, v in sorted(needs.items(), key=lambda x: -x[1])] if needs else []
-        return jsonify({"picks": our_picks, "needs": need_strs, "num_teams": num_teams})
+        return jsonify({"picks": picks_out, "needs": need_strs, "num_teams": num_teams})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -658,22 +622,13 @@ def api_draft_upload_list():
     limit = data.get("top", 500)
 
     try:
-        from draft_board import (_connect, _load_pool_ids, _query_board,
-                                 _compute_adp, _compute_org_needs, _build_urgency_list)
-        from league_config import LeagueConfig
+        from draft_board import load_board, build_urgency_list, compute_adp
+        from league_context import get_league_dir
 
-        conn = _connect()
-        pids = _load_pool_ids()
-        rows = _query_board(conn, pids)
-        adp = _compute_adp(rows)
-        needs = _compute_org_needs(conn)
-        num_teams = len(LeagueConfig().mlb_team_ids)
-
-        ordered = _build_urgency_list(rows, adp, needs, num_teams, min(limit, 500))
+        rows, adp, needs, num_teams, conn = load_board()
+        ordered = build_urgency_list(rows, adp, needs, num_teams, min(limit, 500))
         ranked_ids = [str(r["player_id"]) for r in ordered]
 
-        # Write file
-        from league_context import get_league_dir
         out_path = get_league_dir() / "tmp" / "draft_upload.txt"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text("\n".join(ranked_ids) + "\n")
