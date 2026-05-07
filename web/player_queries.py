@@ -1009,8 +1009,17 @@ def get_player(pid):
 
     # MLB context: percentile + tier for composite/ceiling vs MLB at position
     mlb_ctx = None
-    if composite_score is not None and _pos_bucket:
-        _internal_bucket = "COF" if _pos_bucket == "OF" else _pos_bucket
+    _ctx_bucket = _pos_bucket
+    if not _ctx_bucket and composite_score is not None:
+        # Derive bucket from player position/role for prospects
+        _POS_TO_BUCKET = {"2": "C", "3": "1B", "4": "2B", "5": "3B", "6": "SS",
+                          "7": "COF", "8": "CF", "9": "COF", "10": "COF"}
+        if role in (11, 12, 13):
+            _ctx_bucket = "SP" if role == 11 else "RP"
+        else:
+            _ctx_bucket = _POS_TO_BUCKET.get(str(pos), "COF")
+    if composite_score is not None and _ctx_bucket:
+        _internal_bucket = "COF" if _ctx_bucket == "OF" else _ctx_bucket
         try:
             _ctx_conn = get_db()
             mlb_ctx = _mlb_context(_ctx_conn, _internal_bucket, composite_score,
