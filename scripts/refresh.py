@@ -975,6 +975,6 @@ if __name__ == "__main__":
         refresh_league(year, game_date=game_date)
         update_state(game_date, year)
         if not skip_fv:
-            _run_calibrate()
             _run_evaluation_engine()
+            _run_calibrate()
             _run_fv_calc()
