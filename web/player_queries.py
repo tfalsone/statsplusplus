@@ -893,6 +893,10 @@ def get_player(pid):
             _fv = prospect_row[1]
             _bucket = _display_pos(prospect_row[0])
             _level = prospect_row[4]
+            _comp_kw = dict(offensive_grade=eval_data.get("offensive_grade"),
+                            offensive_ceiling=eval_data.get("offensive_ceiling"),
+                            defensive_value=eval_data.get("defensive_value"),
+                            durability_score=eval_data.get("durability_score"))
             outcome_probs = _pv.career_outcome_probs(
                 _fv, age, _level, _bucket,
                 ovr=ratings["ovr"] if ratings else None,
