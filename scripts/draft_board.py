@@ -545,28 +545,52 @@ def cmd_sim(args):
     import random
     rng = random.Random(args.seed if hasattr(args, 'seed') and args.seed else None)
 
+    # Our pick positions across all rounds
+    our_pick_positions = [pick_pos + (rd * num_teams) for rd in range(num_rounds)]
+    # e.g. pick 30 in a 34-team league: [30, 64, 98, 132, 166]
+
     available = set(r["player_id"] for r in rows)
     our_picks = []
     other_picks_by_round = []
 
     for rd in range(1, num_rounds + 1):
-        # Re-sort our board each round with current round context
-        our_board = sorted(rows, key=lambda r: _draft_value(r, needs, rd), reverse=True)
+        # Our next pick after this one (for "will they still be there?" logic)
+        next_pick_overall = our_pick_positions[rd] if rd < num_rounds else 9999
+
         round_picks = []
         for slot in range(1, num_teams + 1):
             if not available:
                 break
             if slot == pick_pos:
-                # Our pick: best available on our board
-                for r in our_board:
-                    if r["player_id"] in available:
-                        our_picks.append((rd, slot, r))
-                        available.discard(r["player_id"])
-                        round_picks.append((slot, r, True))
-                        break
+                # Our pick: best player who WON'T be available at our next pick.
+                # Among available players, find those whose POT rank < next_pick
+                # (they'll be taken before we pick again). Pick the best by value.
+                avail_rows = [r for r in rows if r["player_id"] in available]
+                # Split: "now or never" vs "can wait"
+                now_or_never = []
+                can_wait = []
+                for r in avail_rows:
+                    a = adp.get(r["player_id"], {})
+                    pot_rank = a.get("pot_rank", 9999)
+                    if pot_rank <= next_pick_overall:
+                        now_or_never.append(r)
+                    else:
+                        can_wait.append(r)
+
+                # Pick best "now or never" by value; fall back to best overall if none
+                if now_or_never:
+                    pick_from = sorted(now_or_never,
+                                       key=lambda r: _draft_value(r, needs, rd), reverse=True)
+                else:
+                    pick_from = sorted(can_wait,
+                                       key=lambda r: _draft_value(r, needs, rd), reverse=True)
+
+                chosen = pick_from[0]
+                our_picks.append((rd, slot, chosen))
+                available.discard(chosen["player_id"])
+                round_picks.append((slot, chosen, True))
             else:
                 # Other team: pick from top available by POT with some variance.
-                # ~70% take the best, ~20% take 2nd, ~10% take 3rd-5th.
                 candidates = [r for r in pot_board if r["player_id"] in available][:5]
                 if candidates:
                     weights = [70, 20, 5, 3, 2][:len(candidates)]
