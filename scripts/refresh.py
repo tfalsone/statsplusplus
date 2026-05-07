@@ -718,8 +718,11 @@ def refresh_league(year, game_date=None):
         divisions, leagues, team_abbr, team_names = structure
         settings_path = league_dir / "config" / "league_settings.json"
         s = json.loads(settings_path.read_text()) if settings_path.exists() else {}
-        s["divisions"] = divisions
-        s["leagues"] = leagues
+        # Only overwrite divisions/leagues if not manually configured
+        if not s.get("manual_structure"):
+            s["divisions"] = divisions
+            s["leagues"] = leagues
+        # Always update team names/abbreviations (these come from the API)
         s["team_abbr"] = team_abbr
         s["team_names"] = team_names
         settings_path.write_text(json.dumps(s, indent=2) + "\n")
