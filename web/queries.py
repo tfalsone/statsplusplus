@@ -830,13 +830,25 @@ def get_draft_pool():
         p["_norm_age"] = p["Age"] + 4  # force diff >= 3 → base 0.65
         p["_level"] = "a-short"  # +0.10 low_level bonus, no cap → dw = 0.75
         fv_base, fv_plus = calc_fv(p)
+        # Use prospect_fv table values when available (canonical grades)
+        pf_row = conn.execute(
+            "SELECT fv, fv_str, risk FROM prospect_fv WHERE player_id=?", (p["ID"],)
+        ).fetchone()
+        if pf_row:
+            fv_base = pf_row[0]
+            fv_str_display = pf_row[1]
+            pf_risk = pf_row[2]
+        else:
+            fv_str_display = f"{fv_base}+" if fv_plus else str(fv_base)
+            pf_risk = None
         pos_str = ROLE_MAP.get(p.get("role"), _POS_LABEL.get(p.get("pos"), "?"))
         college_hs = "College" if level == '10' else "HS" if level == '11' else "Amateur"
         entry = {
             "pid": p["ID"], "name": p["Name"], "age": p["Age"],
             "pos": pos_str, "bucket": bucket, "type": college_hs,
             "ovr": p["Ovr"], "pot": p["Pot"],
-            "fv": fv_base, "fv_str": f"{fv_base}+" if fv_plus else str(fv_base),
+            "fv": fv_base, "fv_str": fv_str_display,
+            "risk": pf_risk,
             "bats": p.get("Bats", ""), "throws": p.get("Throws", ""),
             "acc": p.get("Acc", ""), "we": p.get("WrkEthic", ""),
             "lead": p.get("Lead", ""), "int": p.get("Int", ""),
