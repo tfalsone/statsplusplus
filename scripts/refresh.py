@@ -990,6 +990,9 @@ if __name__ == "__main__":
             args = args[1:]
         year = int(args[0]) if args else default_year
         game_date = client.get_date()
+        # Derive year from API game date — state.json may be stale or uninitialized
+        if game_date and len(game_date) >= 4:
+            year = int(game_date[:4])
         log.info("=== Full pipeline: year=%s, game_date=%s ===", year, game_date)
         refresh_league(year, game_date=game_date)
         update_state(game_date, year)
