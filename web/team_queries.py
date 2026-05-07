@@ -275,12 +275,10 @@ def get_roster(team_id=None):
     ).fetchall():
         pit[r[0]] = (r[1], r[2], r[3], r[4])
 
-    mlb_pids = {row[0] for row in players if row[0] in bat or row[0] in pit}
+    mlb_pids = {row[0] for row in players}
 
     hitters, pitchers = [], []
     for pid, name, age, pos, role, ovr, surplus, bucket, comp_score in players:
-        if pid not in mlb_pids:
-            continue
         _display_ovr = comp_score if comp_score is not None else (ovr or 0)
         base = {"pid": pid, "name": name, "age": age, "ovr": _display_ovr,
                 "surplus": round(surplus / 1e6, 1) if surplus else 0}
