@@ -148,7 +148,7 @@ def _compute_org_needs(conn):
 
 
 def _draft_value(r, needs=None, pick_round=None):
-    """Compute draft value score: FV + ceiling bonus + RP discount + Acc penalty + needs."""
+    """Compute draft value score: FV + ceiling bonus + RP discount + Acc penalty + risk + needs."""
     fv = r["fv"] or 0
     ceil = r["true_ceiling"] or 0
     val = fv + (ceil - 55) * 0.2
@@ -161,6 +161,12 @@ def _draft_value(r, needs=None, pick_round=None):
         val -= 2
     elif acc == "VL":
         val -= 4
+    # Development risk: extreme projection = lower expected value
+    risk = r["risk"] or ""
+    if risk == "Extreme":
+        val -= 3
+    elif risk == "High":
+        val -= 1
     # Org needs bonus: only in rounds 3+ to avoid overriding BPA early
     if needs and pick_round and pick_round >= 3:
         val += needs.get(r["bucket"], 0)
