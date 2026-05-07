@@ -1726,7 +1726,12 @@ def is_two_way_player(
 
     # Tier 2: stat-based from provided season lists
     if batting_stats and pitching_stats:
-        batting_years = {s.get("year") for s in batting_stats if s.get("ab", 0) >= 130}
+        # In no-DH leagues, all pitchers accumulate AB from batting in their
+        # lineup spot. Require much higher AB threshold to distinguish true
+        # two-way players from pitchers who simply bat because there's no DH.
+        from league_config import config as _cfg
+        ab_threshold = 250 if _cfg.settings.get("dh_rule") == "No DH" and is_pitcher else 130
+        batting_years = {s.get("year") for s in batting_stats if s.get("ab", 0) >= ab_threshold}
         pitching_years = {s.get("year") for s in pitching_stats if s.get("ip", 0) >= 40}
         if batting_years & pitching_years:
             return True

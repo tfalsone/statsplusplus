@@ -126,8 +126,12 @@ def load_stat_history(conn, game_date):
 
     two_way = set()
     bat_by_year = {}
+    # In no-DH leagues, pitchers accumulate AB from batting in their lineup spot.
+    # Use higher threshold to avoid flagging every SP as two-way.
+    from league_config import config as _cfg
+    ab_thresh = 250 if _cfg.settings.get("dh_rule") == "No DH" else 130
     for r in bat_rows:
-        if (r["ab"] or 0) >= 130:
+        if (r["ab"] or 0) >= ab_thresh:
             bat_by_year.setdefault(r["player_id"], set()).add(r["year"])
     for r in pit_rows:
         if (r["gs"] or 0) >= 10:
