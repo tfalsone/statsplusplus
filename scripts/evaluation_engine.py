@@ -2606,23 +2606,12 @@ def _compute_stat_signal(
     result: list[float] = []
     for season in stat_seasons:
         if is_pitcher:
-            ip = season.get("ip") or 0
-            if ip <= 0:
+            era = season.get("era")
+            if era is None or lg_era <= 0:
                 continue
-            hra = season.get("hra") or 0
-            bb = season.get("bb") or 0
-            hp = season.get("hp") or 0
-            k = season.get("k") or 0
-            fip = (13.0 * hra + 3.0 * (bb + hp) - 2.0 * k) / ip + lg_era
-            # Convert FIP to a "plus" stat: lower FIP = better
-            # FIP- = FIP / lgERA × 100; invert so higher = better
-            if lg_era > 0:
-                fip_minus = (fip / lg_era) * 100.0
-                # Invert: 200 - fip_minus gives us a "higher is better" stat
-                # where 100 = league average
-                stat_plus = 200.0 - fip_minus
-            else:
-                stat_plus = 100.0
+            # ERA- = ERA / lgERA × 100; invert so higher = better
+            era_minus = (era / lg_era) * 100.0
+            stat_plus = 200.0 - era_minus
         else:
             obp = season.get("obp") or 0
             slg = season.get("slg") or 0
