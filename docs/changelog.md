@@ -4,6 +4,40 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 55
+
+**Minor League Team Pages:**
+- `/team/<id>` now serves minor league teams with dedicated `team_minor.html` template
+- Notables section: prospect cards (FV 45+) + "worth tracking" players (composite ≥ 50, ceiling ≥ 55, young-for-level)
+- Full roster table sorted by composite with FV/risk/surplus
+- Unified `org-nav` component: shared [MLB] [AAA] [AA] [A] [Rookie] navigation bar on both MLB and minor league pages
+- Configurable filter thresholds (`NOTABLE_MIN_*` constants in team_queries.py)
+
+**Player Page Fixes:**
+- `true_ceiling` displayed everywhere instead of raw `ceiling_score` (header, eval panel, league hover)
+- MLB positional context (rank #X/Y) now shown for all players with composite scores, not just MLB roster players
+- Ceiling tier label uses `true_ceiling` for consistency
+
+**Evaluation Engine:**
+- ERA- replaces FIP for pitcher stat blending (OOTP WAR is RA9-based; FIP penalized contact managers)
+- Arb salary scaling only applies when league min < 50% of default (fixes vMLB 22% reduction)
+
+**Draft Board — Major Overhaul:**
+- ADP (Average Draft Position): ranks class by POT, compares to FV rank, labels Sleeper/Value/Goes Early/Reach
+- Draft simulation (`sim` command): other teams pick by POT with randomness, we pick by "now or never" logic
+- Urgency-greedy list building: at each position, prefer players who'll be gone soon unless a sleeper is significantly better
+- Threshold fades by round: Rd1-2 strongly prefer urgent (threshold 10), Rd3-4 moderate (5), Rd5+ pure BPA
+- Org needs: computed from MLB departures vs farm depth, applied as tiebreaker in Rd3+
+- Draft value formula: FV + ceiling bonus + RP discount (-5) + Acc penalty (L: -2, VL: -4) + risk penalty (Extreme: -3, High: -1) + needs
+- RP excluded from org needs (SP prospects convert naturally)
+- Web UI: 🎲 Sim button + 📋 Auto-Draft List button + 📂 Open Folder button in draft tab
+- API endpoints: `/api/draft-sim`, `/api/draft-upload-list`, `/api/open-file-location`
+- Draft board FV values now use canonical `prospect_fv` table (was recalculating with inflated dev_weight)
+- Refactored `draft_board.py` into SOLID layers: Data, Valuation, Strategy, Display, CLI Commands
+- Public API for web: `load_board()`, `draft_value()`, `compute_adp()`, `compute_org_needs()`, `build_urgency_list()`, `simulate_draft()`
+
+---
+
 ## Session 54
 
 **Multi-League Compatibility (PPL — 1950s historical league):**
