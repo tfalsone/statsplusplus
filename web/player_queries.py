@@ -296,6 +296,101 @@ def _build_evaluation_data(rd: dict | None, is_pitcher: bool, norm_fn,
     return result
 
 
+# ---------------------------------------------------------------------------
+# Insights — conditional, actionable observations about a player
+# ---------------------------------------------------------------------------
+
+_PLATOON_GAP_THRESHOLD = 15  # min gap between L/R split (on 20-80 scale) to flag
+
+
+def _compute_insights(rd: dict | None, is_pitcher: bool, composite: int | None,
+                      norm_fn) -> list[dict]:
+    """Generate conditional insights for the player evaluation panel.
+
+    Each insight is a dict with:
+        - icon: emoji/symbol
+        - text: short description
+        - tone: "positive", "negative", or "neutral"
+
+    Only returns insights when the data strongly supports them.
+    """
+    if not rd or composite is None:
+        return []
+
+    insights = []
+
+    # ── Platoon candidate ──
+    if not is_pitcher:
+        splits = [
+            ("contact", "cntct_l", "cntct_r"),
+            ("power", "pow_l", "pow_r"),
+            ("gap", "gap_l", "gap_r"),
+            ("eye", "eye_l", "eye_r"),
+        ]
+        strong_side = None
+        max_gap = 0
+        for tool, l_col, r_col in splits:
+            lv = norm_fn(rd.get(l_col))
+            rv = norm_fn(rd.get(r_col))
+            if lv is not None and rv is not None:
+                gap = abs(lv - rv)
+                if gap > max_gap:
+                    max_gap = gap
+                    strong_side = "vs RHP" if rv > lv else "vs LHP"
+
+        if max_gap >= _PLATOON_GAP_THRESHOLD:
+            insights.append({
+                "icon": "⚔️", "tone": "neutral",
+                "text": f"Platoon candidate — significantly better {strong_side}",
+            })
+    else:
+        # Pitcher platoon: stuff L/R split
+        stf_l = norm_fn(rd.get("stf_l"))
+        stf_r = norm_fn(rd.get("stf_r"))
+        if stf_l is not None and stf_r is not None:
+            gap = abs(stf_l - stf_r)
+            if gap >= _PLATOON_GAP_THRESHOLD:
+                weak = "LHH" if stf_l < stf_r else "RHH"
+                insights.append({
+                    "icon": "⚔️", "tone": "negative",
+                    "text": f"Platoon-vulnerable — exposed vs {weak}",
+                })
+
+    # ── Elite tool at position (only when truly exceptional) ──
+    # A tool 20+ above composite is rare enough to note
+    if not is_pitcher:
+        tool_cols = {"Contact": "cntct", "Power": "pow", "Speed": "speed", "Eye": "eye"}
+        for label, col in tool_cols.items():
+            val = norm_fn(rd.get(col))
+            if val is not None and val >= composite + 20:
+                insights.append({
+                    "icon": "⭐", "tone": "positive",
+                    "text": f"Elite {label.lower()} — standout tool for any position",
+                })
+                break  # only show one elite tool note
+
+    # ── Severe weakness ──
+    if not is_pitcher:
+        weak_tools = {"Contact": "cntct", "Power": "pow", "Eye": "eye"}
+        for label, col in weak_tools.items():
+            val = norm_fn(rd.get(col))
+            if val is not None and val <= 25 and composite >= 45:
+                insights.append({
+                    "icon": "⚠️", "tone": "negative",
+                    "text": f"Severe {label.lower()} weakness — limits offensive ceiling",
+                })
+                break
+    else:
+        ctrl = norm_fn(rd.get("ctrl"))
+        if ctrl is not None and ctrl <= 30 and composite >= 45:
+            insights.append({
+                "icon": "⚠️", "tone": "negative",
+                "text": "Severe control weakness — high walk rate risk",
+            })
+
+    return insights
+
+
 def get_player(pid):
     conn = get_db()
     conn.row_factory = None
@@ -1027,6 +1122,9 @@ def get_player(pid):
         except Exception:
             pass
 
+    # ── Insights ──
+    insights = _compute_insights(rd, is_pitcher, composite_score, _norm)
+
     return {
         "pid": pid, "name": name, "age": age, "pos": pos_str,
         "team": team_names_map().get(org_id, "?"), "team_abbr": team_abbr_map().get(org_id, "?"), "tid": org_id,
@@ -1046,7 +1144,7 @@ def get_player(pid):
         "tool_only_score": tool_only_score,
         "secondary_composite": secondary_composite,
         "divergence": divergence,
-        "ceiling_divergence": ceiling_divergence,
+        "ceiling_divergence": eval_data.get("ceiling_divergence"),
         "archetype": archetype,
         "carrying_tools": carrying_tools,
         "red_flag_tools": red_flag_tools,
@@ -1061,6 +1159,7 @@ def get_player(pid):
         "positional_percentile": eval_data["positional_percentile"],
         "positional_median": eval_data["positional_median"],
         "mlb_context": mlb_ctx,
+        "insights": insights,
     }
 
 

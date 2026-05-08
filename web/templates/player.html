@@ -555,7 +555,7 @@
 {% macro evaluation_panel() %}
 {% if p.composite_score %}
 <div class="panel">
-  <h2>Player Evaluation{% if p.archetype and p.archetype != 'unclassified' %} <span class="char-pill char-pill-n" style="text-transform:capitalize; font-size:11px; vertical-align:middle">{{ p.archetype|replace('-', ' ')|replace('_', ' ') }}</span>{% endif %}</h2>
+  <h2>Player Evaluation</h2>
 
   {# ── Now / Ceiling boxes ── #}
   <div style="display:flex; gap:24px; margin-bottom:16px">
@@ -619,15 +619,14 @@
   </div>
   {% endif %}
 
-  {# ── Carrying / Red Flag tools ── #}
-  {% if p.carrying_tools or p.red_flag_tools %}
-  <div style="margin-bottom:16px; font-size:12px; display:flex; gap:16px; flex-wrap:wrap">
-    {% if p.carrying_tools %}
-    <div><span style="color:var(--text-dim)">Carrying:</span>{% for t in p.carrying_tools %}<span style="color:#4caf50; font-weight:600; margin-left:4px">{{ t|replace('_', ' ')|title }}</span>{% if not loop.last %},{% endif %}{% endfor %}</div>
-    {% endif %}
-    {% if p.red_flag_tools %}
-    <div><span style="color:var(--text-dim)">Red Flag:</span>{% for t in p.red_flag_tools %}<span style="color:#f44336; font-weight:600; margin-left:4px">{{ t|replace('_', ' ')|title }}</span>{% if not loop.last %},{% endif %}{% endfor %}</div>
-    {% endif %}
+  {# ── Insights (conditional — only shown when relevant) ── #}
+  {% if p.insights %}
+  <div style="margin-bottom:12px">
+    {% for ins in p.insights %}
+    <div style="font-size:12px; padding:4px 0; {% if ins.tone == 'positive' %}color:#4caf50{% elif ins.tone == 'negative' %}color:#f44336{% else %}color:var(--text){% endif %}">
+      {{ ins.icon }} {{ ins.text }}
+    </div>
+    {% endfor %}
   </div>
   {% endif %}
 
@@ -641,28 +640,19 @@
       <span>Comp {{ p.composite_score }} vs OVR {{ p.ratings.ovr }} <span class="{% if comp_diff > 3 %}pos{% elif comp_diff < -3 %}neg{% endif %}" style="font-weight:600">{{ "%+d"|format(comp_diff) }}</span></span>
       {% if ceil_diff is not none %}<span>Ceil {{ p.ceiling_score }} vs POT {{ p.ratings.pot }} <span class="{% if ceil_diff > 3 %}pos{% elif ceil_diff < -3 %}neg{% endif %}" style="font-weight:600">{{ "%+d"|format(ceil_diff) }}</span></span>{% endif %}
     </div>
-    {% if p.divergence %}
-    <div style="margin-top:4px">
-      {% if p.divergence.type == 'hidden_gem' %}<span class="divergence-badge divergence-gem">▲ Hidden Gem</span>
-      {% elif p.divergence.type == 'landmine' %}<span class="divergence-badge divergence-mine">▼ Landmine</span>{% endif %}
-      {% if p.divergence.component_context %}{% set top = p.divergence.component_context[0] %}<span style="color:var(--text-dim); margin-left:4px">{% if top.component == 'offensive_grade' %}{% if p.is_pitcher %}pitching{% else %}offense{% endif %}{% elif top.component == 'baserunning_value' %}baserunning{% elif top.component == 'defensive_value' %}defense{% elif top.component == 'durability_score' %}durability{% endif %}-driven</span>{% endif %}
-    </div>
-    {% endif %}
   </div>
   {% endif %}
 
-  {# ── Development tracking ── #}
-  {% if p.snapshot_deltas and (p.snapshot_deltas.composite_delta != 0 or p.snapshot_deltas.ceiling_delta != 0) %}
+  {# ── Development tracking (only meaningful changes) ── #}
+  {% if p.snapshot_deltas and (p.snapshot_deltas.composite_delta|abs >= 3 or p.snapshot_deltas.ceiling_delta|abs >= 3) %}
   <div style="font-size:12px; color:var(--text-dim)">
     <span style="text-transform:uppercase; letter-spacing:1px; font-size:10px">Development</span>
-    {% if p.snapshot_deltas.composite_delta != 0 %}
+    {% if p.snapshot_deltas.composite_delta|abs >= 3 %}
     <span style="margin-left:8px">Comp <span class="{% if p.snapshot_deltas.composite_delta > 0 %}pos{% else %}neg{% endif %}">{{ "%+d"|format(p.snapshot_deltas.composite_delta) }}</span></span>
     {% endif %}
-    {% if p.snapshot_deltas.ceiling_delta != 0 %}
+    {% if p.snapshot_deltas.ceiling_delta|abs >= 3 %}
     <span style="margin-left:8px">Ceil <span class="{% if p.snapshot_deltas.ceiling_delta > 0 %}pos{% else %}neg{% endif %}">{{ "%+d"|format(p.snapshot_deltas.ceiling_delta) }}</span></span>
     {% endif %}
-    {% if p.snapshot_deltas.is_riser %}<span class="divergence-badge divergence-gem" style="font-size:10px; margin-left:6px">▲ Riser</span>{% endif %}
-    {% if p.snapshot_deltas.reduced_ceiling %}<span class="divergence-badge divergence-mine" style="font-size:10px; margin-left:6px">▼ Reduced Ceiling</span>{% endif %}
   </div>
   {% endif %}
 </div>
