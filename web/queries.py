@@ -1080,6 +1080,13 @@ def get_positional_rankings():
     conn = get_db()
     teams = team_abbr_map()
 
+    # Get MLB org IDs for filtering
+    try:
+        from league_config import LeagueConfig
+        mlb_org_ids = LeagueConfig().mlb_team_ids
+    except Exception:
+        mlb_org_ids = set(teams.keys())
+
     # MLB players with composite scores
     mlb_rows = conn.execute("""
         SELECT p.player_id, p.name, p.age, p.pos, p.role, p.team_id,
@@ -1090,7 +1097,7 @@ def get_positional_rankings():
         ORDER BY r.composite_score DESC
     """).fetchall()
 
-    # Prospects with FV grades
+    # Prospects with FV grades — only from MLB orgs
     prospect_rows = conn.execute("""
         SELECT p.player_id, p.name, p.age, pf.bucket, p.team_id, p.parent_team_id,
                pf.fv, pf.fv_str, pf.risk, r.true_ceiling, pf.prospect_surplus
@@ -1124,6 +1131,8 @@ def get_positional_rankings():
                 break
             if _BUCKET_TO_GROUP.get(r["bucket"]) == key:
                 org_id = r["parent_team_id"] if r["parent_team_id"] else r["team_id"]
+                if org_id not in mlb_org_ids:
+                    continue
                 group["prospects"].append({
                     "pid": r["player_id"], "name": r["name"], "age": r["age"],
                     "team": teams.get(org_id, "?"),
