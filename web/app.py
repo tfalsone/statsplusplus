@@ -378,6 +378,9 @@ def league():
     draft_pool = queries.get_draft_pool()
     draft_depth = queries.get_draft_org_depth(my_team_id()) if draft_pool else {}
 
+    # Positional rankings
+    pos_rankings = queries.get_positional_rankings()
+
     return render_template("league.html", league_groups=league_groups,
                            prospects=prospects, all_prospects=all_prospects,
                            bat_leaders=bat_leaders,
@@ -386,6 +389,7 @@ def league():
                            trade_orgs=trade_orgs, my_team_id=my_team_id(),
                            season_remaining=round(season_remaining, 3),
                            draft_pool=draft_pool, draft_depth=draft_depth,
+                           pos_rankings=pos_rankings,
                            num_teams=len(cfg.mlb_team_ids))
 
 
