@@ -322,7 +322,7 @@ def _scarcity_multiplier(tool_grade: int, schedule: list[dict]) -> float:
 
 
 def compute_carrying_tool_bonus(
-    tools: dict[str, int | None],
+    tools: dict[str, float | int | None],
     position: str,
     config: dict,
 ) -> tuple[float, list[dict]]:
@@ -378,7 +378,7 @@ def compute_carrying_tool_bonus(
 
 def apply_carrying_tool_bonus(
     base_offensive_grade: float,
-    tools: dict[str, int | None],
+    tools: dict[str, float | int | None],
     position: str,
     config: dict,
 ) -> tuple[int, float, list[dict]]:
@@ -617,7 +617,7 @@ _MLB_TOOL_FLOOR = 35
 _FLOOR_PENALTY_RATE = 0.25  # composite points per point below floor
 
 
-def _sub_mlb_floor_penalty(tools: dict[str, int | None]) -> float:
+def _sub_mlb_floor_penalty(tools: dict[str, float | int | None]) -> float:
     """Compute composite penalty for tools below the MLB floor.
 
     Players with tools below 35 (the MLB P5 threshold) underperform
@@ -681,7 +681,7 @@ def _compensated_transform(val: float, compensators: list[tuple[float, float]]) 
     return transformed + deficit * pull_fraction
 
 
-def _apply_hitter_tool_compensation(tools: dict[str, int | None]) -> dict[str, float]:
+def _apply_hitter_tool_compensation(tools: dict[str, float | int | None]) -> dict[str, float]:
     """Apply compensation for hitter tools below average (< 50).
 
     When a tool is below 50 and a compensating tool is above 50, the
@@ -717,7 +717,7 @@ def _apply_hitter_tool_compensation(tools: dict[str, int | None]) -> dict[str, f
     return effective
 
 
-def _apply_pitcher_tool_compensation(tools: dict[str, int | None]) -> dict[str, float]:
+def _apply_pitcher_tool_compensation(tools: dict[str, float | int | None]) -> dict[str, float]:
     """Apply compensation for pitcher tools below average (< 50).
 
     Movement is the floor tool -- not compensated.
@@ -757,9 +757,9 @@ def _apply_pitcher_tool_compensation(tools: dict[str, int | None]) -> dict[str, 
 
 
 def compute_composite_hitter(
-    tools: dict[str, int | None],
+    tools: dict[str, float | int | None],
     weights: dict[str, float],
-    defense: dict[str, int | None],
+    defense: dict[str, float | int | None],
     def_weights: dict[str, float],
 ) -> int:
     """Compute hitter Composite_Score from tool ratings and weights.
@@ -860,7 +860,7 @@ _BASERUNNING_TOOL_KEYS = ("speed", "steal", "stl_rt")
 
 
 def _offensive_grade_raw(
-    tools: dict[str, int | None],
+    tools: dict[str, float | int | None],
     weights: dict[str, float],
 ) -> float | None:
     """Return the unclamped offensive weighted average, or ``None``.
@@ -894,7 +894,7 @@ def _offensive_grade_raw(
 
 
 def compute_offensive_grade(
-    tools: dict[str, int | None],
+    tools: dict[str, float | int | None],
     weights: dict[str, float],
 ) -> int | None:
     """Compute offensive component from hitting tools only.
@@ -925,7 +925,7 @@ def compute_offensive_grade(
 
 
 def _baserunning_value_raw(
-    tools: dict[str, int | None],
+    tools: dict[str, float | int | None],
     weights: dict[str, float],
 ) -> float | None:
     """Return the unclamped baserunning weighted average, or ``None``.
@@ -951,7 +951,7 @@ def _baserunning_value_raw(
 
 
 def compute_baserunning_value(
-    tools: dict[str, int | None],
+    tools: dict[str, float | int | None],
     weights: dict[str, float],
 ) -> int | None:
     """Compute baserunning component from speed, steal, and steal rating.
@@ -976,7 +976,7 @@ def compute_baserunning_value(
 
 
 def _defensive_value_raw(
-    defense: dict[str, int | None],
+    defense: dict[str, float | int | None],
     def_weights: dict[str, float],
 ) -> float | None:
     """Return the unclamped defensive weighted average, or ``None``.
@@ -1004,7 +1004,7 @@ def _defensive_value_raw(
 
 
 def compute_defensive_value(
-    defense: dict[str, int | None],
+    defense: dict[str, float | int | None],
     def_weights: dict[str, float],
 ) -> int | None:
     """Compute defensive component from positional defensive tools.
@@ -1117,10 +1117,10 @@ _PITCHER_TOOL_KEYS = ("stuff", "movement", "control", "hra", "pbabip")
 
 
 def compute_composite_pitcher(
-    tools: dict[str, int | None],
+    tools: dict[str, float | int | None],
     weights: dict[str, float],
-    arsenal: dict[str, int],
-    stamina: int,
+    arsenal: dict[str, float | int],
+    stamina: float | int,
     role: str,
 ) -> int:
     """Compute pitcher Composite_Score from tool ratings, arsenal, and role.
@@ -1228,9 +1228,9 @@ def compute_composite_pitcher(
 
 def compute_tool_only_score(
     player_type: str,
-    tools: dict[str, int | None],
+    tools: dict[str, float | int | None],
     weights: dict[str, float],
-    defense: dict[str, int | None] | None = None,
+    defense: dict[str, float | int | None] | None = None,
     def_weights: dict[str, float] | None = None,
     arsenal: dict[str, int] | None = None,
     stamina: int = 50,
@@ -1374,12 +1374,12 @@ def pitcher_stat_to_2080(stat_plus: float) -> float:
 # ---------------------------------------------------------------------------
 
 def compute_ceiling(
-    potential_tools: dict[str, int | None],
+    potential_tools: dict[str, float | int | None],
     weights: dict[str, float],
     composite_score: int,
     accuracy: str = "A",
     work_ethic: str = "N",
-    defense: dict[str, int | None] | None = None,
+    defense: dict[str, float | int | None] | None = None,
     def_weights: dict[str, float] | None = None,
     is_pitcher: bool = False,
     arsenal: dict[str, int] | None = None,
@@ -1471,12 +1471,12 @@ def compute_ceiling(
 
 
 def compute_true_ceiling(
-    potential_tools: dict[str, int | None],
+    potential_tools: dict[str, float | int | None],
     weights: dict[str, float],
     composite_score: int,
     accuracy: str = "A",
     work_ethic: str = "N",
-    defense: dict[str, int | None] | None = None,
+    defense: dict[str, float | int | None] | None = None,
     def_weights: dict[str, float] | None = None,
     is_pitcher: bool = False,
     arsenal: dict[str, int] | None = None,
@@ -1511,10 +1511,10 @@ def compute_true_ceiling(
 
 
 def compute_component_ceilings(
-    potential_tools: dict[str, int | None],
+    potential_tools: dict[str, float | int | None],
     weights: dict[str, float],
     current_components: dict[str, int | None],
-    defense: dict[str, int | None] | None = None,
+    defense: dict[str, float | int | None] | None = None,
     def_weights: dict[str, float] | None = None,
     is_pitcher: bool = False,
     arsenal: dict[str, int] | None = None,
@@ -2385,7 +2385,7 @@ def _build_player_dict(row: dict) -> dict:
     return p
 
 
-def _extract_hitter_tools(row: dict, norm_fn) -> dict[str, int | None]:
+def _extract_hitter_tools(row: dict, norm_fn) -> dict[str, float | None]:
     """Extract and normalize hitter tool ratings from a DB row.
 
     Handles L/R splits: when both _l and _r variants exist, computes
@@ -2403,12 +2403,12 @@ def _extract_hitter_tools(row: dict, norm_fn) -> dict[str, int | None]:
         "power": ("pow", "pow_r", "pow_l"),
         "eye": ("eye", "eye_r", "eye_l"),
     }
-    tools: dict[str, int | None] = {}
+    tools: dict[str, float | None] = {}
     for key, (overall_col, r_col, l_col) in tool_map.items():
         r_val = norm_fn(row.get(r_col))
         l_val = norm_fn(row.get(l_col))
         if r_val is not None and l_val is not None:
-            tools[key] = round(r_val * 0.6 + l_val * 0.4)
+            tools[key] = r_val * 0.6 + l_val * 0.4
         else:
             tools[key] = norm_fn(row.get(overall_col))
 
@@ -2418,7 +2418,7 @@ def _extract_hitter_tools(row: dict, norm_fn) -> dict[str, int | None]:
     return tools
 
 
-def _extract_potential_hitter_tools(row: dict, norm_fn) -> dict[str, int | None]:
+def _extract_potential_hitter_tools(row: dict, norm_fn) -> dict[str, float | None]:
     """Extract potential hitter tool ratings from a DB row."""
     return {
         "contact": norm_fn(row.get("pot_cntct")),
@@ -2431,12 +2431,12 @@ def _extract_potential_hitter_tools(row: dict, norm_fn) -> dict[str, int | None]
     }
 
 
-def _extract_pitcher_tools(row: dict, norm_fn) -> dict[str, int | None]:
+def _extract_pitcher_tools(row: dict, norm_fn) -> dict[str, float | None]:
     """Extract and normalize pitcher tool ratings from a DB row.
 
     Includes stuff L/R splits for platoon balance detection.
     """
-    tools: dict[str, int | None] = {}
+    tools: dict[str, float | None] = {}
     tools["stuff"] = norm_fn(row.get("stf"))
     tools["movement"] = norm_fn(row.get("mov"))
     tools["control"] = norm_fn(row.get("ctrl"))
@@ -2455,7 +2455,7 @@ def _extract_pitcher_tools(row: dict, norm_fn) -> dict[str, int | None]:
     return tools
 
 
-def _extract_potential_pitcher_tools(row: dict, norm_fn) -> dict[str, int | None]:
+def _extract_potential_pitcher_tools(row: dict, norm_fn) -> dict[str, float | None]:
     """Extract potential pitcher tool ratings from a DB row."""
     tools = {
         "stuff": norm_fn(row.get("pot_stf")),
@@ -2472,9 +2472,9 @@ def _extract_potential_pitcher_tools(row: dict, norm_fn) -> dict[str, int | None
     return tools
 
 
-def _extract_arsenal(row: dict, norm_fn) -> dict[str, int]:
+def _extract_arsenal(row: dict, norm_fn) -> dict[str, float]:
     """Extract pitch arsenal from a DB row. Returns {pitch_name: normalized_rating}."""
-    arsenal: dict[str, int] = {}
+    arsenal: dict[str, float] = {}
     for col in _PITCH_COLS:
         raw = row.get(col)
         val = norm_fn(raw)
@@ -2483,9 +2483,9 @@ def _extract_arsenal(row: dict, norm_fn) -> dict[str, int]:
     return arsenal
 
 
-def _extract_potential_arsenal(row: dict, norm_fn) -> dict[str, int]:
+def _extract_potential_arsenal(row: dict, norm_fn) -> dict[str, float]:
     """Extract potential pitch arsenal. Uses pot_ columns, falls back to current."""
-    arsenal: dict[str, int] = {}
+    arsenal: dict[str, float] = {}
     for col in _PITCH_COLS:
         pot_val = norm_fn(row.get("pot_" + col))
         if pot_val is not None:
@@ -2497,13 +2497,13 @@ def _extract_potential_arsenal(row: dict, norm_fn) -> dict[str, int]:
     return arsenal
 
 
-def _extract_defense_tools(row: dict) -> dict[str, int | None]:
-    """Extract raw defensive tool ratings from a DB row.
+def _extract_defense_tools(row: dict, norm_fn=None) -> dict[str, float | None]:
+    """Extract defensive tool ratings from a DB row, normalized to 20-80.
 
     Maps DB column names to the keys expected by DEFENSIVE_WEIGHTS
     (CFrm, CBlk, CArm, IFR, IFE, IFA, TDP, OFR, OFE, OFA).
     """
-    return {
+    raw = {
         "CFrm": row.get("c_frm"),
         "CBlk": row.get("c_blk"),
         "CArm": row.get("c_arm"),
@@ -2517,6 +2517,9 @@ def _extract_defense_tools(row: dict) -> dict[str, int | None]:
         "LF": row.get("lf"),
         "RF": row.get("rf"),
     }
+    if norm_fn is None:
+        return raw
+    return {k: norm_fn(v) for k, v in raw.items()}
 
 
 def _get_def_weights_for_bucket(bucket: str) -> dict[str, float]:
@@ -2688,7 +2691,8 @@ def run(
 
 def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
     """Internal implementation of the batch evaluation pipeline."""
-    from ratings import norm as _norm
+    from ratings import norm_continuous as _norm
+    from ratings import norm as _norm_display
     from player_utils import assign_bucket as _assign_bucket
     from fv_model import DEFENSIVE_WEIGHTS
 
@@ -2771,7 +2775,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
         pitcher_tools = _extract_pitcher_tools(row_dict, _norm)
         potential_hitter_tools = _extract_potential_hitter_tools(row_dict, _norm)
         potential_pitcher_tools = _extract_potential_pitcher_tools(row_dict, _norm)
-        defense_tools = _extract_defense_tools(row_dict)
+        defense_tools = _extract_defense_tools(row_dict, _norm)
         arsenal = _extract_arsenal(row_dict, _norm)
         potential_arsenal = _extract_potential_arsenal(row_dict, _norm)
         stamina = _norm(row_dict.get("stm")) or 50
