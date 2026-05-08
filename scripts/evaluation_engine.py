@@ -1803,7 +1803,7 @@ def compute_combined_value(primary_composite: int, secondary_composite: int) -> 
         Combined value as an integer. Always >= primary_composite.
     """
     secondary_bonus = min(8, max(0, (secondary_composite - 35) * 0.3))
-    return round(primary_composite + secondary_bonus)
+    return min(80, round(primary_composite + secondary_bonus))
 
 
 # ---------------------------------------------------------------------------

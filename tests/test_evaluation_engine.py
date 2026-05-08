@@ -901,10 +901,10 @@ class TestProperty29TwoWayCombinedValue:
     )
     def test_combined_value_formula(self, primary, secondary):
         """**Validates: Requirements 18.4** — Combined value equals
-        primary + min(8, max(0, (secondary - 35) * 0.3))."""
+        min(80, primary + min(8, max(0, (secondary - 35) * 0.3)))."""
         combined = compute_combined_value(primary, secondary)
         expected_bonus = min(8, max(0, (secondary - 35) * 0.3))
-        expected = round(primary + expected_bonus)
+        expected = min(80, round(primary + expected_bonus))
         assert combined == expected
 
     @settings(max_examples=100)
