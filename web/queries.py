@@ -1054,24 +1054,28 @@ def get_draft_pool():
 # Positional Rankings
 # ---------------------------------------------------------------------------
 
-_POS_GROUPS = {
-    "C": {"positions": [2], "roles": [], "label": "Catcher"},
-    "IF": {"positions": [3, 4, 5, 6], "roles": [], "label": "Infield"},
-    "OF": {"positions": [7, 8, 9], "roles": [], "label": "Outfield"},
-    "SP": {"positions": [], "roles": [11], "label": "Starting Pitcher"},
-    "RP": {"positions": [], "roles": [12, 13], "label": "Relief Pitcher"},
-}
+_POS_GROUPS = [
+    ("C", {"positions": [2], "roles": [], "label": "C"}),
+    ("1B", {"positions": [3], "roles": [], "label": "1B"}),
+    ("2B", {"positions": [4], "roles": [], "label": "2B"}),
+    ("3B", {"positions": [5], "roles": [], "label": "3B"}),
+    ("SS", {"positions": [6], "roles": [], "label": "SS"}),
+    ("CF", {"positions": [8], "roles": [], "label": "CF"}),
+    ("COF", {"positions": [7, 9], "roles": [], "label": "COF"}),
+    ("SP", {"positions": [], "roles": [11], "label": "SP"}),
+    ("RP", {"positions": [], "roles": [12, 13], "label": "RP"}),
+]
 
 _BUCKET_TO_GROUP = {
-    "C": "C", "1B": "IF", "2B": "IF", "3B": "IF", "SS": "IF",
-    "CF": "OF", "COF": "OF", "SP": "SP", "RP": "RP",
+    "C": "C", "1B": "1B", "2B": "2B", "3B": "3B", "SS": "SS",
+    "CF": "CF", "COF": "COF", "SP": "SP", "RP": "RP",
 }
 
 
 def get_positional_rankings():
     """Return positional rankings: MLB players by composite, prospects by FV.
 
-    Returns dict: {group_key: {label, mlb: [...], prospects: [...]}}
+    Returns list of (key, {label, mlb: [...], prospects: [...]}).
     """
     conn = get_db()
     teams = team_abbr_map()
@@ -1088,7 +1092,7 @@ def get_positional_rankings():
 
     # Prospects with FV grades
     prospect_rows = conn.execute("""
-        SELECT p.player_id, p.name, p.age, pf.bucket, p.team_id,
+        SELECT p.player_id, p.name, p.age, pf.bucket, p.team_id, p.parent_team_id,
                pf.fv, pf.fv_str, pf.risk, r.true_ceiling, pf.prospect_surplus
         FROM prospect_fv pf
         JOIN players p ON pf.player_id = p.player_id
@@ -1097,47 +1101,38 @@ def get_positional_rankings():
         ORDER BY pf.fv DESC, pf.prospect_surplus DESC
     """).fetchall()
 
-    result = {}
-    for key, cfg in _POS_GROUPS.items():
-        result[key] = {"label": cfg["label"], "mlb": [], "prospects": []}
+    result = []
+    for key, cfg in _POS_GROUPS:
+        group = {"label": cfg["label"], "mlb": [], "prospects": []}
 
-    # Assign MLB players to groups
-    for r in mlb_rows:
-        pos, role = r["pos"], r["role"]
-        group = None
-        for key, cfg in _POS_GROUPS.items():
-            if role in cfg["roles"] or pos in cfg["positions"]:
-                group = key
+        # Assign MLB players
+        for r in mlb_rows:
+            if len(group["mlb"]) >= 20:
                 break
-        if group is None:
-            continue
-        if len(result[group]["mlb"]) >= 25:
-            continue
-        result[group]["mlb"].append({
-            "pid": r["player_id"], "name": r["name"], "age": r["age"],
-            "team": teams.get(r["team_id"], "?"),
-            "composite": r["composite_score"], "ceiling": r["true_ceiling"],
-            "rank": len(result[group]["mlb"]) + 1,
-        })
+            pos, role = r["pos"], r["role"]
+            if role in cfg["roles"] or pos in cfg["positions"]:
+                group["mlb"].append({
+                    "pid": r["player_id"], "name": r["name"], "age": r["age"],
+                    "team": teams.get(r["team_id"], "?"),
+                    "composite": r["composite_score"], "ceiling": r["true_ceiling"],
+                    "rank": len(group["mlb"]) + 1,
+                })
 
-    # Assign prospects to groups
-    for r in prospect_rows:
-        group = _BUCKET_TO_GROUP.get(r["bucket"])
-        if group is None:
-            continue
-        if len(result[group]["prospects"]) >= 25:
-            continue
-        parent = conn.execute(
-            "SELECT parent_team_id FROM players WHERE player_id=?", (r["player_id"],)
-        ).fetchone()
-        org_id = parent["parent_team_id"] if parent and parent["parent_team_id"] else r["team_id"]
-        result[group]["prospects"].append({
-            "pid": r["player_id"], "name": r["name"], "age": r["age"],
-            "team": teams.get(org_id, "?"),
-            "fv": r["fv"], "fv_str": r["fv_str"], "risk": r["risk"],
-            "ceiling": r["true_ceiling"],
-            "surplus": round(r["prospect_surplus"] / 1e6, 1) if r["prospect_surplus"] else 0,
-            "rank": len(result[group]["prospects"]) + 1,
-        })
+        # Assign prospects
+        for r in prospect_rows:
+            if len(group["prospects"]) >= 20:
+                break
+            if _BUCKET_TO_GROUP.get(r["bucket"]) == key:
+                org_id = r["parent_team_id"] if r["parent_team_id"] else r["team_id"]
+                group["prospects"].append({
+                    "pid": r["player_id"], "name": r["name"], "age": r["age"],
+                    "team": teams.get(org_id, "?"),
+                    "fv": r["fv"], "fv_str": r["fv_str"], "risk": r["risk"],
+                    "ceiling": r["true_ceiling"],
+                    "surplus": round(r["prospect_surplus"] / 1e6, 1) if r["prospect_surplus"] else 0,
+                    "rank": len(group["prospects"]) + 1,
+                })
+
+        result.append((key, group))
 
     return result
