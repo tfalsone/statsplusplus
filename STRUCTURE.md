@@ -47,7 +47,7 @@ statsplusplus/
 │   ├── farm_analysis.py        # CLI: Farm system report generator
 │   ├── roster_analysis.py      # CLI: MLB roster scaffold generator
 │   ├── prospect_query.py       # CLI: League-wide prospect rankings
-│   ├── draft_board.py          # CLI: Draft board analysis (board, available, pick, upload, compare)
+│   ├── draft_board.py          # CLI: Draft board analysis (board, available, pick, upload, compare, sim)
 │   ├── trade_calculator.py     # CLI: Trade surplus balance evaluator (--offer/--receive or JSON)
 │   ├── trade_targets.py        # CLI: Trade target finder by position (contract status, seller classification, split ratings)
 │   ├── trade_assets.py         # CLI: Tradeable assets for any team (MLB surplus + farm prospects)
@@ -65,8 +65,9 @@ statsplusplus/
 │   ├── percentiles.py          # Percentile rankings with expected-value modeling
 │   ├── templates/
 │   │   ├── base.html               # Layout (header, nav, breadcrumbs, refresh, player hover popup)
-│   │   ├── league.html             # League dashboard (standings, leaders, prospects)
+│   │   ├── league.html             # League dashboard (standings, leaders, prospects, draft)
 │   │   ├── team.html               # Team page (roster, depth chart, contracts, farm)
+│   │   ├── team_minor.html         # Minor league team page (notables, full roster)
 │   │   ├── player.html             # Player page (ratings, stats, percentiles)
 │   │   ├── settings.html           # Settings (team, identity, structure, financial, connection)
 │   │   ├── onboard.html            # Onboarding wizard (connect, configure, refresh)

@@ -188,6 +188,26 @@ python3 scripts/roster_analysis.py
 Output: Writes `tmp/roster_scaffold_<date>.md` — player cards with stat lines, ratings,
 contract info, surplus, and summary rewrite flags.
 
+### `scripts/draft_board.py`
+
+Draft board analysis, simulation, and auto-draft list generation.
+
+```bash
+python3 scripts/draft_board.py board [--top 30]           # Full ranked board (FV sort)
+python3 scripts/draft_board.py available [--top 30]       # Board minus taken players
+python3 scripts/draft_board.py pick N                     # Urgency-greedy ranked list for N players
+python3 scripts/draft_board.py upload [--top 500]         # Generate auto-draft file (urgency-greedy)
+python3 scripts/draft_board.py compare "Name1" "Name2"    # Side-by-side comparison
+python3 scripts/draft_board.py sim PICK [--rounds 7] [--seed S]  # Draft simulation
+```
+
+Draft value formula: `FV + (ceiling-55)×0.2 + RP(-5) + Acc(L:-2,VL:-4) + risk(Extreme:-3,High:-1) + needs(Rd3+)`.
+ADP computed from POT rank. Sim uses randomized other-team picks (weighted top 8 by POT).
+Upload list uses urgency-greedy ordering with fading thresholds (Rd1-2: 10, Rd3-4: 5, Rd5+: BPA).
+
+Importable: `load_board()`, `draft_value()`, `compute_adp()`, `compute_org_needs()`,
+`build_urgency_list()`, `simulate_draft()`.
+
 ### `scripts/refresh.py`
 
 Data pipeline — pulls all data from StatsPlus API into the DB. Runs calibration
@@ -448,6 +468,10 @@ Import with `sys.path.insert(0, 'web')`. All are read-only against the DB.
 | `get_draft_org_depth(team_id)` | Per-position positive surplus totals (MLB + farm split) for draft needs panel. Returns `{pos: {mlb, farm, total}}` in $M. |
 | `get_org_overview(team_id)` | Cross-level org summary: position depth, surplus leaders, retention priorities, payroll shape |
 | `get_farm_depth(team_id)` | Farm system depth by positional bucket |
+| `get_affiliates(team_id)` | List of minor league affiliates for an MLB team (team_id, name, level) |
+| `get_minor_league_team(team_id)` | Minor league team info: name, level, parent org, sibling affiliates |
+| `get_minor_league_roster(team_id)` | Full roster sorted by composite with FV/risk/surplus |
+| `get_minor_league_notables(team_id)` | Notable players: FV 45+, composite 50+, ceiling 55+, or young-for-level |
 
 ### Player-Level (`player_queries.py`)
 

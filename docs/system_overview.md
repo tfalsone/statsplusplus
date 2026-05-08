@@ -272,8 +272,8 @@ Local Flask app at `web/`. Dark theme, monospace font, no CSS/JS frameworks.
 |---|---|---|
 | `/` | redirect | Redirects to `/team/<my_team_id>` |
 | `/dashboard` | redirect | Redirects to `/team/<my_team_id>` |
-| `/team/<id>` | `team.html` | Team page — division standings, team stats with league rankings, MLB roster, contracts with surplus, farm top 15, summary bar (payroll, surplus, FV 50+ count) |
-| `/league` | `league.html` | League overview (vitals KPIs, 2×3 division standings grid with WC badges, scrollable power rankings with score heatmap, hero leader cards with MLB/AL/NL toggle), top 100 prospects with side panel, trade builder tab |
+| `/team/<id>` | `team.html` or `team_minor.html` | MLB team page (roster, depth chart, contracts, farm) or minor league team page (notables, full roster). Detected by player level. |
+| `/league` | `league.html` | League overview (vitals KPIs, 2×3 division standings grid with WC badges, scrollable power rankings with score heatmap, hero leader cards with MLB/AL/NL toggle), top 100 prospects with side panel, trade builder tab, draft tab with sim/upload |
 | `/player/<id>` | `player.html` | Player detail — ratings, stats, percentiles, contract, surplus projection |
 | `/settings` | `settings.html` | Team selector (`my_team_id` in `config/state.json`) |
 | `/refresh` | JSON | POST — starts background refresh (`refresh.py`). Returns 409 if already running. |
@@ -283,6 +283,9 @@ Local Flask app at `web/`. Dark theme, monospace font, no CSS/JS frameworks.
 | `/api/draft-detail/<pid>` | JSON | GET — compact grid data for draft prospect detail panel (tools, pitches, fielding, positions, character). |
 | `/api/draft-picks` | JSON | GET — fetch current draft picks from StatsPlus API. |
 | `/api/draft-pool-upload` | JSON | POST — upload CSV of draft-eligible player IDs from OOTP export. |
+| `/api/draft-sim` | JSON | POST — run draft simulation (`{pick, rounds, seed}`). Returns projected picks. |
+| `/api/draft-upload-list` | JSON | POST — generate urgency-greedy auto-draft list (`{top}`). Writes file + returns preview. |
+| `/api/open-file-location` | JSON | POST — open system file explorer to a file's directory. |
 | `/api/org-players/<tid>` | JSON | GET — full org roster (MLB + farm) for trade tab |
 | `/api/trade-value` | JSON | POST — single-player trade valuation with retention support |
 
