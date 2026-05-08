@@ -209,7 +209,7 @@
         <thead><tr><th>#</th><th class="left">Name</th><th>Age</th><th>Team</th><th>Comp</th><th>Ceil</th></tr></thead>
         <tbody>
         {% for p in group.mlb %}
-        <tr><td>{{ p.rank }}</td><td class="left"><a href="/player/{{ p.pid }}">{{ p.name }}</a></td><td>{{ p.age }}</td><td>{{ p.team }}</td><td><span class="ovr-color" data-g="{{ p.composite }}">{{ p.composite }}</span></td><td>{{ p.ceiling or '-' }}</td></tr>
+        <tr><td>{{ p.rank }}</td><td class="left"><a class="player-link" href="/player/{{ p.pid }}">{{ p.name }}</a></td><td>{{ p.age }}</td><td>{{ p.team }}</td><td><span class="ovr-color" data-g="{{ p.composite }}">{{ p.composite }}</span></td><td>{{ p.ceiling or '-' }}</td></tr>
         {% endfor %}
         {% if not group.mlb %}<tr><td colspan="6" style="color:var(--text-dim)">No players</td></tr>{% endif %}
         </tbody>
@@ -221,7 +221,7 @@
         <thead><tr><th>#</th><th class="left">Name</th><th>Age</th><th>Org</th><th>FV</th><th>Risk</th><th>Ceil</th><th>$M</th></tr></thead>
         <tbody>
         {% for p in group.prospects %}
-        <tr><td>{{ p.rank }}</td><td class="left"><a href="/player/{{ p.pid }}">{{ p.name }}</a></td><td>{{ p.age }}</td><td>{{ p.team }}</td><td>{{ p.fv_str }}</td><td><span class="risk-{{ p.risk|lower if p.risk else '' }}">{{ p.risk[:1] if p.risk else '' }}</span></td><td>{{ p.ceiling or '-' }}</td><td>{{ p.surplus }}</td></tr>
+        <tr><td>{{ p.rank }}</td><td class="left"><a class="player-link" href="/player/{{ p.pid }}">{{ p.name }}</a></td><td>{{ p.age }}</td><td>{{ p.team }}</td><td>{{ p.fv_str }}</td><td><span class="risk-{{ p.risk|lower if p.risk else '' }}">{{ p.risk[:1] if p.risk else '' }}</span></td><td>{{ p.ceiling or '-' }}</td><td>{{ p.surplus }}</td></tr>
         {% endfor %}
         {% if not group.prospects %}<tr><td colspan="8" style="color:var(--text-dim)">No prospects</td></tr>{% endif %}
         </tbody>
