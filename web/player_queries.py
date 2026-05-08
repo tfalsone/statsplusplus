@@ -1055,6 +1055,18 @@ def get_player(pid):
                       any(s["pa"] >= 30 for s in bat_stats) and
                       any(s["ip"] >= 15 for s in pit_stats))
 
+    # For two-way players, find their hitting position
+    if is_two_way and is_pitcher:
+        _POS_LABELS = {3: "1B", 4: "2B", 5: "3B", 6: "SS", 7: "LF", 8: "CF", 9: "RF", 10: "DH", 2: "C"}
+        _conn2 = get_db()
+        _field = _conn2.execute(
+            "SELECT position, SUM(g) as games FROM fielding_stats WHERE player_id=? AND position != 1 GROUP BY position ORDER BY games DESC LIMIT 1",
+            (pid,)).fetchone()
+        if _field:
+            pos_str = f"SP/{_POS_LABELS.get(_field[0], 'DH')}"
+        else:
+            pos_str = "SP/DH"
+
     percentiles = None
     pctile_splits = {}
     bat_percentiles = None

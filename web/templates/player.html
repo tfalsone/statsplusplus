@@ -563,6 +563,11 @@
     <div style="flex:1; background:var(--surface); border-radius:8px; padding:12px; text-align:center">
       <div style="color:var(--text-dim); font-size:11px; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px">Now</div>
       <div style="font-size:32px; font-weight:700"><span class="ovr-color" data-g="{{ p.composite_score }}">{{ p.composite_score }}</span></div>
+      {% if p.two_way_scores %}
+      <div style="font-size:12px; margin-top:4px; color:var(--text-dim)">
+        P: {{ p.two_way_scores.pitcher_composite }} · H: {{ p.two_way_scores.hitter_composite }} · Combined: <span style="color:var(--text); font-weight:600">{{ p.two_way_scores.combined_value }}</span>
+      </div>
+      {% endif %}
       {% if p.mlb_context %}
       {% set ctx = p.mlb_context %}
       {% set cdiff = p.composite_score - ctx.median %}
