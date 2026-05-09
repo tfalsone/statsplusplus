@@ -230,3 +230,25 @@ def test_build_evaluation_data_pitcher_skips_carrying_tool_bonus():
                                     position_bucket="SS")
     assert result["carrying_tool_bonus"] == 0.0
     assert result["carrying_tool_breakdown"] == []
+
+
+# ── get_player_popup — stat line computation ─────────────────────────────────
+
+def test_popup_hitter_has_valid_slashline():
+    """Batting avg/obp/slg must be computed as floats, not integer division."""
+    result = player_queries.get_player_popup(HITTER_ID)
+    assert result is not None
+    stats = result["stats"]
+    assert stats is not None
+    assert stats["avg"] is not None and stats["avg"] > 0, f"avg was {stats['avg']}"
+    assert stats["obp"] is not None and stats["obp"] > 0
+    assert stats["slg"] is not None and stats["slg"] > 0
+
+
+def test_popup_pitcher_has_stats():
+    result = player_queries.get_player_popup(PITCHER_ID)
+    assert result is not None
+    stats = result["stats"]
+    assert stats is not None
+    assert stats["era"] is not None
+    assert stats["war"] is not None
