@@ -892,15 +892,17 @@ def _offensive_grade_raw(
 
     raw = sum(val * (w / total_weight) for val, w in available)
 
-    # Interaction term: contact_eye captures compounding bat weakness.
+    # Interaction terms: capture compounding tool synergies.
     # If calibrated weight exists, apply as additive adjustment.
-    ce_weight = weights.get("contact_eye", 0.0)
-    if ce_weight != 0.0:
-        contact_val = tools.get("contact")
-        eye_val = tools.get("eye")
-        if contact_val is not None and eye_val is not None:
-            ce_score = (float(contact_val) * float(eye_val)) / 2500.0 * 50.0
-            raw += (ce_score - 50.0) * ce_weight
+    for inter_key, tool_a, tool_b in [("contact_eye", "contact", "eye"),
+                                       ("power_eye", "power", "eye")]:
+        iw = weights.get(inter_key, 0.0)
+        if iw != 0.0:
+            va = tools.get(tool_a)
+            vb = tools.get(tool_b)
+            if va is not None and vb is not None:
+                score = (float(va) * float(vb)) / 2500.0 * 50.0
+                raw += (score - 50.0) * iw
 
     return raw
 
@@ -1230,6 +1232,15 @@ def compute_composite_pitcher(
     # Sub-MLB floor penalty for core pitcher tools
     core_tools = {k: v for k, v in tools.items() if k in ('stuff', 'movement', 'control')}
     raw -= _sub_mlb_floor_penalty(core_tools)
+
+    # Interaction: stuff × movement synergy
+    sm_weight = weights.get("stuff_mov", 0.0)
+    if sm_weight != 0.0:
+        stuff_val = tools.get("stuff")
+        mov_val = tools.get("movement")
+        if stuff_val is not None and mov_val is not None:
+            sm_score = (float(stuff_val) * float(mov_val)) / 2500.0 * 50.0
+            raw += (sm_score - 50.0) * sm_weight
 
     return max(20, min(80, round(raw)))
 
