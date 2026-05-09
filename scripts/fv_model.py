@@ -298,7 +298,7 @@ def calc_fv_v2(p):
     if bucket == "RP":
         pot = round(pot * RP_POT_DISCOUNT)
     gap = max(0, pot - ovr)
-    if gap < 3:
+    if gap <= 3:
         fv = ovr
     else:
         closure_table = _GAP_CLOSURE_PITCHER if is_pitcher else _GAP_CLOSURE_HITTER
@@ -357,8 +357,13 @@ def calc_fv_v2(p):
         fv = min(fv, 50)
 
     fv = max(20, fv)
-    # Snap to nearest 5
-    fv_grade = round(fv / 5) * 5
+    # Snap to nearest 5: developing prospects use floor rounding (must
+    # actually project to 50 to get FV 50), maxed players use standard
+    # rounding (they've already proven their level).
+    if gap <= 3:
+        fv_grade = round(fv / 5) * 5
+    else:
+        fv_grade = int(fv / 5) * 5
 
     # -- Risk Label --
     gap = max(0, pot - ovr)
