@@ -890,7 +890,19 @@ def _offensive_grade_raw(
     if total_weight <= 0:
         return None
 
-    return sum(val * (w / total_weight) for val, w in available)
+    raw = sum(val * (w / total_weight) for val, w in available)
+
+    # Interaction term: contact_eye captures compounding bat weakness.
+    # If calibrated weight exists, apply as additive adjustment.
+    ce_weight = weights.get("contact_eye", 0.0)
+    if ce_weight != 0.0:
+        contact_val = tools.get("contact")
+        eye_val = tools.get("eye")
+        if contact_val is not None and eye_val is not None:
+            ce_score = (float(contact_val) * float(eye_val)) / 2500.0 * 50.0
+            raw += (ce_score - 50.0) * ce_weight
+
+    return raw
 
 
 def compute_offensive_grade(

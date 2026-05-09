@@ -184,6 +184,11 @@ def _calibrate_tool_weights(conn, game_year, role_map):
             "contact": contact, "gap": gap, "power": power,
             "eye": eye,
         }
+        # Interaction term: contact * eye captures compounding bat weakness.
+        # Players weak in both contact AND eye can't get on base at all —
+        # the combined effect is worse than the sum of individual penalties.
+        # Normalized to 50*50=2500 baseline so the coefficient is interpretable.
+        tool_dict["contact_eye"] = (contact * eye) / 2500.0 * 50.0
         hitting_data[bucket][0].append(tool_dict)
         hitting_data[bucket][1].append(float(war))
 
