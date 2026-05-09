@@ -307,10 +307,17 @@ def calc_fv_v2(p):
         else:
             lo = int(age); hi = lo + 1; frac = age - lo
             closure = closure_table.get(lo, 0.85) * (1 - frac) + closure_table.get(hi, 0.85) * frac
-        if age <= 19: bust = 0.55
-        elif age <= 21: bust = 0.65
-        elif age <= 23: bust = 0.75
-        else: bust = 0.85
+
+        # Bust discount: target_product / closure, so leagues with higher
+        # closure rates (more survivorship bias) get proportionally lower
+        # bust credit. Target products derived from VMLB (well-calibrated).
+        _TARGET_PRODUCT = {
+            17: 0.47, 18: 0.47, 19: 0.46, 20: 0.48, 21: 0.52,
+            22: 0.50, 23: 0.53, 24: 0.30, 25: 0.30,
+        }
+        age_key = max(17, min(25, int(age)))
+        bust = min(0.85, _TARGET_PRODUCT[age_key] / closure) if closure > 0 else 0.55
+
         peak = ovr + gap * closure * bust
         ceil_weight = max(0.0, min(0.5, (pot - 50) / 30.0))
         fv = peak * (1.0 - ceil_weight) + pot * ceil_weight
