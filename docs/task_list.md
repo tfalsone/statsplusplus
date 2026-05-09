@@ -108,3 +108,5 @@ Legacy components designed for OVR/POT that need updating for composite/ceiling:
 - [ ] **Phase 3 — AI assistant** — chat interface with league/team context.
 - [ ] **Code architecture cleanup** — connection context manager, consistent row_factory, route-level error handling. Ongoing incremental work.
 - [ ] **Stat/ratings divergence flag** — surface confidence signal when `stat_peak_war` and `peak_war_from_ovr` differ by >1.5 WAR in trade calculator output. Player page already shows over/underperformance; this extends it to trade evaluation context.
+
+- [ ] **Comp-based FV validation tool** — For any prospect, find MLB players with similar tool profiles at their ceiling and show actual WAR distribution. Gives empirical context for the FV grade (e.g., "players with this ceiling profile produce 1.5-3.0 WAR, median 2.1"). Could be a player page panel or a CLI diagnostic. Differentiates from career outcome probabilities by using tool-profile matching rather than FV-tier lookup. **LOE: Medium.**
