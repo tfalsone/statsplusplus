@@ -1219,9 +1219,9 @@ def get_player_popup(pid):
                      "sv": s[5], "hld": s[6], "g": s[7], "gs": s[8]}
         # Two-way: also fetch batting stats
         bs = conn.execute(
-            "SELECT SUM(pa), SUM(h)/NULLIF(SUM(ab),0), "
-            "(SUM(h)+SUM(bb)+SUM(hbp))/NULLIF(SUM(ab)+SUM(bb)+SUM(hbp)+SUM(sf),0), "
-            "(SUM(h)+SUM(d)+2*SUM(t)+3*SUM(hr))/NULLIF(SUM(ab),0), "
+            "SELECT SUM(pa), SUM(h)*1.0/NULLIF(SUM(ab),0), "
+            "(SUM(h)+SUM(bb)+SUM(hbp))*1.0/NULLIF(SUM(ab)+SUM(bb)+SUM(hbp)+SUM(sf),0), "
+            "(SUM(h)+SUM(d)+2*SUM(t)+3*SUM(hr))*1.0/NULLIF(SUM(ab),0), "
             "SUM(hr), SUM(war), SUM(sb) "
             "FROM batting_stats WHERE player_id=? AND year=? AND split_id=1",
             (pid, year)
@@ -1233,9 +1233,9 @@ def get_player_popup(pid):
                          "hr": bs[4], "war": round(bs[5], 1) if bs[5] else 0, "sb": bs[6]}
     else:
         s = conn.execute(
-            "SELECT SUM(pa), SUM(h)/NULLIF(SUM(ab),0), "
-            "(SUM(h)+SUM(bb)+SUM(hbp))/NULLIF(SUM(ab)+SUM(bb)+SUM(hbp)+SUM(sf),0), "
-            "(SUM(h)+SUM(d)+2*SUM(t)+3*SUM(hr))/NULLIF(SUM(ab),0), "
+            "SELECT SUM(pa), SUM(h)*1.0/NULLIF(SUM(ab),0), "
+            "(SUM(h)+SUM(bb)+SUM(hbp))*1.0/NULLIF(SUM(ab)+SUM(bb)+SUM(hbp)+SUM(sf),0), "
+            "(SUM(h)+SUM(d)+2*SUM(t)+3*SUM(hr))*1.0/NULLIF(SUM(ab),0), "
             "SUM(hr), SUM(war), SUM(sb) "
             "FROM batting_stats WHERE player_id=? AND year=? AND split_id=1",
             (pid, year)
