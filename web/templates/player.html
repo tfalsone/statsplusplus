@@ -475,7 +475,7 @@
       <tr style="font-size:11px; color:var(--text-dim)">
         <td></td><td></td><td></td><td></td>
         <td style="text-align:right">Range</td>
-        <td>${{ p.surplus_detail.total.pessimistic }}M – ${{ p.surplus_detail.total.optimistic }}M</td>
+        <td>{{ p.surplus_detail.total.pessimistic|money }} – {{ p.surplus_detail.total.optimistic|money }}</td>
       </tr>
       {% endif %}
     </tfoot>
