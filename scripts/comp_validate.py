@@ -43,7 +43,8 @@ _POS_CLAUSE = {
 }
 
 
-def find_comps(conn, target_tools, bucket, tolerance=10, min_pa=200):
+def find_comps(conn, target_tools, bucket, tolerance=10, min_pa=200,
+              min_year=None, max_year=None):
     """Find MLB player-seasons matching a tool profile.
 
     Args:
@@ -53,12 +54,21 @@ def find_comps(conn, target_tools, bucket, tolerance=10, min_pa=200):
         bucket: position bucket.
         tolerance: max average per-tool distance to qualify as a comp.
         min_pa: minimum PA (hitters) or IP (pitchers) for a season to count.
+        min_year: earliest year to include (inclusive).
+        max_year: latest year to include (inclusive).
 
     Returns:
-        List of comp dicts sorted by distance, each with name, age, war, pa,
-        year, dist, tools.
+        List of comp dicts sorted by distance.
+
+    Note: Uses current ratings snapshot against historical stats. Most reliable
+    for current/recent seasons where ratings haven't shifted significantly.
     """
     is_pitcher = bucket in ("SP", "RP")
+    year_clause = ""
+    if min_year:
+        year_clause += f" AND {{t}}.year >= {int(min_year)}"
+    if max_year:
+        year_clause += f" AND {{t}}.year <= {int(max_year)}"
 
     if is_pitcher:
         if bucket == "SP":
@@ -72,7 +82,7 @@ def find_comps(conn, target_tools, bucket, tolerance=10, min_pa=200):
             JOIN players p ON r.player_id = p.player_id
             JOIN pitching_stats ps ON ps.player_id = p.player_id
             WHERE p.level = 1 AND {role_clause}
-              AND ps.split_id = 1
+              AND ps.split_id = 1{year_clause.format(t='ps')}
         """, (min_pa,)).fetchall()
 
         col_map = {"stuff": "stf", "movement": "mov", "control": "ctrl"}
@@ -86,7 +96,7 @@ def find_comps(conn, target_tools, bucket, tolerance=10, min_pa=200):
             JOIN players p ON r.player_id = p.player_id
             JOIN batting_stats bs ON bs.player_id = p.player_id
             WHERE p.level = 1 AND {pos_clause}
-              AND bs.split_id = 1 AND bs.pa >= ?
+              AND bs.split_id = 1 AND bs.pa >= ?{year_clause.format(t='bs')}
         """, (min_pa,)).fetchall()
 
         col_map = {"contact": "cntct", "power": "pow", "eye": "eye", "gap": "gap"}
@@ -220,6 +230,8 @@ def main():
     parser.add_argument("--control", type=float)
     parser.add_argument("--tolerance", type=float, default=10)
     parser.add_argument("--min-pa", type=int, default=200)
+    parser.add_argument("--year", type=int, help="Restrict to single year (most reliable)")
+    parser.add_argument("--recent", type=int, metavar="N", help="Restrict to last N years")
     args = parser.parse_args()
 
     conn = db.get_conn(get_league_dir())
@@ -260,7 +272,18 @@ def main():
         print(f"\nManual profile ({bucket}):")
         print(f"  Profile: {', '.join(f'{k}={v:.0f}' for k, v in tools.items())}")
 
-    comps = find_comps(conn, tools, bucket, args.tolerance, args.min_pa)
+    # Determine year bounds
+    min_year = max_year = None
+    if args.year:
+        min_year = max_year = args.year
+    elif args.recent:
+        import json
+        with open(get_league_dir() / "config" / "state.json") as f:
+            cur_year = int(json.load(f)["game_date"][:4])
+        min_year = cur_year - args.recent + 1
+
+    comps = find_comps(conn, tools, bucket, args.tolerance, args.min_pa,
+                      min_year=min_year, max_year=max_year)
     stats = summarize(comps)
 
     if not stats:
@@ -268,7 +291,15 @@ def main():
         conn.close()
         return
 
-    print(f"\n  Comps found: {stats['n']} player-seasons (tolerance={args.tolerance})")
+    year_note = ""
+    if min_year and max_year and min_year == max_year:
+        year_note = f", year={min_year}"
+    elif min_year:
+        year_note = f", years≥{min_year}"
+    else:
+        year_note = ", all years — ⚠️  uses current ratings vs historical stats"
+
+    print(f"\n  Comps found: {stats['n']} player-seasons (tolerance={args.tolerance}{year_note})")
     print(f"  WAR: mean={stats['mean']:.1f}  median={stats['median']:.1f}  "
           f"P25={stats['p25']:.1f}  P75={stats['p75']:.1f}  "
           f"range=[{stats['min']:.1f}, {stats['max']:.1f}]")
