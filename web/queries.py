@@ -718,6 +718,74 @@ def get_prospect_comps(pid):
     return comps
 
 
+def get_prospect_comp_stats(pid):
+    """Get aggregate WAR statistics for MLB players matching a prospect's profile.
+
+    Uses tool-profile matching (no WAR bias) to find all similar MLB seasons,
+    then returns summary statistics. Complements get_prospect_comps() which
+    picks 3 named comps.
+
+    Returns dict with {n, mean, median, p25, p75, min, max, implied_fv} or None.
+    """
+    from comp_validate import find_comps, summarize, get_prospect_profile
+
+    conn = get_db()
+    # Get prospect's current tools and bucket
+    tools, bucket, _ = get_prospect_profile(conn, "", use_ceiling=False)
+
+    # Direct lookup by player_id instead
+    from ratings import norm_continuous as _norm
+    from player_utils import assign_bucket as _ab
+
+    ed = conn.execute("SELECT MAX(eval_date) FROM prospect_fv").fetchone()[0]
+    row = conn.execute("""
+        SELECT p.player_id, p.name, p.pos, p.role,
+               r.cntct, r.pow, r.eye, r.gap,
+               r.pot_cntct, r.pot_pow, r.pot_eye, r.pot_gap,
+               r.pot_c, r.pot_ss, r.pot_second_b, r.pot_third_b, r.pot_first_b,
+               r.pot_lf, r.pot_cf, r.pot_rf,
+               pf.bucket
+        FROM prospect_fv pf
+        JOIN players p ON pf.player_id = p.player_id
+        JOIN latest_ratings r ON pf.player_id = r.player_id
+        WHERE pf.eval_date = ? AND pf.player_id = ?
+    """, (ed, pid)).fetchone()
+
+    if not row:
+        return None
+
+    bucket = row["bucket"]
+    tools = {
+        "contact": _norm(row["cntct"]),
+        "power": _norm(row["pow"]),
+        "eye": _norm(row["eye"]),
+        "gap": _norm(row["gap"]),
+    }
+    tools = {k: v for k, v in tools.items() if v is not None}
+    if not tools:
+        return None
+
+    comps = find_comps(conn, tools, bucket, tolerance=10, min_pa=200)
+    stats = summarize(comps)
+    if not stats:
+        return None
+
+    # Implied FV from median
+    med = stats["median"]
+    if med >= 4.0:
+        stats["implied_fv"] = "60+"
+    elif med >= 3.0:
+        stats["implied_fv"] = "55-60"
+    elif med >= 2.0:
+        stats["implied_fv"] = "50-55"
+    elif med >= 1.0:
+        stats["implied_fv"] = "45-50"
+    else:
+        stats["implied_fv"] = "40-45"
+
+    return stats
+
+
 # ── re-exports from extracted modules ───────────────────────────────────
 
 from team_queries import (get_summary, get_standings, get_division_standings,

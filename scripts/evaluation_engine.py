@@ -2962,11 +2962,9 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
             defensive_value = compute_defensive_value(defense_tools, def_weights)
 
             # Apply carrying tool bonus to offensive grade (two-way hitter side)
-            raw_off = _offensive_grade_raw(hitter_tools, h_weights)
-            if raw_off is not None:
-                offensive_grade, ct_bonus, ct_breakdown = apply_carrying_tool_bonus(
-                    raw_off, hitter_tools, hitter_bucket, ct_config,
-                )
+            # DISABLED: redundant with tool transform + interaction terms + position weights
+            ct_bonus = 0.0
+            ct_breakdown = []
 
             # Recompute hitter composite with enhanced offensive grade for two-way
             if ct_bonus > 0:
@@ -3088,11 +3086,9 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
             defensive_value = compute_defensive_value(defense_tools, def_weights)
 
             # Apply carrying tool bonus to offensive grade
-            raw_off = _offensive_grade_raw(hitter_tools, h_weights)
-            if raw_off is not None:
-                offensive_grade, ct_bonus, ct_breakdown = apply_carrying_tool_bonus(
-                    raw_off, hitter_tools, bucket, ct_config,
-                )
+            # DISABLED: redundant with tool transform + interaction terms + position weights
+            ct_bonus = 0.0
+            ct_breakdown = []
 
             # Recompute composite with enhanced offensive grade (carrying tool
             # bonus flows through the offensive component only — Req 7.1, 7.2)
