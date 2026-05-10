@@ -880,7 +880,12 @@ def _derive_fv_to_peak_war(ovr_table):
 # ---------------------------------------------------------------------------
 
 def _calibrate_arb_pct(conn, game_year, dpw):
-    """Compute arb salary as fraction of market value by estimated arb year."""
+    """Compute arb salary as fraction of market value by estimated arb year.
+
+    Filters: WAR >= 1.0 (avoids noise from bad-year players whose salary
+    looks like a huge % of near-zero market value) and pct < 1.5 (outlier cap).
+    Requires N >= 10 per arb year; falls back to defaults otherwise.
+    """
     year_lo = game_year - CALIBRATION_YEARS
     year_hi = game_year - 1
 
@@ -914,24 +919,30 @@ def _calibrate_arb_pct(conn, game_year, dpw):
 
         war = (pit["war"] if pit and pit["war"] is not None else
                bat["war"] if bat and bat["war"] is not None else None)
-        if war is None or war <= 0:
+        if war is None or war < 1.0:
             continue
 
         mkt = war * dpw
         pct = r["salary_0"] / mkt
         arb_yr = max(1, svc - 2)
-        if 1 <= arb_yr <= 3:
+        if 1 <= arb_yr <= 3 and pct < 1.5:
             arb_data[arb_yr].append(pct)
 
-    # Use median (robust to outliers)
+    # Use median (robust to outliers), require N >= 10
     import statistics
     result = {}
     for yr in (1, 2, 3):
         pcts = arb_data.get(yr, [])
-        if len(pcts) >= 5:
+        if len(pcts) >= 10:
             result[yr] = round(statistics.median(pcts), 2)
         else:
             result[yr] = ARB_PCT[yr]
+
+    # Enforce monotonic: arb 1 <= arb 2 <= arb 3
+    if result[1] > result[2]:
+        result[1] = result[2]
+    if result[2] > result[3]:
+        result[2] = result[3]
 
     return result
 
