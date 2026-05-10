@@ -739,24 +739,38 @@ def refresh_league(year, game_date=None):
 
 
 def _refresh_dollar_per_war(year):
-    """Compute market $/WAR from contracts signed in the current season."""
+    """Compute market $/WAR from free agent contracts.
+
+    Uses multi-year contracts to players aged 28+ (past arbitration) as the
+    true market rate. This is what a team would pay on the open market to
+    acquire WAR — the relevant figure for surplus calculations.
+    """
     league_dir = get_league_dir()
     conn = _db.get_conn(league_dir)
 
-    # Use league minimum to scale the salary threshold — $5M is for modern leagues
     from player_utils import league_minimum
     from constants import DEFAULT_MINIMUM_SALARY
     min_sal = league_minimum()
     sal_threshold = round(5_000_000 * min_sal / DEFAULT_MINIMUM_SALARY) if min_sal else 5_000_000
-    # Minimum threshold: 3× league minimum (avoid noise from minimum-salary contracts)
     sal_threshold = max(sal_threshold, min_sal * 3) if min_sal else sal_threshold
 
+    # Free agent contracts: multi-year deals to players past arb (age 28+)
+    # These represent the true open-market price for WAR.
     signed_rows = conn.execute("""
         SELECT p.player_id, c.salary_0
         FROM contracts c JOIN players p ON c.player_id = p.player_id
         WHERE p.level = 1 AND c.is_major = 1
-          AND c.salary_0 >= ?
+          AND c.salary_0 >= ? AND c.years >= 2 AND p.age >= 28
     """, (sal_threshold,)).fetchall()
+
+    # Fallback: if too few FA contracts, use all contracts above threshold
+    if len(signed_rows) < 30:
+        signed_rows = conn.execute("""
+            SELECT p.player_id, c.salary_0
+            FROM contracts c JOIN players p ON c.player_id = p.player_id
+            WHERE p.level = 1 AND c.is_major = 1
+              AND c.salary_0 >= ?
+        """, (sal_threshold,)).fetchall()
 
     if not signed_rows:
         conn.close()
