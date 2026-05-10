@@ -210,8 +210,13 @@ Risk labels (Low/Medium/High/Extreme) from development confidence:
 
 **Career outcome probabilities** — `career_outcome_probs()` in `prospect_value.py`. Three-scenario model (base/mid/ceiling) with logistic CDF for WAR variance within each scenario. Component scores adjust both scenario weights and development probability. Displayed as cumulative P(WAR ≥ threshold) bars on the player page.
 
-**$/WAR** — $8.62M (2033). Calibrated from 70 multi-year MLB contracts (salary ≥$5M, years >1).
-Stored in `config/league_averages.json`, recalculated each league refresh.
+**$/WAR** — FA market rate. Calibrated from multi-year contracts to players aged 28+ (past arbitration, salary ≥$5M). Represents the true open-market price for WAR. Falls back to all contracts if <30 FA deals available. Stored in `config/league_averages.json`, recalculated each league refresh.
+
+**Arb salary projection** — Uses raise-based model from `arb_model.arb_salary()`:
+- Arb 1: exponential base from player quality (`ARB_HITTER_BASE × exp(ARB_HITTER_EXP × composite)`)
+- Arb 2-3: prior salary + raise (raise scales with composite)
+- Properly escalates year over year (not flat percentage of market value)
+- Salary discounted to present value same as market value for surplus calculation
 
 **IP storage** — the API returns `ip` as a truncated integer; `outs` is precise. All IP
 values in the DB are stored as true decimal innings (`outs / 3`). ERA computed from outs

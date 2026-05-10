@@ -61,7 +61,15 @@ R² improvements: SS hitting 0.455→0.481, CF 0.476→0.552. Interaction terms 
 - Sub-MLB floor penalty + tool transform overlap at low end is small (0.3-4 pts) and doesn't affect FV grades
 - Negative tool interactions investigated — data shows threshold effect, not smooth compounding
 - Composite→WAR R² = 0.334 (hitters), 0.185 (pitchers) — reasonable for tool-only model
-- Identified broken arb calibration (non-monotonic ARB_PCT) — added to task list as high priority
+
+### Surplus Model Fixes
+
+- **Arb calibration**: Added WAR ≥ 1.0 floor, outlier cap (pct < 1.5), N ≥ 10 minimum, monotonic enforcement. EMLB: {1:0.71, 2:0.34, 3:0.45} → {1:0.24, 2:0.24, 3:0.32}.
+- **Arb salary model**: Switched from flat-percentage (`ARB_PCT × WAR × $/WAR`) to raise-based (`arb_model.arb_salary`). Arb salaries now properly escalate year over year.
+- **Discount mismatch**: Salary now discounted to present value same as market value. Was comparing discounted value against undiscounted salary.
+- **$/WAR calculation**: Now uses FA market rate (multi-year contracts, age 28+) instead of all-contract average. EMLB: $6.2M → $7.75M. VMLB: $8.7M → $9.8M.
+- **contract_value.py**: Uses `true_ceiling` instead of `ceiling_score` for development projection. Fixes inflated WAR projections for maxed players.
+- **UI**: Surplus range now formatted with money filter. Adjusted surplus tooltip explains risk discounting.
 
 ---
 
