@@ -65,7 +65,7 @@ def _resolve(conn, query):
 
     # Prefer composite_score/ceiling_score over OVR/POT when available
     ovr = rat.get("composite_score") or rat.get("ovr") or 0
-    pot = rat.get("ceiling_score") or rat.get("pot") or 0
+    pot = rat.get("true_ceiling") or rat.get("ceiling_score") or rat.get("pot") or 0
 
     p = conn.execute("SELECT role, pos FROM players WHERE player_id=?", (pid,)).fetchone()
     rat["_role"] = "starter"  if p and str(p["role"]) == "11" else \
