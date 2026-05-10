@@ -132,25 +132,36 @@ recomputed from summed counting stats — `_bat_row`/`_pit_row` store raw counts
 `_hra`, `_bf`, etc.) alongside computed rates for this purpose. Percentile queries use `GROUP BY
 player_id` with `SUM` to aggregate stints before computing rankings.
 
-**FV calculation** — `calc_fv()` / `calc_fv_v2()` in `fv_model.py` (re-exported via `player_utils.py`). Rearchitected in Session 50 as ceiling-credit model with risk labels.
+**FV calculation** — `calc_fv()` / `calc_fv_v2()` in `fv_model.py` (re-exported via `player_utils.py`). Expected-peak model with ceiling blend and risk labels.
 
 Three-score model inputs from evaluation engine:
-- **Composite** (composite_score): current tool value, no discounts
+- **Composite** (composite_score): current tool value, continuous 20-80 scale
 - **Projected** (ceiling_score): age-blended likely outcome
 - **True Ceiling** (true_ceiling): pure potential, no age blend — used as FV ceiling input
 
-Core formula: `FV = 45 + (true_ceiling - positional_MLB_median) × ceiling_credit`
-- `ceiling_credit = 0.20 + 0.55 × (composite / ceiling)` — realization-scaled
-- Maxed-out players (gap < 3): `FV = 45 + (ceiling - median)`
-- Ceiling quality gate: ceiling must be 6+ above median for FV 45+ (raw ceiling, before RP discount)
-- MLB median: computed dynamically per league and position bucket
-- Character: work ethic/intelligence adjust development confidence
-- Accuracy L: -2 FV. Platoon splits: -2/-3 FV. RP ceiling ×0.85, FV cap 55.
+Core formula (developing prospects, gap > 3):
+```
+peak = composite + gap × closure × bust
+ceil_weight = max(0, min(0.5, (ceiling - 50) / 30))
+FV = peak × (1 - ceil_weight) + ceiling × ceil_weight
+```
+- `closure`: league-calibrated gap closure rate by age and player type
+- `bust`: closure-normalized discount (`target_product / closure`, capped 0.85). Ensures leagues with higher closure rates get proportionally lower bust credit.
+- `ceil_weight`: elite ceilings (>50) get partial ceiling credit (up to 50% at ceiling 80)
+- Maxed players (gap ≤ 3): `FV = composite` (standard rounding)
+- Developing players: floor rounding (must project to 50.0+ for FV 50)
+- Ceiling cap: `FV ≤ ceiling - 3`
+- Offensive ceiling cap: bat-limited hitters (offensive_ceiling < 45) capped at FV 50
+- Accuracy L: -5 FV. Platoon splits: -5 FV. RP ceiling ×0.85, FV cap 55.
 
 Risk labels (Low/Medium/High/Extreme) from development confidence:
 - `dev_confidence = closure_rate × age_discount × gap_scale + character_adj`
 - Stored in `prospect_fv.risk`, displayed on player page
 - No "+" grades — clean FV tiers (40/45/50/55/60/65/70)
+
+**Tool interaction terms** — Calibrated from WAR regressions, applied in composite:
+- Hitters: `contact × eye` (on-base synergy), `power × eye` (discipline enables power)
+- Pitchers: `stuff × movement` (movement makes stuff unhittable)
 
 **Pitcher composite extended ratings** — `compute_composite_pitcher()` in `evaluation_engine.py` uses HRA and PBABIP as optional weighted tools when available. Calibration produces weights automatically; leagues without extended ratings degrade gracefully to stuff/movement/control + arsenal.
 

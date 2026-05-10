@@ -4,6 +4,42 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 56 (2026-05-09)
+
+### FV Distribution Calibration
+
+Addressed EMLB FV inflation (was 6.9x FG at FV 50+, now 3.0x):
+
+- **Closure-normalized bust discount** — `bust = target_product / closure` ensures leagues with higher closure rates (more survivorship bias) get proportionally lower bust credit. EMLB compressed significantly; VMLB unchanged.
+- **Floor rounding for developing prospects** — Developing players (gap > 3) use floor rounding: must project to 50.0+ to get FV 50. Maxed players (gap ≤ 3) keep standard rounding since they've proven their level.
+
+### Tool Interaction Terms
+
+Added nonlinear interaction features to the tool weight calibration, capturing synergies the linear model misses:
+
+- **contact × eye** (hitters): On-base synergy (+1.29 empirical). Players need both to get on base consistently.
+- **power × eye** (hitters): Plate discipline enables power (+0.70). Eye gets into hitter's counts where power plays.
+- **stuff × movement** (pitchers): Movement makes stuff unhittable (+1.09). Stuff alone can be squared up.
+
+R² improvements: SS hitting 0.455→0.481, CF 0.476→0.552. Interaction terms applied as additive adjustments in `_offensive_grade_raw()` and `compute_composite_pitcher()`.
+
+### Empirical Validation
+
+- **Gelof comp analysis**: Found MLB players with similar profiles (contact ≤50, avoidK ≤45, speed ≥50, defense ≥55 at 2B/SS). Mean WAR = 1.6, confirming FV 50 is borderline correct for this profile in OOTP.
+- **Negative compounding investigated**: Data shows threshold effect (one weak tool = big penalty, already captured by sub-MLB floor), not smooth compounding. No additional negative interactions needed.
+- **Interaction term data quality**: Validated that findings are robust (large N, intuitive mechanisms, meaningful R² improvement). Stopped at three terms to avoid overfitting.
+
+### Distribution Results
+
+| Tier | EMLB Before | EMLB After | VMLB Before | VMLB After | FG |
+|------|------------|-----------|------------|-----------|-----|
+| 60+ | 1.6 | 1.1 | 0.3 | 0.1 | ~0.6 |
+| 55+ | 6.9 | 3.3 | 1.7 | 1.1 | ~1.3 |
+| 50+ | 24.9 | 10.8 | 11.1 | 6.7 | ~3.6 |
+| 45+ | 62.4 | 31.0 | 42.4 | 29.8 | ~8.6 |
+
+---
+
 ## Session 55
 
 **Minor League Team Pages:**
