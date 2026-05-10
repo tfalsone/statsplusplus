@@ -1096,9 +1096,14 @@ def get_player(pid):
 
     # Prospect comps
     prospect_comps = None
+    comp_stats = None
     if valuation and valuation.get("type") == "prospect":
-        from queries import get_prospect_comps
+        from queries import get_prospect_comps, get_prospect_comp_stats
         prospect_comps = get_prospect_comps(pid)
+        try:
+            comp_stats = get_prospect_comp_stats(pid)
+        except Exception:
+            pass
     elif valuation and valuation.get("type") == "MLB" and prospect_row:
         from queries import get_prospect_comps
         prospect_comps = get_prospect_comps(pid)
@@ -1148,7 +1153,7 @@ def get_player(pid):
         "pctile_splits": pctile_splits, "fielding_stats": fielding_stats,
         "fielding_pctiles": fielding_pctiles,
         "bat_percentiles": bat_percentiles, "bat_pctile_splits": bat_pctile_splits,
-        "prospect_comps": prospect_comps, "pap": pap,
+        "prospect_comps": prospect_comps, "comp_stats": comp_stats, "pap": pap,
         "snapshot_deltas": snapshot_deltas,
         "composite_score": composite_score,
         "ceiling_score": ceiling_score,

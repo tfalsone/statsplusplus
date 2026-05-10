@@ -412,6 +412,15 @@
 {% if p.prospect_comps %}
 <div class="panel">
   <h2>MLB Comps</h2>
+  {% if p.comp_stats %}
+  <div class="comp-stats-summary" style="margin-bottom:1em;padding:0.6em 0.8em;background:var(--bg-alt,#1a1a2e);border-radius:4px;font-size:0.9em;">
+    <strong>Profile Match:</strong> {{ p.comp_stats.n }} similar MLB seasons →
+    median {{ "%.1f"|format(p.comp_stats.median) }} WAR
+    (P25–P75: {{ "%.1f"|format(p.comp_stats.p25) }}–{{ "%.1f"|format(p.comp_stats.p75) }})
+    · Implied FV ~{{ p.comp_stats.implied_fv }}
+    <span style="opacity:0.6;font-size:0.85em;" title="Uses current ratings against historical stats. Approximate — player tools may have differed when stats were produced.">⚠️ approx.</span>
+  </div>
+  {% endif %}
   <div class="comps-grid">
     {% for c in p.prospect_comps %}
     <div class="comp-card comp-{{ c.tier|lower }}" data-pid="{{ c.pid }}">

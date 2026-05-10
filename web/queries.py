@@ -727,26 +727,16 @@ def get_prospect_comp_stats(pid):
 
     Returns dict with {n, mean, median, p25, p75, min, max, implied_fv} or None.
     """
-    from comp_validate import find_comps, summarize, get_prospect_profile
+    from comp_validate import find_comps, summarize
+    from ratings import norm_continuous as _norm
 
     conn = get_db()
-    # Get prospect's current tools and bucket
-    tools, bucket, _ = get_prospect_profile(conn, "", use_ceiling=False)
-
-    # Direct lookup by player_id instead
-    from ratings import norm_continuous as _norm
-    from player_utils import assign_bucket as _ab
-
     ed = conn.execute("SELECT MAX(eval_date) FROM prospect_fv").fetchone()[0]
     row = conn.execute("""
-        SELECT p.player_id, p.name, p.pos, p.role,
-               r.cntct, r.pow, r.eye, r.gap,
-               r.pot_cntct, r.pot_pow, r.pot_eye, r.pot_gap,
-               r.pot_c, r.pot_ss, r.pot_second_b, r.pot_third_b, r.pot_first_b,
-               r.pot_lf, r.pot_cf, r.pot_rf,
+        SELECT r.cntct, r.pow, r.eye, r.gap,
+               r.stf, r.mov, r.ctrl,
                pf.bucket
         FROM prospect_fv pf
-        JOIN players p ON pf.player_id = p.player_id
         JOIN latest_ratings r ON pf.player_id = r.player_id
         WHERE pf.eval_date = ? AND pf.player_id = ?
     """, (ed, pid)).fetchone()
@@ -755,17 +745,27 @@ def get_prospect_comp_stats(pid):
         return None
 
     bucket = row["bucket"]
-    tools = {
-        "contact": _norm(row["cntct"]),
-        "power": _norm(row["pow"]),
-        "eye": _norm(row["eye"]),
-        "gap": _norm(row["gap"]),
-    }
+    is_pitcher = bucket in ("SP", "RP")
+
+    if is_pitcher:
+        tools = {
+            "stuff": _norm(row["stf"]),
+            "movement": _norm(row["mov"]),
+            "control": _norm(row["ctrl"]),
+        }
+    else:
+        tools = {
+            "contact": _norm(row["cntct"]),
+            "power": _norm(row["pow"]),
+            "eye": _norm(row["eye"]),
+            "gap": _norm(row["gap"]),
+        }
     tools = {k: v for k, v in tools.items() if v is not None}
     if not tools:
         return None
 
-    comps = find_comps(conn, tools, bucket, tolerance=10, min_pa=200)
+    min_pa = 50 if is_pitcher else 200
+    comps = find_comps(conn, tools, bucket, tolerance=10, min_pa=min_pa)
     stats = summarize(comps)
     if not stats:
         return None
