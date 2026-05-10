@@ -9,6 +9,7 @@ Implements Step 3 of docs/trade_analysis_guide.md.
 import argparse, json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from player_utils import dollars_per_war, league_minimum, POSITIONAL_WAR_ADJUSTMENTS, aging_mult, LEVEL_NORM_AGE, peak_war_from_ovr
+from arb_model import arb_salary
 from constants import ARB_PCT, FV_TO_PEAK_WAR, FV_TO_PEAK_WAR_SP, FV_TO_PEAK_WAR_RP, FV_TO_PEAK_WAR_BY_POS, DEVELOPMENT_DISCOUNT, YEARS_TO_MLB, PROSPECT_DISCOUNT_RATE, SCARCITY_MULT, LEVEL_AGE_DISCOUNT_RATE, PROSPECT_WAR_RAMP, NO_TRACK_RECORD_DISCOUNT
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -172,12 +173,19 @@ def prospect_surplus(fv, age, level, bucket, positional_adjust=False, fv_plus=Fa
 
         market_val = _market_value(war, dpw, lg_min) * discount
 
-        # Arb salary uses undiscounted WAR × $/WAR — no ramp (arb is based on prior performance)
+        # Arb salary: raise-based model from arb_model.py
+        # Arb is a raise system: arb 1 based on quality, arb 2-3 raise from prior
         if ctrl_year <= 3:
             salary = lg_min
         else:
             arb_yr = ctrl_year - 3
-            salary = ARB_PCT[arb_yr] * (pw + pos_adj) * aging_mult(player_age, bucket) * dpw
+            # Estimate OVR at peak from peak WAR (invert the WAR→OVR relationship)
+            _arb_ovr = max(40, min(75, (pw + pos_adj) / 0.19 + 50))
+            if arb_yr == 1:
+                salary = arb_salary(_arb_ovr, bucket, 1, lg_min, lg_min)
+            else:
+                prior_sal = rows[-1]["salary"]
+                salary = arb_salary(_arb_ovr, bucket, arb_yr, prior_sal, lg_min)
 
         surplus = market_val - salary
         total_surplus += surplus
