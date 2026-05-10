@@ -1044,10 +1044,14 @@ def _calibrate_carrying_tools(conn, game_year, role_map):
     """Derive carrying tool parameters from WAR regression data.
 
     For each position/tool combination:
-    1. Compute mean WAR for players with 65+ grade in that tool.
-    2. Compute mean WAR for all players at that position.
-    3. WAR premium = difference.
-    4. Compute scarcity percentage (% of players with 65+ grade).
+    1. Compute P85 threshold for that tool at that position (top ~15%).
+    2. Compute mean WAR for players at or above the threshold.
+    3. Compute mean WAR for all players at that position.
+    4. WAR premium = difference.
+    5. Compute scarcity percentage (% of players above threshold).
+
+    Using a percentile-based threshold adapts to league-specific tool
+    distributions (e.g. VMLB has tighter distributions than EMLB).
 
     Excludes speed at all positions. Excludes combinations with fewer
     than 10 qualifying players.
@@ -1122,15 +1126,23 @@ def _calibrate_carrying_tools(conn, game_year, role_map):
 
         carrying_tools = {}
         for tool in _OFFENSIVE_TOOLS:
-            # Players with 65+ grade in this tool
+            # Dynamic threshold: P85 of tool distribution at this position
+            # (top ~15% = "elite" for this league's scale)
+            tool_vals = sorted(
+                [p[tool] for p in players if p[tool] is not None]
+            )
+            if len(tool_vals) < _MIN_CARRYING_TOOL_N:
+                continue
+            threshold = tool_vals[int(len(tool_vals) * 0.85)]
+
             qualified = [p for p in players
-                         if p[tool] is not None and p[tool] >= 65]
+                         if p[tool] is not None and p[tool] >= threshold]
             n_qualified = len(qualified)
 
             if n_qualified < _MIN_CARRYING_TOOL_N:
                 continue
 
-            # Mean WAR for players with 65+ grade
+            # Mean WAR for players above threshold
             tool_mean_war = sum(p["war"] for p in qualified) / n_qualified
 
             # WAR premium = difference from position mean
@@ -1140,7 +1152,7 @@ def _calibrate_carrying_tools(conn, game_year, role_map):
             if war_premium <= 0:
                 continue
 
-            # Scarcity: % of players at position with 65+ grade
+            # Scarcity: % of players at position above threshold
             scarcity_pct = n_qualified / total_at_pos
 
             # Convert raw WAR premium to war_premium_factor
@@ -1150,6 +1162,7 @@ def _calibrate_carrying_tools(conn, game_year, role_map):
             carrying_tools[tool] = {
                 "war_premium_factor": war_premium_factor,
                 "_calibration": {
+                    "threshold": int(threshold),
                     "n_qualified": n_qualified,
                     "n_total": total_at_pos,
                     "war_premium_raw": round(war_premium, 3),

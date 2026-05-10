@@ -2904,7 +2904,7 @@ class TestLoadCarryingToolConfig:
             assert DEFAULT_CARRYING_TOOL_CONFIG["positions"]["SS"]["carrying_tools"]["contact"]["war_premium_factor"] == 0.30
 
     def test_empty_positions_is_valid(self):
-        """A config with empty positions dict is valid (no bonuses applied)."""
+        """A config with empty positions dict merges defaults for missing positions."""
         config = {
             "version": 1,
             "positions": {},
@@ -2917,7 +2917,9 @@ class TestLoadCarryingToolConfig:
             (config_dir / "carrying_tool_config.json").write_text(json.dumps(config))
 
             result = load_carrying_tool_config(league_dir)
-            assert result["positions"] == {}
+            # Defaults are merged in for missing positions
+            assert "SS" in result["positions"]
+            assert "C" in result["positions"]
 
 
 # ===================================================================

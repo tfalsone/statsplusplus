@@ -237,6 +237,14 @@ def load_carrying_tool_config(league_dir: Path) -> dict:
     if "scarcity_schedule" not in config:
         config["scarcity_schedule"] = list(DEFAULT_CARRYING_TOOL_CONFIG["scarcity_schedule"])
 
+    # Merge: fill missing positions from defaults so sparse calibrations
+    # (e.g. VMLB with tight distributions) still get reasonable coverage.
+    default_positions = DEFAULT_CARRYING_TOOL_CONFIG.get("positions", {})
+    config_positions = config.setdefault("positions", {})
+    for pos, pos_data in default_positions.items():
+        if pos not in config_positions:
+            config_positions[pos] = _deep_copy_config(pos_data)
+
     _validate_carrying_tool_config(config)
     return config
 
