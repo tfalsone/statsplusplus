@@ -41,6 +41,7 @@ statsplusplus/
 │   ├── evaluation_engine.py     # Custom player evaluation (Composite_Score, Ceiling_Score from tool ratings)
 │   ├── calibrate.py            # League-specific model calibration (tool weights, OVR_TO_WAR, COMPOSITE_TO_WAR, FV, ARB, scarcity)
 │   ├── benchmark.py            # Evaluation engine performance benchmark (composite vs WAR, prospect inflation, ceiling collapse)
+│   ├── comp_validate.py        # CLI: Comp-based FV validation (tool profile → MLB WAR distribution)
 │   ├── projections.py          # Player projections for depth chart planning
 │   ├── contract_value.py       # MLB contract surplus/deficit breakdown
 │   ├── prospect_value.py       # Prospect surplus calculator

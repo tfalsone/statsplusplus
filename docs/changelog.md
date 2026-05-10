@@ -38,6 +38,31 @@ R² improvements: SS hitting 0.455→0.481, CF 0.476→0.552. Interaction terms 
 | 50+ | 24.9 | 10.8 | 11.1 | 6.7 | ~3.6 |
 | 45+ | 62.4 | 31.0 | 42.4 | 29.8 | ~8.6 |
 
+### Carrying Tool System
+
+- Percentile-based calibration threshold (P85) replaces fixed 65 — adapts to league distributions
+- VMLB now calibrates all 7 positions (was only COF and 1B)
+- Default merge fills missing positions from hardcoded defaults
+- Dynamic application threshold matches calibration threshold
+- **Carrying tool bonus disabled** — redundant with tool transform (1.2× above 60) + interaction terms + position-specific weights. Was producing +15-18 composite from single elite tools.
+
+### Comp-Based FV Validation Tool
+
+- New CLI: `scripts/comp_validate.py` — finds all MLB player-seasons matching a tool profile, shows WAR distribution
+- Supports hitters and pitchers, current or ceiling tools, `--year`/`--recent` filters
+- WAR rate-normalized (per 600PA / 180IP) to handle partial seasons
+- Web UI: "Ceiling Profile" summary on prospect pages using potential ratings
+- Tooltip distinguishes from Career Outcomes (ceiling IF realized vs probability OF realizing)
+- Data limitation documented: uses current ratings vs historical stats; will improve as `ratings_history` accumulates
+
+### Model Audit
+
+- Confirmed no double-counting between tool transform, interaction terms, and position weights
+- Sub-MLB floor penalty + tool transform overlap at low end is small (0.3-4 pts) and doesn't affect FV grades
+- Negative tool interactions investigated — data shows threshold effect, not smooth compounding
+- Composite→WAR R² = 0.334 (hitters), 0.185 (pitchers) — reasonable for tool-only model
+- Identified broken arb calibration (non-monotonic ARB_PCT) — added to task list as high priority
+
 ---
 
 ## Session 55
