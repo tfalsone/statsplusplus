@@ -116,9 +116,16 @@ def find_comps(conn, target_tools, bucket, tolerance=10, min_pa=200,
         avg_dist = dist / sqrt(n_tools)
 
         if avg_dist <= tolerance:
+            # Normalize to full-season rate (WAR per 600 PA / 180 IP)
+            pa = r["ip"] if is_pitcher else r["pa"]
+            raw_war = r["war"]
+            if is_pitcher:
+                war_rate = raw_war * 180.0 / pa if pa >= 40 else raw_war
+            else:
+                war_rate = raw_war * 600.0 / pa if pa >= 200 else raw_war
             matches.append({
-                "name": r["name"], "age": r["age"], "war": r["war"],
-                "pa": r["ip"] if is_pitcher else r["pa"],
+                "name": r["name"], "age": r["age"], "war": round(war_rate, 2),
+                "pa": pa,
                 "hr": None if is_pitcher else r["hr"],
                 "sb": None if is_pitcher else r["sb"],
                 "year": r["year"], "dist": round(avg_dist, 1),
