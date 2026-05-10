@@ -733,8 +733,8 @@ def get_prospect_comp_stats(pid):
     conn = get_db()
     ed = conn.execute("SELECT MAX(eval_date) FROM prospect_fv").fetchone()[0]
     row = conn.execute("""
-        SELECT r.cntct, r.pow, r.eye, r.gap,
-               r.stf, r.mov, r.ctrl,
+        SELECT r.pot_cntct, r.pot_pow, r.pot_eye, r.pot_gap,
+               r.pot_stf, r.pot_mov, r.pot_ctrl,
                pf.bucket
         FROM prospect_fv pf
         JOIN latest_ratings r ON pf.player_id = r.player_id
@@ -749,16 +749,16 @@ def get_prospect_comp_stats(pid):
 
     if is_pitcher:
         tools = {
-            "stuff": _norm(row["stf"]),
-            "movement": _norm(row["mov"]),
-            "control": _norm(row["ctrl"]),
+            "stuff": _norm(row["pot_stf"]),
+            "movement": _norm(row["pot_mov"]),
+            "control": _norm(row["pot_ctrl"]),
         }
     else:
         tools = {
-            "contact": _norm(row["cntct"]),
-            "power": _norm(row["pow"]),
-            "eye": _norm(row["eye"]),
-            "gap": _norm(row["gap"]),
+            "contact": _norm(row["pot_cntct"]),
+            "power": _norm(row["pot_pow"]),
+            "eye": _norm(row["pot_eye"]),
+            "gap": _norm(row["pot_gap"]),
         }
     tools = {k: v for k, v in tools.items() if v is not None}
     if not tools:
