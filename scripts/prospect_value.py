@@ -187,7 +187,7 @@ def prospect_surplus(fv, age, level, bucket, positional_adjust=False, fv_plus=Fa
                 prior_sal = rows[-1]["salary"]
                 salary = arb_salary(_arb_ovr, bucket, arb_yr, prior_sal, lg_min)
 
-        surplus = market_val - salary
+        surplus = market_val - salary * discount
         total_surplus += surplus
 
         rows.append({
