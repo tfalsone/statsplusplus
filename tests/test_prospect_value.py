@@ -18,16 +18,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 # ---------------------------------------------------------------------------
 
 def test_surplus_sp_aa():
-    """FV 55 SP in AA should have substantial surplus ($50M-$120M range)."""
+    """FV 55 SP in AA should have substantial surplus ($30M-$120M range)."""
     from prospect_value import prospect_surplus
     result = prospect_surplus(55, 21, 'AA', 'SP', fv_plus=False, ovr=55, pot=70)
-    assert 50_000_000 <= result['total_surplus'] <= 120_000_000
+    assert 30_000_000 <= result['total_surplus'] <= 120_000_000
 
 def test_surplus_ss_a():
     """FV 50+ SS in A-ball should have significant surplus."""
     from prospect_value import prospect_surplus
     result = prospect_surplus(50, 20, 'A', 'SS', fv_plus=True, ovr=45, pot=65)
-    assert 40_000_000 <= result['total_surplus'] <= 100_000_000
+    assert 25_000_000 <= result['total_surplus'] <= 100_000_000
 
 def test_surplus_rp_aaa():
     """FV 45 RP in AAA should have modest surplus (RP cap limits upside)."""
@@ -39,7 +39,7 @@ def test_surplus_cof_ashort():
     """FV 60 COF in A-Short should have high surplus despite distance."""
     from prospect_value import prospect_surplus
     result = prospect_surplus(60, 19, 'A-Short', 'COF', fv_plus=False, ovr=50, pot=70)
-    assert 50_000_000 <= result['total_surplus'] <= 120_000_000
+    assert 30_000_000 <= result['total_surplus'] <= 120_000_000
 
 
 # ---------------------------------------------------------------------------

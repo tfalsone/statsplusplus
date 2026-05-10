@@ -54,6 +54,7 @@ from evaluation_engine import (
     compute_carrying_tool_bonus,
     apply_carrying_tool_bonus,
     _scarcity_multiplier,
+    _CARRYING_TOOL_GRADE_THRESHOLD,
     compute_positional_medians,
     compute_positional_percentile,
 )
@@ -2976,33 +2977,32 @@ class TestComputeCarryingToolBonus:
     """Unit tests for compute_carrying_tool_bonus."""
 
     def test_ss_contact_65(self):
-        """SS with contact=65 gets a bonus: 0.30 × (65-60) × 1.0 = 1.5."""
+        """SS with contact=65 at threshold: no bonus (grade == threshold)."""
         tools = {"contact": 65, "gap": 50, "power": 50, "eye": 50}
         bonus, breakdown = compute_carrying_tool_bonus(tools, "SS", DEFAULT_CARRYING_TOOL_CONFIG)
-        assert len(breakdown) == 1
-        assert breakdown[0]["tool"] == "contact"
-        assert breakdown[0]["grade"] == 65
-        assert abs(bonus - 1.5) < 1e-9
+        # 0.30 × (65-65) × 1.0 = 0.0 — no entry in breakdown
+        assert len(breakdown) == 0
+        assert abs(bonus - 0.0) < 1e-9
 
     def test_ss_contact_70(self):
-        """SS with contact=70: 0.30 × (70-60) × 1.5 = 4.5."""
+        """SS with contact=70: 0.30 × (70-65) × 1.5 = 2.25."""
         tools = {"contact": 70, "gap": 50, "power": 50, "eye": 50}
         bonus, breakdown = compute_carrying_tool_bonus(tools, "SS", DEFAULT_CARRYING_TOOL_CONFIG)
-        assert abs(bonus - 4.5) < 1e-9
+        assert abs(bonus - 2.25) < 1e-9
 
     def test_ss_contact_80(self):
-        """SS with contact=80: 0.30 × (80-60) × 3.0 = 18.0."""
+        """SS with contact=80: 0.30 × (80-65) × 3.0 = 13.5."""
         tools = {"contact": 80, "gap": 50, "power": 50, "eye": 50}
         bonus, breakdown = compute_carrying_tool_bonus(tools, "SS", DEFAULT_CARRYING_TOOL_CONFIG)
-        assert abs(bonus - 18.0) < 1e-9
+        assert abs(bonus - 13.5) < 1e-9
 
     def test_multiple_qualifying_tools(self):
-        """SS with contact=70 and power=65 gets both bonuses summed."""
-        tools = {"contact": 70, "gap": 50, "power": 65, "eye": 50}
+        """SS with contact=70 and power=70 gets both bonuses summed."""
+        tools = {"contact": 70, "gap": 50, "power": 70, "eye": 50}
         bonus, breakdown = compute_carrying_tool_bonus(tools, "SS", DEFAULT_CARRYING_TOOL_CONFIG)
-        # contact: 0.30 × 10 × 1.5 = 4.5
-        # power:   0.35 × 5  × 1.0 = 1.75
-        expected = 4.5 + 1.75
+        # contact: 0.30 × (70-65) × 1.5 = 2.25
+        # power:   0.35 × (70-65) × 1.5 = 2.625
+        expected = 2.25 + 2.625
         assert abs(bonus - expected) < 1e-9
         assert len(breakdown) == 2
 
@@ -3047,19 +3047,18 @@ class TestComputeCarryingToolBonus:
         assert bonus == 0.0
 
     def test_3b_gap_qualifies(self):
-        """3B has gap as a carrying tool — gap=65 qualifies."""
+        """3B has gap as a carrying tool — gap=65 at threshold gives no bonus."""
         tools = {"contact": 50, "gap": 65, "power": 50, "eye": 50}
         bonus, breakdown = compute_carrying_tool_bonus(tools, "3B", DEFAULT_CARRYING_TOOL_CONFIG)
-        # 0.12 × (65-60) × 1.0 = 0.6
-        assert abs(bonus - 0.6) < 1e-9
-        assert len(breakdown) == 1
-        assert breakdown[0]["tool"] == "gap"
+        # 0.12 × (65-65) × 1.0 = 0.0
+        assert abs(bonus - 0.0) < 1e-9
+        assert len(breakdown) == 0
 
     def test_catcher_contact_65(self):
-        """C with contact=65: 0.37 × 5 × 1.0 = 1.85."""
+        """C with contact=65 at threshold: no bonus."""
         tools = {"contact": 65, "gap": 50, "power": 50, "eye": 50}
         bonus, breakdown = compute_carrying_tool_bonus(tools, "C", DEFAULT_CARRYING_TOOL_CONFIG)
-        assert abs(bonus - 1.85) < 1e-9
+        assert abs(bonus - 0.0) < 1e-9
 
 
 class TestApplyCarryingToolBonus:
@@ -3071,9 +3070,9 @@ class TestApplyCarryingToolBonus:
         enhanced, bonus, breakdown = apply_carrying_tool_bonus(
             50.0, tools, "SS", DEFAULT_CARRYING_TOOL_CONFIG
         )
-        # bonus = 0.30 × 10 × 1.5 = 4.5
-        assert abs(bonus - 4.5) < 1e-9
-        assert enhanced == round(50.0 + 4.5)  # 55
+        # bonus = 0.30 × (70-65) × 1.5 = 2.25
+        assert abs(bonus - 2.25) < 1e-9
+        assert enhanced == round(50.0 + 2.25)  # 52
 
     def test_clamp_to_80(self):
         """Enhanced grade is clamped to 80."""
@@ -3081,7 +3080,7 @@ class TestApplyCarryingToolBonus:
         enhanced, bonus, breakdown = apply_carrying_tool_bonus(
             75.0, tools, "SS", DEFAULT_CARRYING_TOOL_CONFIG
         )
-        # bonus = 0.30 × 20 × 3.0 = 18.0 → 75 + 18 = 93 → clamped to 80
+        # bonus = 0.30 × (80-65) × 3.0 = 13.5 → 75 + 13.5 = 88.5 → clamped to 80
         assert enhanced == 80
 
     def test_clamp_to_20(self):
@@ -3194,8 +3193,8 @@ class TestProperty1CarryingToolBonusQualification:
     @given(tools=_carrying_tool_tools_st, position=_carrying_config_positions_st)
     def test_missing_from_breakdown_is_unqualified(self, tools, position):
         """**Validates: Requirements 1.1, 1.8** — Offensive tools NOT in the
-        breakdown either: are not in the config for that position, grade below
-        65, or have a None grade."""
+        breakdown either: are not in the config for that position, grade at or
+        below threshold, or have a None grade."""
         config = DEFAULT_CARRYING_TOOL_CONFIG
         bonus, breakdown = compute_carrying_tool_bonus(tools, position, config)
 
@@ -3206,14 +3205,18 @@ class TestProperty1CarryingToolBonusQualification:
             if tool_name in breakdown_tools:
                 continue
             grade = tools.get(tool_name)
+            tool_cfg = pos_carrying.get(tool_name, {})
+            threshold = tool_cfg.get("_calibration", {}).get(
+                "threshold", _CARRYING_TOOL_GRADE_THRESHOLD
+            )
             # If the tool is absent from the breakdown, at least one of these
             # must be true:
             #   - grade is None
-            #   - grade < 65
+            #   - grade <= threshold (no bonus at exactly threshold)
             #   - tool/position not in config
             assert (
                 grade is None
-                or grade < 65
+                or grade <= threshold
                 or tool_name not in pos_carrying
             ), (
                 f"{tool_name} grade={grade} at {position} should qualify but "
@@ -3296,7 +3299,7 @@ class TestProperty2CarryingToolBonusFormula:
     )
     def test_individual_bonus_formula(self, base_grade, tools, position):
         """**Validates: Requirements 1.2** — Each individual bonus equals
-        war_premium_factor × (tool_grade - 60) × scarcity_multiplier(tool_grade)."""
+        war_premium_factor × (tool_grade - threshold) × scarcity_multiplier(tool_grade)."""
         config = DEFAULT_CARRYING_TOOL_CONFIG
         schedule = config["scarcity_schedule"]
         pos_carrying = config["positions"][position]["carrying_tools"]
@@ -3307,8 +3310,11 @@ class TestProperty2CarryingToolBonusFormula:
             tool_name = entry["tool"]
             grade = entry["grade"]
             wpf = pos_carrying[tool_name]["war_premium_factor"]
+            threshold = pos_carrying[tool_name].get("_calibration", {}).get(
+                "threshold", _CARRYING_TOOL_GRADE_THRESHOLD
+            )
             scarcity = _scarcity_multiplier(grade, schedule)
-            expected_bonus = wpf * (grade - 60) * scarcity
+            expected_bonus = wpf * (grade - threshold) * scarcity
             assert abs(entry["bonus"] - expected_bonus) < 1e-9, (
                 f"Bonus mismatch for {tool_name} grade={grade}: "
                 f"got {entry['bonus']}, expected {expected_bonus}"
@@ -4350,11 +4356,11 @@ class TestReadCase:
         bonus, breakdown = compute_carrying_tool_bonus(potential_tools, "SS", config)
 
         assert bonus > 0.0, "Expected non-zero ceiling carrying tool bonus"
-        # The contact tool should contribute: 0.30 × 20 × 3.0 = 18.0
+        # The contact tool should contribute: 0.30 × (80-65) × 3.0 = 13.5
         contact_entry = next((b for b in breakdown if b["tool"] == "contact"), None)
         assert contact_entry is not None, "Expected contact in breakdown"
-        assert abs(contact_entry["bonus"] - 18.0) < 1e-9, (
-            f"Expected contact bonus of 18.0, got {contact_entry['bonus']}"
+        assert abs(contact_entry["bonus"] - 13.5) < 1e-9, (
+            f"Expected contact bonus of 13.5, got {contact_entry['bonus']}"
         )
 
     def test_ceiling_bonus_uses_ss_contact_war_premium_factor(self):
@@ -4366,13 +4372,13 @@ class TestReadCase:
         ss_contact_wpf = config["positions"]["SS"]["carrying_tools"]["contact"]["war_premium_factor"]
         assert ss_contact_wpf == 0.30
 
-        # Verify the formula: wpf × (grade - 60) × scarcity_multiplier(80)
-        # scarcity_multiplier(80) = 3.0 (last breakpoint)
+        # Verify the formula: wpf × (grade - threshold) × scarcity_multiplier(80)
+        # threshold = 65 (default), scarcity_multiplier(80) = 3.0 (last breakpoint)
         scarcity = _scarcity_multiplier(80, config["scarcity_schedule"])
         assert abs(scarcity - 3.0) < 1e-9
 
-        expected_bonus = ss_contact_wpf * (80 - 60) * scarcity
-        assert abs(expected_bonus - 18.0) < 1e-9
+        expected_bonus = ss_contact_wpf * (80 - 65) * scarcity
+        assert abs(expected_bonus - 13.5) < 1e-9
 
     def test_ceiling_reflects_franchise_defining_value(self):
         """The ceiling carrying tool bonus flows into compute_component_ceilings

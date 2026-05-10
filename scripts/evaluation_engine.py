@@ -292,6 +292,7 @@ def _validate_carrying_tool_config(config: dict) -> None:
 _CARRYING_TOOL_ELIGIBLE = frozenset({"contact", "gap", "power", "eye"})
 
 # Minimum tool grade to qualify for a carrying tool bonus.
+# Used as fallback when config doesn't specify a calibrated threshold.
 _CARRYING_TOOL_GRADE_THRESHOLD = 65
 
 
@@ -367,19 +368,27 @@ def compute_carrying_tool_bonus(
 
     for tool_name in _CARRYING_TOOL_ELIGIBLE:
         grade = tools.get(tool_name)
-        if grade is None or grade < _CARRYING_TOOL_GRADE_THRESHOLD:
+        if grade is None:
             continue
 
         tool_cfg = carrying_tools_cfg.get(tool_name)
         if tool_cfg is None:
             continue
 
+        # Use calibrated threshold if available, else default
+        threshold = tool_cfg.get("_calibration", {}).get(
+            "threshold", _CARRYING_TOOL_GRADE_THRESHOLD
+        )
+        if grade < threshold:
+            continue
+
         wpf = tool_cfg.get("war_premium_factor", 0.0)
         scarcity = _scarcity_multiplier(grade, schedule)
-        bonus = wpf * (grade - 60) * scarcity
+        bonus = wpf * (grade - threshold) * scarcity
 
-        total_bonus += bonus
-        breakdown.append({"tool": tool_name, "grade": grade, "bonus": bonus})
+        if bonus > 0:
+            total_bonus += bonus
+            breakdown.append({"tool": tool_name, "grade": grade, "bonus": bonus})
 
     return total_bonus, breakdown
 
