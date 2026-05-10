@@ -964,7 +964,7 @@ def get_player(pid):
                               "war": round(b["war"], 1),
                               "value": b["market_value"],
                               "salary": b["salary"],
-                              "surplus": b["market_value"] - b["salary"]}
+                              "surplus": b["surplus"]}
                              for b in pv["breakdown"]],
                     "total": {"base": opt_total},
                     "flags": [f"ETA: {pv['years_to_mlb']:.1f} yrs"],
