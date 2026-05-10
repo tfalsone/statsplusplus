@@ -461,7 +461,7 @@
       </tr>
       <tr>
         <td></td><td></td><td></td><td></td>
-        <td style="text-align:right; color:var(--text-dim)">Adjusted</td>
+        <td style="text-align:right; color:var(--text-dim)">Adjusted <span class="info-tip" title="Risk-adjusted trade value. Raw surplus discounted for: development probability (age vs level), certainty (how close to ceiling), and positional scarcity. Represents what this prospect is worth in a trade given the chance they don't fully develop.">ⓘ</span></td>
         <td class="{% if p.surplus_detail.total.base > 0 %}pos{% elif p.surplus_detail.total.base < 0 %}neg{% endif %}" style="font-weight:600">{{ p.surplus_detail.total.base|money }}</td>
       </tr>
       {% else %}
