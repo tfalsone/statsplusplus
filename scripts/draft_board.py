@@ -39,7 +39,10 @@ _BOARD_SQL = """
            r.cntct, r.gap, r.pow, r.eye, r.speed,
            r.pot_stf, r.pot_mov, r.pot_ctrl,
            r.stf, r.mov, r.ctrl,
-           r.ofr, r.ifr, r.c_frm, r.acc, r.pot
+           r.ofr, r.ifr, r.c_frm, r.acc, r.pot,
+           r.fst, r.snk, r.crv, r.sld, r.chg, r.splt, r.cutt, r.cir_chg, r.scr, r.frk, r.kncrv, r.knbl,
+           r.pot_fst, r.pot_snk, r.pot_crv, r.pot_sld, r.pot_chg, r.pot_splt, r.pot_cutt, r.pot_cir_chg, r.pot_scr, r.pot_frk, r.pot_kncrv, r.pot_knbl,
+           p.level, r.wrk_ethic, r.int_, r.lead
     FROM prospect_fv pf
     JOIN players p ON pf.player_id = p.player_id
     JOIN latest_ratings r ON r.player_id = p.player_id
@@ -109,6 +112,65 @@ def load_board():
 # Valuation — scoring and ranking logic
 # ═══════════════════════════════════════════════════════════════════════════
 
+_PITCH_KEYS = ["fst", "snk", "crv", "sld", "chg", "splt", "cutt", "cir_chg", "scr", "frk", "kncrv", "knbl"]
+
+# Normal age for a level — pitchers at or above this age should have developed their arsenal
+# Level 0 = amateur/draft pool: use 21 as threshold (college juniors should have 3 pitches)
+_LEVEL_NORM_AGE = {"0": 21, "1": 27, "2": 26, "3": 24, "4": 22, "5": 21, "6": 19, "7": 18, "8": 18}
+
+
+def _arsenal_adjustment(r):
+    """Arsenal quality adjustment for SP. Returns bonus (positive) or penalty (negative).
+
+    Evaluates two dimensions:
+    1. Depth risk (thin arsenal penalty): age-adjusted, penalizes older pitchers
+       who haven't developed their 3rd pitch.
+    2. Elite arsenal bonus: rewards pitchers with 4+ plus pitches (pot >= 60)
+       or exceptionally deep arsenals (3+ pitches currently developed).
+
+    Returns a float in roughly [-2, +2] range.
+    """
+    age = r["age"] or 0
+    try:
+        level = str(r["level"] or "6")
+    except (KeyError, IndexError):
+        level = "6"
+    norm_age = _LEVEL_NORM_AGE.get(level, 21)
+
+    # Gather pitch data
+    pitches = []
+    for k in _PITCH_KEYS:
+        cur = r[k] or 0 if k in r.keys() else 0
+        pot = r[f"pot_{k}"] or 0 if f"pot_{k}" in r.keys() else 0
+        if pot >= 30:
+            pitches.append((cur, pot))
+
+    pitches.sort(key=lambda x: -x[1])  # sort by potential descending
+
+    pot_45 = sum(1 for _, p in pitches if p >= 45)
+    pot_60 = sum(1 for _, p in pitches if p >= 60)
+    cur_35 = sum(1 for c, _ in pitches if c >= 35)
+
+    adjustment = 0.0
+
+    # === PENALTY: Thin arsenal (age-adjusted) ===
+    # Only applies at/above norm age with underdeveloped pitches
+    if age >= norm_age and pot_45 >= 3 and cur_35 < 3:
+        age_over = age - norm_age
+        adjustment -= 1 + min(1, age_over * 0.5)  # -1 to -2
+
+    # === BONUS: Elite arsenal depth ===
+    if pot_60 >= 4:
+        adjustment += 0.5  # Elite depth — 4+ plus pitches
+
+    # Developed depth bonus: 3+ pitches already at 35+ current (for older pitchers)
+    # This rewards pitchers who've PROVEN their arsenal, not just projected it
+    if age >= norm_age and cur_35 >= 4:
+        adjustment += 0.5  # Deep and developed
+
+    return adjustment
+
+
 def draft_value(r, needs=None, pick_round=None):
     """Compute draft value score for a prospect row.
 
@@ -129,8 +191,36 @@ def draft_value(r, needs=None, pick_round=None):
         val -= 3
     elif risk == "High":
         val -= 1
+    # Contact floor penalty: power-dependent hitters with contact ceiling < 50
+    # AND eye ceiling < 70 (no plate discipline to compensate)
+    if r["bucket"] not in ("SP", "RP") and (r["pot_cntct"] or 0) < 50 and (r["pot_pow"] or 0) >= 80 and (r["pot_eye"] or 0) < 70:
+        val -= 2
+    # Control floor penalty: SP with control ceiling < 45 (reliever risk)
+    if r["bucket"] == "SP" and (r["pot_ctrl"] or 0) < 45:
+        val -= 3
+    # Thin arsenal penalty: SP whose 3rd pitch is underdeveloped relative to age.
+    # An 18yo with a raw 3rd pitch is normal; a 21+ yo with the same is a red flag.
+    # Also rewards elite arsenal depth (4+ plus pitches).
+    if r["bucket"] == "SP":
+        val += _arsenal_adjustment(r)
     if needs and pick_round and pick_round >= 3:
         val += needs.get(r["bucket"], 0)
+    # Personality: Work Ethic and Intelligence affect development probability
+    we = r["wrk_ethic"] if "wrk_ethic" in r.keys() else "N"
+    intel = r["int_"] if "int_" in r.keys() else "N"
+    if we == "H":
+        val += 0.5
+    elif we == "L":
+        val -= 0.5
+    if intel == "H":
+        val += 0.25
+    elif intel == "L":
+        val -= 0.25
+    lead = r["lead"] if "lead" in r.keys() else "N"
+    if lead == "H":
+        val += 0.15
+    elif lead == "L":
+        val -= 0.15
     return val
 
 
@@ -220,6 +310,110 @@ def compute_org_needs(conn):
 # Strategy — list building and simulation
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _threshold_fixed(breakpoints):
+    """Return a threshold function from round-based breakpoints.
+
+    breakpoints: list of (max_round, threshold) tuples, evaluated in order.
+    Example: [(2, 40), (4, 50), (None, 75)] means Rd1-2=40, Rd3-4=50, Rd5+=75.
+    """
+    def fn(pos, num_teams):
+        rd = (pos - 1) // num_teams + 1
+        for max_rd, thresh in breakpoints:
+            if max_rd is None or rd <= max_rd:
+                return thresh
+        return breakpoints[-1][1]
+    return fn
+
+
+def _threshold_sqrt(base=30, scale=6):
+    """Threshold grows as base + scale * sqrt(pos). Widens smoothly with draft position."""
+    import math
+    def fn(pos, num_teams):
+        return base + scale * math.sqrt(pos)
+    return fn
+
+
+# Default threshold strategy for pick command
+PICK_THRESHOLDS = _threshold_sqrt(30, 6)
+
+
+def _surplus_weight(pos):
+    """Position-scaled surplus weight. Heavier early (buy upside), fades later."""
+    import math
+    return 0.02 + 0.06 / math.sqrt(pos)
+
+
+def build_pick_list(rows, adp, needs, num_teams, limit, threshold_fn=None,
+                    pick_pos=None):
+    """Build a ranked list for pre-draft submission using two-list merge.
+
+    List A: Our evaluation (draft_value + position-scaled surplus) — who we want.
+    List B: OOTP evaluation (pot_rank from ADP) — when others will take them.
+
+    At each slot, take the best player from List A unless they're far enough
+    down List B to survive until our next pick (determined by threshold_fn).
+
+    Surplus weight scales with position: heavier early in the draft (favoring
+    youth and upside), fading later where talent alone matters more.
+
+    threshold_fn(pos, num_teams) -> int: how many picks ahead on List B a player
+    can be before we grab them. If None, uses PICK_THRESHOLDS default.
+    """
+    if threshold_fn is None:
+        threshold_fn = PICK_THRESHOLDS
+
+    list_a = sorted(rows, key=lambda r: draft_value(r), reverse=True)
+    available = set(r["player_id"] for r in list_a)
+    ordered = []
+
+    # Pre-compute base scores (draft_value) — surplus weight varies by pos
+    # but changes slowly, so we re-sort only when the weight shifts meaningfully
+    dv_cache = {r["player_id"]: draft_value(r) for r in list_a}
+    surplus_cache = {r["player_id"]: r["prospect_surplus"] / 1e6 for r in list_a}
+    pot_rank_cache = {r["player_id"]: adp.get(r["player_id"], {}).get("pot_rank", 9999) for r in list_a}
+    row_by_id = {r["player_id"]: r for r in list_a}
+
+    # Build scored list once, re-sort periodically as surplus weight changes
+    last_sw = None
+    scored_list = None
+
+    for pos in range(1, limit + 1):
+        if not available:
+            break
+
+        threshold = threshold_fn(pos, num_teams)
+        sw = _surplus_weight(pos)
+
+        # Re-sort only when surplus weight changes by >10% (roughly every few positions)
+        if scored_list is None or last_sw is None or abs(sw - last_sw) / last_sw > 0.1:
+            scored_list = sorted(
+                available,
+                key=lambda pid: dv_cache[pid] + surplus_cache[pid] * sw,
+                reverse=True
+            )
+            last_sw = sw
+
+        chosen_id = None
+        for pid in scored_list:
+            if pid not in available:
+                continue
+            if pot_rank_cache[pid] <= pos + threshold:
+                chosen_id = pid
+                break
+
+        if chosen_id is None:
+            for pid in scored_list:
+                if pid in available:
+                    chosen_id = pid
+                    break
+
+        if chosen_id:
+            ordered.append(row_by_id[chosen_id])
+            available.discard(chosen_id)
+
+    return ordered
+
+
 def build_urgency_list(rows, adp, needs, num_teams, limit):
     """Build an urgency-greedy ordered list for auto-draft.
 
@@ -274,45 +468,56 @@ def build_urgency_list(rows, adp, needs, num_teams, limit):
 def simulate_draft(rows, adp, needs, num_teams, pick_pos, num_rounds, seed=None):
     """Simulate a draft. Returns (our_picks, other_picks_by_round).
 
+    Other teams pick by POT rank with randomization (weighted top-8).
+    We pick by taking the top remaining player from our pre-built pick list,
+    which uses the same two-list merge logic as the `pick` command.
+
     our_picks: list of (round, slot, row)
     other_picks_by_round: list of lists of (slot, row, is_ours)
     """
     import random
     rng = random.Random(seed)
 
+    # Pre-generate our ranked list (full pool, same algorithm as pick command)
+    our_list = build_pick_list(rows, adp, needs, num_teams, len(rows))
+    our_list_ids = [r["player_id"] for r in our_list]
+
     pot_board = sorted(rows, key=lambda r: (-(r["pot"] or 0), r["age"] or 99))
-    our_pick_positions = [pick_pos + (rd * num_teams) for rd in range(num_rounds)]
 
     available = set(r["player_id"] for r in rows)
     our_picks = []
     other_picks_by_round = []
 
     for rd in range(1, num_rounds + 1):
-        next_pick_overall = our_pick_positions[rd] if rd < num_rounds else 9999
         round_picks = []
 
         for slot in range(1, num_teams + 1):
             if not available:
                 break
             if slot == pick_pos:
-                avail_rows = [r for r in rows if r["player_id"] in available]
-                now_or_never = [r for r in avail_rows
-                                if adp.get(r["player_id"], {}).get("pot_rank", 9999) <= next_pick_overall]
-                can_wait = [r for r in avail_rows
-                            if adp.get(r["player_id"], {}).get("pot_rank", 9999) > next_pick_overall]
-
-                if now_or_never:
-                    chosen = max(now_or_never, key=lambda r: draft_value(r, needs, rd))
-                else:
-                    chosen = max(can_wait, key=lambda r: draft_value(r, needs, rd))
+                # Take the top remaining player from our pre-built list
+                chosen = None
+                for pid in our_list_ids:
+                    if pid in available:
+                        chosen = next(r for r in our_list if r["player_id"] == pid)
+                        break
+                if chosen is None:
+                    break
 
                 our_picks.append((rd, slot, chosen))
                 available.discard(chosen["player_id"])
                 round_picks.append((slot, chosen, True))
             else:
-                candidates = [r for r in pot_board if r["player_id"] in available][:8]
+                overall = (rd - 1) * num_teams + slot
+                # Window size scales with draft position: early picks consider
+                # fewer players (consensus), later picks cast a wider net
+                window = int(8 + overall * 0.15)
+                candidates = [r for r in pot_board if r["player_id"] in available][:window]
                 if candidates:
-                    weights = [35, 25, 15, 10, 6, 4, 3, 2][:len(candidates)]
+                    # Randomness scales with pick number: early picks are more
+                    # predictable, later picks get chaotic.
+                    exp = max(1.0, 2.8 - overall * 0.018)
+                    weights = [1.0 / (i + 1) ** exp for i in range(len(candidates))]
                     pick = rng.choices(candidates, weights=weights, k=1)[0]
                     available.discard(pick["player_id"])
                     round_picks.append((slot, pick, False))
@@ -334,6 +539,8 @@ def _flags(r):
         flags.append("EXTREME")
     if r["bucket"] in ("SP", "RP") and (r["pot_ctrl"] or 0) < 45:
         flags.append("ctl<45")
+    if r["bucket"] == "SP" and _arsenal_adjustment(r) < 0:
+        flags.append("thin")
     return " ".join(flags)
 
 
@@ -476,7 +683,7 @@ def cmd_available(args):
 
 def cmd_pick(args):
     rows, adp, needs, num_teams, conn = load_board()
-    ordered = build_urgency_list(rows, adp, needs, num_teams, args.n)
+    ordered = build_pick_list(rows, adp, needs, num_teams, args.n)
 
     print(f"Pre-draft ranked list — Top {args.n}\n")
     _print_board(ordered, limit=args.n, adp=adp)
@@ -492,14 +699,14 @@ def cmd_pick(args):
 def cmd_upload(args):
     rows, adp, needs, num_teams, conn = load_board()
     limit = min(args.top or 500, 500)
-    ordered = build_urgency_list(rows, adp, needs, num_teams, limit)
+    ordered = build_pick_list(rows, adp, needs, num_teams, limit)
 
     ranked_ids = [str(r["player_id"]) for r in ordered]
     out_path = get_league_dir() / "tmp" / "draft_upload.txt"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(ranked_ids) + "\n")
     print(f"Wrote {len(ranked_ids)} player IDs to {out_path}")
-    print(f"Strategy: urgency-greedy ordering ({num_teams} teams)")
+    print(f"Strategy: two-list merge, sqrt threshold ({num_teams} teams)")
 
     if needs:
         print(f"Org needs (Rd3+): {', '.join(f'{b}(+{v})' for b, v in sorted(needs.items(), key=lambda x: -x[1]))}")

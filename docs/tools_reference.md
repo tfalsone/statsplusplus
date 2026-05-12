@@ -201,12 +201,13 @@ python3 scripts/draft_board.py compare "Name1" "Name2"    # Side-by-side compari
 python3 scripts/draft_board.py sim PICK [--rounds 7] [--seed S]  # Draft simulation
 ```
 
-Draft value formula: `FV + (ceiling-55)×0.2 + RP(-5) + Acc(L:-2,VL:-4) + risk(Extreme:-3,High:-1) + needs(Rd3+)`.
-ADP computed from POT rank. Sim uses randomized other-team picks (weighted top 8 by POT).
-Upload list uses urgency-greedy ordering with fading thresholds (Rd1-2: 10, Rd3-4: 5, Rd5+: BPA).
+Draft value formula: `FV + (ceiling-55)×0.2 + RP(-5) + Acc(L:-2,VL:-4) + risk(Extreme:-3,High:-1) + contact(-2 if cnt<50,pow≥80,eye<70) + ctl<45(-3) + arsenal(-2 to +1) + personality(±0.9) + needs(Rd3+)`.
+ADP computed from POT rank. `pick` command uses two-list merge: List A (our draft_value + position-scaled surplus weight `0.02+0.06/√pos`) vs List B (POT rank),
+deferring sleepers beyond survival threshold (default: `30 + 6√pos`, configurable via `_threshold_sqrt` or `_threshold_fixed`).
+Upload list uses same algorithm. Sim uses randomized other-team picks (window `8+pick×0.15`, exponent `max(1.0, 2.8 - pick×0.018)`).
 
 Importable: `load_board()`, `draft_value()`, `compute_adp()`, `compute_org_needs()`,
-`build_urgency_list()`, `simulate_draft()`.
+`build_pick_list()`, `build_urgency_list()`, `simulate_draft()`.
 
 ### `scripts/refresh.py`
 

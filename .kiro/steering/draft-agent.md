@@ -65,22 +65,110 @@ age, position, accuracy, and full tool breakdown.
 
 ---
 
-## Draft Value Sort
-
-The `pick` command sorts by draft value:
+## Draft Value Formula
 
 ```
-draft_value = FV + (true_ceiling - 55) × 0.2 + ctl_penalty
+draft_value = FV
+            + (true_ceiling - 55) × 0.2
+            + ctl_penalty
+            + contact_penalty
+            + arsenal_adjustment
+            + risk_penalty
+            + acc_penalty
+            + rp_discount
+            + personality_adjustment
+            + needs_bonus
 ```
 
-- **FV** is the dominant factor (5-point FV gap = 5 points)
-- **Ceiling bonus** rewards upside within the same FV tier (~2-3 points spread)
-- **Control penalty** (-3) for SP with control ceiling < 45 (reliever risk)
-- **No accuracy penalty** — Acc=L players compete on tools alone; scouting
-  reports inform manual adjustments to the final list
+### Component Details
 
-This means the tool sorts purely on talent ceiling. The user applies judgment
-about development probability (Acc rating) when curating the final submission.
+| Component | Value | Condition |
+|-----------|-------|-----------|
+| **FV** | 45-65 | Dominant factor. 5-point gap = 5 points. |
+| **Ceiling bonus** | ~0-3 pts | `(true_ceiling - 55) × 0.2`. Rewards upside within tier. |
+| **RP discount** | -5 | `bucket == "RP"` |
+| **Acc penalty** | -2 / -4 | Acc=L / Acc=VL |
+| **Risk penalty** | -3 / -1 | Extreme / High risk |
+| **Control penalty** | -3 | SP with `pot_ctrl < 45` (reliever risk) |
+| **Contact penalty** | -2 | Hitter with `pot_cntct < 50`, `pot_pow >= 80`, `pot_eye < 70` |
+| **Arsenal adjustment** | -2 to +1 | See Arsenal Quality section below |
+| **Personality** | -0.9 to +0.9 | WE: ±0.5, INT: ±0.25, Lead: ±0.15 |
+| **Needs bonus** | +1/+2 | Org need at position, Rd3+ only |
+
+---
+
+## Two-List Merge (List Building)
+
+The `pick` and `upload` commands use a two-list merge to maximize total draft value:
+
+**List A (Our Evaluation):** Sorted by `draft_value` + position-scaled surplus weight.
+
+**Surplus weight:** `w(pos) = 0.02 + 0.06 / √pos`. Heavier early in the draft
+(favoring youth, positional scarcity, years of control), fading later where
+talent alone matters. At pos 1: +2.4pts per $30M surplus. At pos 100: +0.8pts.
+Never crosses FV tier boundaries.
+
+**List B (OOTP Evaluation):** Sorted by POT rank (what other managers see).
+
+**Merge logic:** At each pick slot, take the best player from List A whose
+List B rank is within the survival threshold. If a player is far enough down
+List B that they'll survive to a later pick, defer them.
+
+**Survival threshold** — `30 + 6 × √pos`:
+- Pick 1: ~36 picks
+- Pick 34 (end of Rd1): ~65 picks
+- Pick 100 (Rd3): ~90 picks
+- Pick 170 (Rd5): ~108 picks
+
+Alternative fixed breakpoints available via `_threshold_fixed([(2, 40), (4, 50), (None, 75)])`.
+
+---
+
+## Arsenal Quality (SP only)
+
+Evaluates pitcher arsenal depth and development relative to age.
+
+**Bonus (elite depth):**
+- 4+ pitches with potential ≥ 60: +0.5
+- 4+ pitches currently ≥ 35 at age 21+ (proven depth): +0.5
+
+**Penalty (thin arsenal, age-adjusted):**
+- SP at/above norm age (21 for draft pool) with 3+ potential pitches (≥45)
+  but fewer than 3 currently developed (≥35):
+  - At norm age: -1
+  - 1 year over: -1.5
+  - 2+ years over: -2
+
+**Young pitchers (< 21 for draft pool) are never penalized** — rawness is expected.
+They still receive the elite depth bonus if they have 4+ plus pitches.
+
+Flag: `thin` displayed for penalized pitchers.
+
+---
+
+## Personality Adjustments
+
+| Trait | H | L | Rationale |
+|-------|---|---|-----------|
+| Work Ethic | +0.50 | -0.50 | Development speed, slump resistance |
+| Intelligence | +0.25 | -0.25 | Development benefit, in-game decisions |
+| Leadership | +0.15 | -0.15 | Clubhouse effect on teammates |
+
+Max combined swing: ±0.90. Tiebreaker-level influence.
+
+---
+
+## Draft Simulation
+
+**CLI:** `python3 scripts/draft_board.py sim PICK [--rounds N] [--seed S]`
+
+Simulates the draft with:
+- **Other teams:** Pick from a candidate window that scales with draft position
+  (`8 + pick × 0.15` players). Weighted by `1/(rank)^exp` where
+  exponent `max(1.0, 2.8 - pick × 0.018)` — early picks are ~81% predictable,
+  late rounds approach random across a wide pool.
+- **Our picks:** Top remaining player from the pre-built pick list
+  (same algorithm as `pick` command).
 
 ---
 
@@ -106,7 +194,7 @@ the SP vs RP outcome is uncertain. Scouting can clarify command trajectory.
 | Source | What it provides |
 |--------|-----------------|
 | `prospect_fv` table | FV grade, risk label, bucket, surplus |
-| `latest_ratings` view | Full tool ratings (cur/pot), defense, speed, character |
+| `latest_ratings` view | Full tool ratings (cur/pot), defense, speed, personality, pitches |
 | `players` table | Age, level, team assignment, game position |
 | `config/draft_pool.json` | Uploaded pool — exact player_ids eligible |
 | `config/state.json` | `my_team_id` — the team we're drafting for |
@@ -125,62 +213,39 @@ the SP vs RP outcome is uncertain. Scouting can clarify command trajectory.
 2. **Ceiling (true_ceiling)** — Maximum outcome. The primary tiebreaker
    within FV tiers. In early rounds, ceiling > floor.
 
-3. **Risk Label** — Low/Medium/High/Extreme. Informational — does not
-   affect sort but should be noted in analysis.
+3. **Surplus** — Total economic value over control period. Captures age,
+   positional scarcity, and development timeline. Position-scaled weight
+   in list building (heavier early, fades later).
 
-4. **Accuracy (Acc)** — Development probability. Not penalized in sort
-   but flagged for user awareness:
-   - VH = very high confidence
-   - A = normal development
-   - H = high accuracy
-   - L = low accuracy — flag prominently, recommend scouting
+4. **Arsenal Quality (SP)** — Depth and development of pitch repertoire.
+   Elite arsenals (4+ plus pitches) get a bonus. Thin arsenals (underdeveloped
+   3rd pitch at age 21+) get penalized.
 
-5. **Positional Value** — C > SS > CF > 2B/3B > COF > 1B
+5. **Personality** — WE/INT/Lead. Development probability modifiers.
 
-6. **Organizational Need** — Tiebreaker only. Never reach for need.
+6. **Risk/Accuracy** — Penalized in sort. Extreme -3, High -1, Acc=L -2.
 
-### Red Flags (flag but don't auto-penalize)
+7. **Positional Value** — C > SS > CF > 2B/3B > COF > 1B (via surplus).
 
-- **Acc=L** — Flag with `Acc=L!` in output. User decides.
-- **Extreme risk** — Flag with `EXTREME`. Very high bust probability.
-- **SP with control < 45** — Flag with `ctl<45`. Penalized in sort (-3).
+8. **Organizational Need** — Tiebreaker only (Rd3+). Never reach for need.
+
+### Red Flags (flagged in output)
+
+- **Acc=L** — `Acc=L!`. Low scouting confidence.
+- **Extreme risk** — `EXTREME`. Very high bust probability.
+- **SP with control < 45** — `ctl<45`. Penalized -3.
+- **Thin arsenal** — `thin`. SP with underdeveloped pitches for age.
 - **1B/DH-only profiles** below FV 60 — Limited positional value.
-- **Age 23+** — Limited development runway.
+- **WE=L + INT=L** — Development red flag (-0.75 combined).
 
 ### Green Flags
 
 - **Acc=VH** — Elite development confidence
+- **WE=H** — Strong development profile (+0.5)
+- **4+ plus pitches** — Elite arsenal depth (+0.5)
 - **Premium position + elite defense** — High floor
 - **Multiple 70+ potential tools** — Star upside
-- **Acc=A + WE=H** — Strong character profile
-
----
-
-## Queries
-
-### Load draft pool with FV grades
-```sql
-SELECT pf.fv, pf.fv_str, pf.risk, pf.bucket, pf.prospect_surplus,
-       p.name, p.age, p.player_id,
-       r.composite_score, r.true_ceiling, r.offensive_grade,
-       r.pot_cntct, r.pot_gap, r.pot_pow, r.pot_eye,
-       r.cntct, r.gap, r.pow, r.eye, r.speed,
-       r.pot_stf, r.pot_mov, r.pot_ctrl,
-       r.stf, r.mov, r.ctrl,
-       r.ofr, r.ifr, r.c_frm, r.acc
-FROM prospect_fv pf
-JOIN players p ON pf.player_id = p.player_id
-JOIN latest_ratings r ON r.player_id = p.player_id
-WHERE pf.player_id IN (<pool_ids>)
-ORDER BY pf.fv DESC, pf.prospect_surplus DESC
-```
-
-### Org depth for need context
-```python
-sys.path.insert(0, 'web')
-from team_queries import get_draft_org_depth
-depth = get_draft_org_depth(my_team_id)
-```
+- **Age ≤ 18 with high ceiling** — Maximum development runway + surplus
 
 ---
 

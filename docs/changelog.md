@@ -4,6 +4,93 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 58 (2026-05-12)
+
+### Draft Board: Two-List Merge Algorithm + Valuation Enhancements
+
+**Algorithm overhaul:** Replaced the `pick` and `upload` commands' ranking logic with a
+two-list merge approach that maximizes total draft value across all rounds.
+
+- **List A** (our evaluation): `draft_value` + position-scaled surplus weight.
+- **List B** (OOTP evaluation): POT rank — what other managers see.
+- **Merge:** At each slot, take the best from List A within the survival threshold
+  (`30 + 6√pos`). Sleepers deferred to the slot where they're at risk.
+- **Surplus weight:** `0.02 + 0.06/√pos` — heavier early (favors youth/upside), fades later.
+- **Sim updated:** Other teams pick with position-scaled randomness (`exp = max(1.0, 2.8 - pick×0.012)`).
+  Our picks use the pre-built pick list.
+- **Web UI and CLI upload** now use `build_pick_list` (same as `pick` command).
+
+**New draft_value penalties/bonuses:**
+
+| Component | Value | Condition |
+|-----------|-------|-----------|
+| Control penalty | -3 | SP with pot_ctrl < 45 |
+| Contact penalty | -2 | Hitter: cnt<50, pow≥80, eye<70 |
+| Arsenal (bonus) | +0.5 | SP with 4+ pitches pot≥60; or 4+ cur≥35 at age 21+ |
+| Arsenal (thin) | -1 to -2 | SP at/above norm age, <3 pitches cur≥35 (age-scaled) |
+| Personality | ±0.9 max | WE: ±0.5, INT: ±0.25, Lead: ±0.15 |
+
+**Young pitchers (< 21) never penalized for thin arsenal** — rawness expected.
+
+**Threshold functions:** `_threshold_sqrt(base, scale)` and `_threshold_fixed(breakpoints)`
+provide configurable survival logic. Default is sqrt.
+
+**`build_urgency_list` preserved** as legacy; all active paths now use `build_pick_list`.
+
+**Performance:** `build_pick_list` optimized from O(n²) to O(n log n) via cached scores
+and periodic re-sort (5.15s → 0.03s for full 862-player pool). Enables 100-sim analysis
+in seconds.
+
+---
+
+## Session 57 (2026-05-10)
+
+### Evaluation Model Audit
+
+Comprehensive review of the non-linear model changes from Session 56. Identified overfitting risks, redundancies, and dead code. Two changes made:
+
+**Interaction terms disabled (dead code removal):**
+- `contact_eye`, `power_eye` (hitters) and `stuff_mov` (pitchers) were never active — `tool_weights.json` lacked these keys, so the engine skipped them (weight=0 guard).
+- Proper multivariate OLS confirms they add no explanatory power beyond the linear model: residual correlation with WAR is ~0.01 across all positions (N=520 hitters, N=871 pitchers).
+- The product features are highly collinear with their components (r=0.85-0.93) — they're proxies for "both tools are good," not true synergies.
+- The tool transform (1.3× above 60, 1.5× below 40) already captures the non-linearity these were meant to address.
+- Disabled in both `evaluation_engine.py` (application) and `calibrate.py` (regression features).
+
+**Carrying tool bonus on ceiling disabled:**
+- Was adding +5 to +31 to `ceiling_score` for prospects with elite potential tools.
+- Purely cosmetic — `ceiling_score` doesn't feed into FV grades, surplus, or draft rankings (all use `true_ceiling`).
+- `true_ceiling` (without bonus) actually predicts developed composite better than `ceiling_score` (r=0.912 vs 0.897).
+- Redundant with tool transform (1.3× above 60) + peak tool bonus (capped +10) already in `compute_ceiling`.
+- Was already disabled for composite in Session 56; now consistent across both.
+
+**No impact on model outputs:** Composite scores, FV grades, and surplus values are identical before and after. The interaction terms were never executing, and the ceiling bonus only affected display.
+
+### Low-Hanging Fruit
+
+- **Continuous FV for surplus interpolation** — `calc_fv_v2` now exposes `_fv_continuous` on the player dict (pre-rounding value). `fv_calc.py` passes this to `prospect_surplus` instead of the rounded 5-point tier. `peak_war()` already interpolates, so surplus now differentiates within FV tiers (e.g., FV 66.4 gets ~$2-3M more surplus than FV 65.0).
+- **Draft board flag badges** — Acc=L (⚠ orange) and Extreme risk (☠ red) badges now display inline next to player names in the draft board table. Visible at a glance without reading the Acc column.
+- **Snapshot test fragility** — `test_prospect_value.py` now stubs `dollars_per_war()` and `league_minimum()` to fixed values via `unittest.mock.patch`. Tests are deterministic regardless of `league_averages.json` changes. Added $/WAR scaling test.
+- **1-20 ratings scale** — `norm()` and `norm_continuous()` now handle `"1-20"` scale (linear: 1→20, 20→80). Auto-detection: max rating ≤20 → 1-20. Added to settings and onboarding dropdowns.
+- **Minor league notable filter tuning** — "Young for level" criterion now requires ceiling ≥ 45 in addition to age. Prevents every teenager at Intl/Rookie from qualifying. Intl: 9.7→5.9/team, Rookie: 6.2→4.7/team.
+
+### Draft Board Fixes
+
+- **College/HS filter** — Level filter was returning zero results because all amateur players were at level 0 (not 10/11). Now uses age-based detection: ≤18 = HS, 19+ = College.
+- **COF surplus in needs panel** — Corner outfielders (bucket "COF") weren't mapping to the "LF/RF" display key because `display_pos("COF")` returns "OF". Now uses raw bucket for the mapping.
+- **Position mismatch arrow** — Was using a separate defensive threshold check that disagreed with `assign_bucket`. Now compares listed position against bucket directly. Shows "LF/RF" instead of "OF" for corner outfielders. Suppresses arrow when listed pos matches bucket (no more "SS → SS").
+- **Detail pane crash** — `/api/draft-detail/` was returning 500 for all players due to `_cfg()` typo (should be `_cfg`). Also: players with pitcher role but hitter tools (e.g., role=RP bucketed as 3B) now correctly show fielding/positions instead of pitcher template.
+- **Defense display on player card** — Position ratings were filtered on raw 1-100 values before normalizing, hiding valid positions. Now normalizes first. Added `def_tools` (IF Range/Error/Arm, OF Range/Error/Arm, C tools) filtered to only show tools relevant to the player's eligible positions.
+
+### Other Findings (no action needed)
+
+- **Triple coverage (transform + floor + compensation):** Small overlap at 30-35 range, conceptually justified, <1 pt impact. Leave as-is.
+- **Dynamic share reallocation:** <1 composite point impact, self-correcting via calibration. Leave as-is.
+- **Arsenal bonus:** Redundant with stuff (r≈0 after controlling for core tools), but low impact (~0-2.5 pts). Flag for future cleanup.
+- **Platoon penalty:** Never triggers for MLB pitchers (0 of 482). Harmless dead code.
+- **RP model:** Stable (CV<0.05 across years). Movement dominance (0.55) is a real OOTP effect, not noise. Min-weight floor appropriate.
+
+---
+
 ## Session 56 (2026-05-09)
 
 ### FV Distribution Calibration

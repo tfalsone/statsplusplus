@@ -456,6 +456,23 @@ def api_draft_detail(pid):
     is_pitcher = p["role"] in (11, 12, 13)
     pos_str = {11:"SP",12:"RP",13:"CL"}.get(p["role"]) or {1:'P',2:'C',3:'1B',4:'2B',5:'3B',6:'SS',7:'LF',8:'CF',9:'RF'}.get(p["pos"],"?")
 
+    # For draft prospects, use assign_bucket to match the board's evaluation.
+    # A player with role=RP but hitter tools gets evaluated as a hitter.
+    from player_utils import assign_bucket
+    from league_config import config as _cfg
+    _p = dict(r)
+    _p["pos"] = str(p["pos"]); _p["role"] = p["role"]
+    _p["_role"] = {str(k): v for k, v in _cfg.role_map.items()}.get(str(p["role"] or 0), "position_player")
+    _p["Pos"] = str(p["pos"])
+    bucket = assign_bucket(_p)
+    if bucket in ("SP", "RP"):
+        is_pitcher = True
+        pos_str = bucket
+    else:
+        is_pitcher = False
+        if pos_str == "P":
+            pos_str = {2:'C',3:'1B',4:'2B',5:'3B',6:'SS',7:'LF',8:'CF',9:'RF'}.get(p["pos"], bucket)
+
     from player_utils import height_str as _ht
     out = {
         "pid": pid, "name": p["name"], "age": p["age"], "pos": pos_str,
@@ -515,8 +532,8 @@ def api_draft_detail(pid):
                            ("ss","SS"),("lf","LF"),("cf","CF"),("rf","RF")]:
             cur = n(r.get(col) or 0)
             pot = n(r.get("pot_" + col) or 0)
-            if (cur and cur > 20) or (pot and pot > 20):
-                pos_grades[label] = [cur, pot]
+            if (cur and cur > 20) or (pot and pot > 20) or label == pos_str:
+                pos_grades[label] = [cur or 20, pot or 20]
         out["positions"] = pos_grades
 
     return jsonify(out)
@@ -626,11 +643,11 @@ def api_draft_upload_list():
     limit = data.get("top", 500)
 
     try:
-        from draft_board import load_board, build_urgency_list, compute_adp
+        from draft_board import load_board, build_pick_list, compute_adp
         from league_context import get_league_dir
 
         rows, adp, needs, num_teams, conn = load_board()
-        ordered = build_urgency_list(rows, adp, needs, num_teams, min(limit, 500))
+        ordered = build_pick_list(rows, adp, needs, num_teams, min(limit, 500))
         ranked_ids = [str(r["player_id"]) for r in ordered]
 
         out_path = get_league_dir() / "tmp" / "draft_upload.txt"
@@ -1091,11 +1108,17 @@ def onboard_step3():
         teams = sorted(
             [(r[0], api_teams.get(r[0], f"Team {r[0]}")) for r in mlb_ids if r[0] in api_teams],
             key=lambda x: x[1])
-        # Auto-detect ratings scale: if any rating exceeds 80, it's 1-100
-        has_100 = conn.execute(
-            "SELECT 1 FROM latest_ratings WHERE ovr > 80 OR pot > 80 LIMIT 1"
+        # Auto-detect ratings scale: >80 = 1-100, ≤20 = 1-20, else 20-80
+        max_rating = conn.execute(
+            "SELECT MAX(MAX(ovr, pot)) FROM latest_ratings"
         ).fetchone()
-        detected_scale = "1-100" if has_100 else "20-80"
+        max_val = max_rating[0] if max_rating and max_rating[0] else 0
+        if max_val > 80:
+            detected_scale = "1-100"
+        elif max_val <= 20:
+            detected_scale = "1-20"
+        else:
+            detected_scale = "20-80"
         conn.close()
         # Load auto-detected structure for the editor
         settings_path = league_dir / "config" / "league_settings.json"
