@@ -46,7 +46,7 @@
         </select>
         <label>Ratings Scale</label>
         <select name="ratings_scale" style="width:200px">
-          {% for opt in ["1-100", "20-80"] %}
+          {% for opt in ["1-100", "20-80", "1-20"] %}
           <option value="{{ opt }}"{% if cfg.settings.get("ratings_scale", "1-100") == opt %} selected{% endif %}>{{ opt }}</option>
           {% endfor %}
         </select>

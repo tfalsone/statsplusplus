@@ -246,8 +246,9 @@ def run():
                     p["_bucket"] = bucket
                 else:
                     raw_fv = fv_base
+                fv_continuous = p.get("_fv_continuous", raw_fv)
                 p_surplus = _prospect_surplus_opt(
-                    raw_fv, age, "MLB", bucket,
+                    fv_continuous, age, "MLB", bucket,
                     ovr=p.get("Ovr"), pot=p.get("Pot"), def_rating=def_rating,
                     offensive_grade=p.get("offensive_grade"),
                     offensive_ceiling=p.get("offensive_ceiling"),
@@ -277,9 +278,10 @@ def run():
                 p["_bucket"] = bucket
             else:
                 raw_fv = fv_base
+            fv_continuous = p.get("_fv_continuous", raw_fv)
 
             surplus = _prospect_surplus_opt(
-                raw_fv, age, level_label, bucket,
+                fv_continuous, age, level_label, bucket,
                 ovr=p.get("Ovr"), pot=p.get("Pot"), def_rating=def_rating,
                 offensive_grade=p.get("offensive_grade"),
                 offensive_ceiling=p.get("offensive_ceiling"),

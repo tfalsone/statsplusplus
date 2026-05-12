@@ -365,6 +365,9 @@ def calc_fv_v2(p):
     else:
         fv_grade = int(fv / 5) * 5
 
+    # Expose continuous FV for surplus interpolation (avoids 5-point steps)
+    p["_fv_continuous"] = fv
+
     # -- Risk Label --
     gap = max(0, pot - ovr)
     norm_age = p["_norm_age"]

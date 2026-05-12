@@ -32,6 +32,7 @@ def norm(raw):
     """Normalize a tool rating to 20-80 scouting scale, rounded to nearest 5.
     Returns None for missing/zero/invalid input.
     On 1-100 leagues: converts via linear mapping.
+    On 1-20 leagues: converts via linear mapping (1→20, 20→80).
     On 20-80 leagues: clamps and rounds (values are already on the scouting scale)."""
     if raw is None:
         return None
@@ -41,8 +42,13 @@ def norm(raw):
         return None
     if raw <= 0:
         return None
-    if get_ratings_scale() == "20-80":
+    scale = get_ratings_scale()
+    if scale == "20-80":
         return max(20, min(80, round(raw / 5) * 5))
+    if scale == "1-20":
+        val = 20.0 + (min(raw, 20) - 1) / 19.0 * 60.0
+        return max(20, min(80, round(val / 5) * 5))
+    # 1-100
     return round((20 + (min(raw, 100) / 100) * 60) / 5) * 5
 
 
@@ -52,6 +58,7 @@ def norm_continuous(raw):
     Preserves full granularity for evaluation engine calculations.
     Returns None for missing/zero/invalid input.
     On 1-100 leagues: linear map to 20.0-80.0 (no rounding).
+    On 1-20 leagues: linear map 1→20.0, 20→80.0 (no rounding).
     On 20-80 leagues: returns value as-is (already on scale, in 5-point steps).
     """
     if raw is None:
@@ -62,8 +69,12 @@ def norm_continuous(raw):
         return None
     if raw <= 0:
         return None
-    if get_ratings_scale() == "20-80":
+    scale = get_ratings_scale()
+    if scale == "20-80":
         return float(max(20, min(80, raw)))
+    if scale == "1-20":
+        return 20.0 + (min(raw, 20) - 1) / 19.0 * 60.0
+    # 1-100
     return 20.0 + (min(raw, 100) / 100.0) * 60.0
 
 

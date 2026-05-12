@@ -148,6 +148,7 @@
         <select name="ratings_scale" style="width:200px">
           <option value="20-80"{% if detected_scale|default('20-80') == '20-80' %} selected{% endif %}>20-80</option>
           <option value="1-100"{% if detected_scale|default('20-80') == '1-100' %} selected{% endif %}>1-100</option>
+          <option value="1-20"{% if detected_scale|default('20-80') == '1-20' %} selected{% endif %}>1-20</option>
         </select>
         <label>Minimum Salary</label>
         <input type="number" name="minimum_salary" value="{{ min_salary or 500000 }}" style="width:120px">

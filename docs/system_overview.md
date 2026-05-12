@@ -159,9 +159,7 @@ Risk labels (Low/Medium/High/Extreme) from development confidence:
 - Stored in `prospect_fv.risk`, displayed on player page
 - No "+" grades — clean FV tiers (40/45/50/55/60/65/70)
 
-**Tool interaction terms** — Calibrated from WAR regressions, applied in composite:
-- Hitters: `contact × eye` (on-base synergy), `power × eye` (discipline enables power)
-- Pitchers: `stuff × movement` (movement makes stuff unhittable)
+**Tool interaction terms** — Disabled (Session 57). Were `contact × eye`, `power × eye` (hitters) and `stuff × movement` (pitchers). Empirically redundant with the piecewise tool transform — residual correlation with WAR is ~0.01 after the linear model. Product features are collinear with their components (r=0.85-0.93). Code retained but guarded by weight=0 check.
 
 **Pitcher composite extended ratings** — `compute_composite_pitcher()` in `evaluation_engine.py` uses HRA and PBABIP as optional weighted tools when available. Calibration produces weights automatically; leagues without extended ratings degrade gracefully to stuff/movement/control + arsenal.
 

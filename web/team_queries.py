@@ -1245,11 +1245,11 @@ def get_draft_org_depth(team_id):
         WHERE eval_date=? AND team_id=? AND surplus > 0
         GROUP BY bucket
     """, (ed_s, team_id)).fetchall():
-        pos = _display_pos(r[0]) if r[0] else None
-        if not pos:
+        bucket = r[0]
+        if not bucket:
             continue
-        # Collapse LF/RF/COF into LF/RF
-        key = "LF/RF" if pos in ("LF", "RF", "COF") else pos
+        # Collapse COF/LF/RF into LF/RF display key
+        key = "LF/RF" if bucket in ("COF", "LF", "RF") else ("CF" if bucket == "CF" else _display_pos(bucket))
         if key in result:
             result[key]["mlb"] += (r[1] or 0) / 1e6
 
@@ -1261,10 +1261,10 @@ def get_draft_org_depth(team_id):
           AND pf.prospect_surplus > 0
         GROUP BY pf.bucket
     """, (ed_f, team_id)).fetchall():
-        pos = _display_pos(r[0]) if r[0] else None
-        if not pos:
+        bucket = r[0]
+        if not bucket:
             continue
-        key = "LF/RF" if pos in ("LF", "RF", "COF") else pos
+        key = "LF/RF" if bucket in ("COF", "LF", "RF") else ("CF" if bucket == "CF" else _display_pos(bucket))
         if key in result:
             result[key]["farm"] += (r[1] or 0) / 1e6
 
@@ -2154,7 +2154,8 @@ def get_minor_league_notables(team_id):
         has_fv = fv is not None and fv >= NOTABLE_MIN_FV
         has_composite = composite is not None and composite >= NOTABLE_MIN_COMPOSITE
         has_ceiling = ceiling is not None and ceiling >= NOTABLE_MIN_CEILING
-        is_young = age is not None and age <= age_norm - NOTABLE_YOUNG_FOR_LEVEL_YEARS
+        is_young = (age is not None and age <= age_norm - NOTABLE_YOUNG_FOR_LEVEL_YEARS
+                    and ceiling is not None and ceiling >= 45)
 
         if not (has_fv or has_composite or has_ceiling or is_young):
             continue

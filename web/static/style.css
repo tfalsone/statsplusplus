@@ -1314,6 +1314,13 @@ td.stat-bad  { color: var(--red); }
 .my-pick-row { padding: 3px 0; font-size: 13px; }
 .my-pick-rd { color: var(--text-dim); font-size: 11px; min-width: 40px; display: inline-block; }
 .draft-pill { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 11px; font-weight: 600; line-height: 16px; text-align: center; min-width: 24px; }
+.draft-flag { font-size: 12px; margin-left: 3px; cursor: help; }
+.draft-flag-acc { color: #ff9800; }
+.draft-flag-risk { color: #f44336; }
+.draft-tool-filters { display: flex; gap: 12px; padding: 6px 10px; background: rgba(255,255,255,0.03); border-radius: 4px; margin-top: 6px; flex-wrap: wrap; align-items: center; }
+.draft-tool-filters label { font-size: 11px; color: #999; margin-right: 2px; }
+.draft-tool-filters input[type="number"] { width: 44px; padding: 2px 4px; font-size: 12px; background: #1a1a2e; border: 1px solid #333; color: #eee; border-radius: 3px; margin-right: 8px; }
+.dtf-group { display: flex; align-items: center; gap: 2px; }
 .dp-fv { background: rgba(58,111,216,0.15); color: #6fa8ff; }
 .dp-fv.dg-elite { background: rgba(58,111,216,0.25); color: #7db8ff; }
 .dp-fv.dg-plus { background: rgba(39,174,96,0.2); color: #5fd89a; }

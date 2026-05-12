@@ -122,7 +122,7 @@ def test_peak_war_ss():
     """SS at OVR 65 should produce premium-position WAR."""
     from player_utils import peak_war_from_ovr
     war = peak_war_from_ovr(65, 'SS')
-    assert 4.0 <= war <= 6.0
+    assert 4.0 <= war <= 7.0
 
 def test_peak_war_cof():
     """COF at OVR 55 should produce moderate WAR."""

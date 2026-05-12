@@ -298,6 +298,7 @@
             <option value="college">College</option>
             <option value="hs">HS</option>
           </select>
+          <button class="split-btn" id="draft-tool-filter-btn" onclick="toggleToolFilters()" style="margin-left:6px" title="Filter by tool thresholds">🔧 Tools</button>
           <div class="draft-controls-right">
             <span class="draft-status" id="draft-status">
               {% if dp_state == 'uploaded' %}{{ draft_pool.players|length }} prospects
@@ -312,6 +313,24 @@
             <label class="btn" style="cursor:pointer">📁 Upload Pool
               <input type="file" accept=".csv" style="display:none" onchange="uploadDraftPool(this)">
             </label>
+          </div>
+        </div>
+        <div class="draft-tool-filters" id="draft-tool-filters" style="display:none">
+          <div class="dtf-group" data-group="hit">
+            <label>Con ≥</label><input type="number" id="dtf-con" min="20" max="80" step="5" oninput="applyDraftFilters()">
+            <label>Pow ≥</label><input type="number" id="dtf-pow" min="20" max="80" step="5" oninput="applyDraftFilters()">
+            <label>Eye ≥</label><input type="number" id="dtf-eye" min="20" max="80" step="5" oninput="applyDraftFilters()">
+            <label>Spd ≥</label><input type="number" id="dtf-spd" min="20" max="80" step="5" oninput="applyDraftFilters()">
+          </div>
+          <div class="dtf-group" data-group="pit">
+            <label>Stf ≥</label><input type="number" id="dtf-stf" min="20" max="80" step="5" oninput="applyDraftFilters()">
+            <label>Mov ≥</label><input type="number" id="dtf-mov" min="20" max="80" step="5" oninput="applyDraftFilters()">
+            <label>Ctrl ≥</label><input type="number" id="dtf-ctrl" min="20" max="80" step="5" oninput="applyDraftFilters()">
+          </div>
+          <div class="dtf-group">
+            <label>Pot ≥</label><input type="number" id="dtf-pot" min="20" max="80" step="5" oninput="applyDraftFilters()">
+            <label>FV ≥</label><input type="number" id="dtf-fv" min="30" max="70" step="5" oninput="applyDraftFilters()">
+            <button class="split-btn" onclick="clearToolFilters()" style="margin-left:8px">Clear</button>
           </div>
         </div>
       </div>
@@ -647,7 +666,15 @@ function renderPanel(d) {
     d.defense.forEach(df => {
       html += `<tr><td>${df.pos}</td><td>${gradeBar(df.cur, df.fut)}</td></tr>`;
     });
-    html += '</tbody></table></div>';
+    html += '</tbody></table>';
+    if (d.def_tools && d.def_tools.length) {
+      html += '<table class="grade-table panel-grade-table" style="margin-top:4px"><tbody>';
+      d.def_tools.forEach(dt => {
+        html += `<tr><td>${dt.name}</td><td>${gradeBar(dt.val)}</td></tr>`;
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
   }
 
   if (d.summary) {
@@ -1113,6 +1140,19 @@ function toggleHideDrafted() {
   applyDraftFilters();
 }
 
+function toggleToolFilters() {
+  var panel = document.getElementById('draft-tool-filters');
+  panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  document.getElementById('draft-tool-filter-btn').classList.toggle('active');
+}
+
+function clearToolFilters() {
+  ['dtf-con','dtf-pow','dtf-eye','dtf-spd','dtf-stf','dtf-mov','dtf-ctrl','dtf-pot','dtf-fv'].forEach(function(id) {
+    document.getElementById(id).value = '';
+  });
+  applyDraftFilters();
+}
+
 // Position bucket mapping for needs panel filter
 var BUCKET_POS = {
   'C': ['C'], '1B': ['1B'], '2B': ['2B'], '3B': ['3B'], 'SS': ['SS'],
@@ -1174,6 +1214,17 @@ function applyDraftFilters() {
   var view = currentDraftView;
   var posFilter = currentPosFilter;
 
+  // Tool filter values (potential ratings)
+  var tfCon = parseInt(document.getElementById('dtf-con').value) || 0;
+  var tfPow = parseInt(document.getElementById('dtf-pow').value) || 0;
+  var tfEye = parseInt(document.getElementById('dtf-eye').value) || 0;
+  var tfSpd = parseInt(document.getElementById('dtf-spd').value) || 0;
+  var tfStf = parseInt(document.getElementById('dtf-stf').value) || 0;
+  var tfMov = parseInt(document.getElementById('dtf-mov').value) || 0;
+  var tfCtrl = parseInt(document.getElementById('dtf-ctrl').value) || 0;
+  var tfPot = parseInt(document.getElementById('dtf-pot').value) || 0;
+  var tfFv = parseInt(document.getElementById('dtf-fv').value) || 0;
+
   var filtered = DRAFT_POOL.filter(function(p) {
     var isPit = p.pos === 'SP' || p.pos === 'RP' || p.pos === 'CL';
     if (view === 'hit' && isPit) return false;
@@ -1184,6 +1235,22 @@ function applyDraftFilters() {
     // Specific position filter from needs panel — use bucket (projected position)
     if (posFilter && BUCKET_POS[posFilter]) {
       if (BUCKET_POS[posFilter].indexOf(p.bucket) < 0) return false;
+    }
+    // Tool threshold filters (use potential ratings [1] for hitters/pitchers)
+    if (tfPot && p.pot < tfPot) return false;
+    if (tfFv && p.fv < tfFv) return false;
+    var t = p.tools;
+    if (t) {
+      if (!isPit) {
+        if (tfCon && (!t.con || t.con[1] < tfCon)) return false;
+        if (tfPow && (!t.pow || t.pow[1] < tfPow)) return false;
+        if (tfEye && (!t.eye || t.eye[1] < tfEye)) return false;
+        if (tfSpd && t.spd < tfSpd) return false;
+      } else {
+        if (tfStf && (!t.stf || t.stf[1] < tfStf)) return false;
+        if (tfMov && (!t.mov || t.mov[1] < tfMov)) return false;
+        if (tfCtrl && (!t.ctrl || t.ctrl[1] < tfCtrl)) return false;
+      }
     }
     return true;
   });
@@ -1202,7 +1269,10 @@ function applyDraftFilters() {
     tr += '<td class="dd-cmp-td"><input type="checkbox" class="dd-cmp-cb" data-pid="' + p.pid + '"' + (cmpChecked ? ' checked' : '') + (cmpDisabled ? ' disabled' : '') + '></td>';
     tr += '<td>' + p.rank + '</td>';
     tr += '<td>' + p.pos + posNote + '</td>';
-    tr += '<td class="left"><a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a></td>';
+    var flags = '';
+    if (p.acc === 'L') flags += ' <span class="draft-flag draft-flag-acc" title="Low accuracy — development uncertain">⚠</span>';
+    if (p.risk === 'Extreme') flags += ' <span class="draft-flag draft-flag-risk" title="Extreme bust risk">☠</span>';
+    tr += '<td class="left"><a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a>' + flags + '</td>';
     tr += '<td>' + p.age + '</td><td>' + lvlPill(p.type) + '</td>';
     tr += gtd(p.ovr) + gtd(p.pot) + '<td>' + fvPill(p.fv_str) + '</td>';
     tr += '<td class="text-dim" style="font-size:12px">' + (p.surplus > 0 ? '$' + p.surplus + 'M' : '—') + '</td>';

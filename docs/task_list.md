@@ -6,8 +6,8 @@ Open work items. Completed items are in `docs/changelog.md`.
 
 ## Code Quality
 
-- [ ] **Additional ratings scales** — Support 1-20 scale (maps to 20-80 in increments of ~3). Currently only 1-100 and 20-80 are supported; auto-detection checks if any rating exceeds 80. **LOE: Low.**
-- [ ] **Snapshot test fragility** — `test_prospect_value.py` and `test_player_utils.py` use hardcoded expected values that drift every time `league_averages.json` changes (i.e. every refresh). Consider replacing with range assertions or mocking `dollar_per_war` to a fixed value so tests don't require manual updates after each refresh. **LOE: Low.**
+- [x] **Additional ratings scales** — Support 1-20 scale (maps to 20-80 via linear `20 + (raw-1)/19 * 60`). Auto-detection: max rating ≤20 → 1-20, >80 → 1-100, else 20-80. Added to settings and onboarding dropdowns. **Done Session 57.**
+- [x] **Snapshot test fragility** — `test_prospect_value.py` now stubs `dollars_per_war()` and `league_minimum()` via `unittest.mock.patch` to fixed values ($7M, $800K). Tests are fully deterministic regardless of `league_averages.json` state. Structural invariants (monotonicity, option ≥ base, SP > RP) plus a $/WAR scaling test. `test_player_utils.py` was already stable (exact FV grades depend on model_weights.json which only changes during recalibration, not refresh). **Done Session 57.**
 - [x] **Evaluation engine docs** — Add `evaluation_engine.py` to `docs/tools_reference.md` and `docs/system_overview.md`. Document the `run()` entry point, pure computation functions, and the batch pipeline integration in `refresh.py`. **LOE: Low.**
 
 ---
@@ -16,7 +16,8 @@ Open work items. Completed items are in `docs/changelog.md`.
 
 - [x] **Score compression further tuning** — Replaced elite tool bonus with piecewise tool transform (Session 47). Peak tool bonus for ceiling added (Session 48). 1.2× above-60 bonus restored (Session 52) to decompress top end. Composite range now 41-80 on eMLB, 37-76 on VMLB.
 - [x] **Calibration on VMLB** — Full calibrate → evaluation_engine → fv_calc pipeline run on VMLB (Session 48). R²-blended defaults and raised min_weight floors produce stable cross-league weights (cosine similarity 0.98+).
-- [x] **Carrying tool config review** — Percentile-based threshold (P85) now adapts to league distributions. VMLB calibrates all 7 positions (was only 2). Default merge fills gaps. Carrying tool bonus itself disabled as redundant with tool transform + interaction terms. **Done Session 56.**
+- [x] **Carrying tool config review** — Percentile-based threshold (P85) now adapts to league distributions. VMLB calibrates all 7 positions (was only 2). Default merge fills gaps. Carrying tool bonus fully disabled (composite Session 56, ceiling Session 57) as redundant with tool transform (1.3× above 60) + peak tool bonus. **Done Session 57.**
+- [x] **Tool interaction terms** — contact×eye, power×eye (hitters) and stuff×movement (pitchers) added Session 56, disabled Session 57. Were dead code (weights never written to `tool_weights.json`). Multivariate OLS shows residual correlation ~0.01 — collinear with individual tools (r=0.85-0.93), no explanatory power beyond linear model. Tool transform already captures the non-linearity. **Removed Session 57.**
 - [x] **Stat blending: ERA- conversion and P95 calibration** — `_compute_stat_signal` now uses ERA- for pitchers (was FIP-). OOTP WAR is RA9-based; FIP systematically undervalued contact-management pitchers. P95 calibration still pending (slopes not yet wired). **Done Session 54 (ERA- part).**
 - [x] **Evaluation model documentation** — `docs/evaluation_model.md` written with full pipeline diagram, formulas, constants, weight tables, and design rationale. **Done Session 52.**
 - [ ] **SP underrepresentation in prospect rankings** — 18-20/100 SP in VMLB, 6/100 in EMLB. Investigated Session 49: OOTP generates tighter pitcher tool distributions (stuff/mov SD ≈ 11 vs hitter power SD ≈ 18), especially on 1-100 scale. HRA/PBABIP now included in pitcher composite for differentiation. VMLB representation is close to real baseball (~25-30%); EMLB is a league composition issue. **LOE: N/A — understood limitation.**
@@ -42,7 +43,7 @@ Legacy components designed for OVR/POT that need updating for composite/ceiling:
 
 - [x] **Arb salary calibration broken** — Fixed Session 56. Added WAR ≥ 1.0 floor, outlier cap, N ≥ 10 minimum, monotonic enforcement. Switched from flat-percentage model to raise-based (arb_model.arb_salary). Fixed discount mismatch (salary now discounted same as value). EMLB: {1:0.24, 2:0.24, 3:0.32}. **Done Session 56.**
 - [ ] **Arb salary constants recalibration** — `ARB_HITTER_BASE` and `ARB_HITTER_EXP` constants produce arb estimates ~20-30% below actual OOTP arb outcomes for 3-4 WAR players. Should be calibrated per league from actual arb contracts (exponential fit on OVR/composite vs salary). **LOE: Low. Priority: Low.**
-- [ ] **Prospect WAR projection methodology** — Current approach uses `FV_TO_PEAK_WAR` lookup table (FV 50 → 2.0 WAR) with aging curve and ramp. Investigated Session 56: using ceiling→WAR would double-count upside (FV already encodes development probability). FV→WAR is correct in principle. Minor improvement: pass continuous FV (pre-rounding) instead of rounded tier for slightly more granular projections. The `peak_war()` function already interpolates. **LOE: Low. Priority: Low.**
+- [x] **Prospect WAR projection methodology** — Current approach uses `FV_TO_PEAK_WAR` lookup table (FV 50 → 2.0 WAR) with aging curve and ramp. Investigated Session 56: using ceiling→WAR would double-count upside (FV already encodes development probability). FV→WAR is correct in principle. Now passes continuous FV (pre-rounding) to `prospect_surplus` for interpolation within tiers. **Done Session 57.**
 - [ ] **Platoon exposure modeling** — Current composite uses overall ratings; FV platoon penalty (-2/-3) partially addresses severe splits. Full platoon modeling would value platoon contributors in context (e.g., a LHH with 70 contact vs RHP and 30 vs LHP has real value as a platoon piece). Requires research: how to weight L/R splits, what threshold defines "platoon only," how to reflect platoon value in surplus. **LOE: Medium-High.**
 - [x] **Surface tool_only_score on MLB player pages** — MLB players now show pure tool score in parentheses next to the stat-blended composite. **Done Session 51.**
 - [x] **Risk labels in prospect list templates** — Risk initials with color coding now rendered in league prospect list, team org overview, and team farm top 15. **Done Session 51.**
@@ -64,7 +65,7 @@ Legacy components designed for OVR/POT that need updating for composite/ceiling:
 
 ## Web UI — League Page
 
-- [ ] **Positional rankings page** — League-wide page showing top players by position group (C, IF, OF, SP, RP), split into MLB and prospect sections. For MLB: rank by composite/WAR. For prospects: rank by FV/surplus. Gives a quick "who are the best shortstops in the league?" view. **LOE: Medium.**
+- [x] **Positional rankings page** — League-wide page showing top players by position group (C, IF, OF, SP, RP), split into MLB and prospect sections. For MLB: rank by composite/WAR. For prospects: rank by FV/surplus. **Already implemented.**
 - [ ] **Power rankings trend indicators** — store historical rank snapshots (per eval_date or game_date) and show ▲/▼/— movement arrows next to rank. Needs: new DB table or JSON file for rank history, delta calculation. **LOE: Medium.**
 - [ ] **League news / milestone ticker** — horizontal strip between standings and power rankings showing notable milestones (e.g. "Player X: 3 HR from 50"). Needs: milestone detection logic from stats. **LOE: Medium-High.**
 
@@ -72,9 +73,9 @@ Legacy components designed for OVR/POT that need updating for composite/ceiling:
 - [x] **Draft prospect ranking** — sort by FV (primary) then surplus (secondary). Web UI already uses this sort. CLI `draft_board.py pick` uses draft value sort (FV + ceiling bonus + ctl penalty). **Done Session 53.**
 - [x] **ADP and draft simulation** — Expected draft position based on POT rank. Draft sim with randomized other-team picks. Urgency-greedy list building for auto-draft upload. Org needs as tiebreaker. Web UI sim + upload buttons. **Done Session 55.**
 - [ ] **"My List" draft board builder** — Sidebar panel where users build a ranked draft list by clicking prospects from the board. Features: (1) "Add to My List" button per prospect row, (2) reorderable list via drag-and-drop or up/down arrows, (3) localStorage persistence across sessions, (4) export as commissioner format (numbered list with game position + name) or StatsPlus upload format (plain text IDs, one per line). **LOE: Medium.**
-- [ ] **Visual flag badges** — Show Acc=L warning badge and Extreme risk badge directly in the draft board table rows. Currently only visible in the detail panel. **LOE: Low.**
+- [x] **Visual flag badges** — Show Acc=L warning badge (⚠) and Extreme risk badge (☠) directly in the draft board table rows next to player name. **Done Session 57.**
 - [x] **Sleeper/value flags** — Implemented via ADP system (Session 55). POT rank vs FV rank gap produces Sleeper/Value/Goes Early/Reach labels. Displayed in draft board table and CLI output. **Done Session 55.**
-- [ ] **Advanced filtering** — min/max threshold sliders per tool (e.g., "show power ≥ 55 with contact ≥ 45"). **LOE: Medium.**
+- [x] **Advanced filtering** — Collapsible tool filter panel on draft board with min-threshold inputs for potential tools (Con/Pow/Eye/Spd for hitters, Stf/Mov/Ctrl for pitchers) plus Pot and FV minimums. Filters apply in real-time. **Done Session 57.**
 - [ ] **Post-draft grades** — team haul summaries after draft completion. **LOE: Medium.**
 
 ---
@@ -87,7 +88,7 @@ Legacy components designed for OVR/POT that need updating for composite/ceiling:
 
 ## Web UI — Navigation
 
-- [ ] **Minor league team pages** — ~~extend `/team/<id>` to affiliate team IDs~~ Done. Remaining: review notable player filter thresholds (NOTABLE_MIN_COMPOSITE=50, NOTABLE_MIN_CEILING=55, NOTABLE_MIN_FV=45, NOTABLE_YOUNG_FOR_LEVEL_YEARS=2) after seeing real results across leagues. May need tuning to avoid too many or too few cards. **LOE: Low.**
+- [x] **Minor league team pages** — ~~extend `/team/<id>` to affiliate team IDs~~ Done. Notable player filter tuned: "young for level" now requires ceiling ≥ 45 (was age-only). Fixes Intl/Rookie levels where every teenager qualified. Results: Intl 9.7→5.9/team, Rookie 6.2→4.7/team. Upper levels unchanged (~12-15/team, appropriate for prospect-heavy affiliates). **Done Session 57.**
 
 ---
 

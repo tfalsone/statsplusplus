@@ -415,12 +415,33 @@ def _build_tools(rd, is_pitcher, out):
         _def_order = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"]
         defense = []
         for pos_lbl, col in def_map.items():
-            cur = rd.get(col)
-            fut = rd.get(f"pot_{col}")
-            if cur and cur >= 20:
-                defense.append({"pos": pos_lbl, "cur": n80(cur), "fut": n80(fut)})
+            cur = n80(rd.get(col))
+            fut = n80(rd.get(f"pot_{col}"))
+            if (cur and cur > 20) or (fut and fut > 20):
+                defense.append({"pos": pos_lbl, "cur": cur or 20, "fut": fut or 20})
         defense.sort(key=lambda x: _def_order.index(x["pos"]))
         out["defense"] = defense
+        # Defensive tools — only show tools relevant to positions the player can play
+        has_if = any(d["pos"] in ("2B", "3B", "SS", "1B") for d in defense)
+        has_of = any(d["pos"] in ("LF", "CF", "RF") for d in defense)
+        has_c = any(d["pos"] == "C" for d in defense)
+        def_tools = []
+        if has_if:
+            for label, col in [("IF Range", "ifr"), ("IF Error", "ife"), ("IF Arm", "ifa"), ("TDP", "tdp")]:
+                v = n80(rd.get(col))
+                if v and v > 20:
+                    def_tools.append({"name": label, "val": v})
+        if has_of:
+            for label, col in [("OF Range", "ofr"), ("OF Error", "ofe"), ("OF Arm", "ofa")]:
+                v = n80(rd.get(col))
+                if v and v > 20:
+                    def_tools.append({"name": label, "val": v})
+        if has_c:
+            for label, col in [("C Arm", "c_arm"), ("C Block", "c_blk"), ("C Frame", "c_frm")]:
+                v = n80(rd.get(col))
+                if v and v > 20:
+                    def_tools.append({"name": label, "val": v})
+        out["def_tools"] = def_tools
 
 
 def get_player_card(pid):
@@ -910,7 +931,7 @@ def get_draft_pool():
             fv_str_display = f"{fv_base}+" if fv_plus else str(fv_base)
             pf_risk = None
         pos_str = ROLE_MAP.get(p.get("role"), _POS_LABEL.get(p.get("pos"), "?"))
-        college_hs = "College" if level == '10' else "HS" if level == '11' else "Amateur"
+        college_hs = "College" if level == '10' else "HS" if level == '11' else ("HS" if (p.get("Age") or 0) <= 18 else "College")
         entry = {
             "pid": p["ID"], "name": p["Name"], "age": p["Age"],
             "pos": pos_str, "bucket": bucket, "type": college_hs,
@@ -971,24 +992,16 @@ def get_draft_pool():
                 "ofr": ng(p.get("OFR") or 0), "ofa": ng(p.get("OFA") or 0),
                 "cblk": ng(p.get("CBlk") or 0), "cfrm": ng(p.get("CFrm") or 0),
             }
-            # Position mismatch detection
-            _thresholds = {"C":45,"SS":50,"2B":50,"CF":55,"3B":45,"LF":45,"RF":45,"1B":45}
-            _value_order = ["C","SS","2B","CF","3B","COF","1B"]
-            best_pos = None
-            for vpos in _value_order:
-                if vpos == "COF":
-                    for dp in ("LF","RF"):
-                        if defs.get(dp, 0) >= _thresholds.get(dp, 45):
-                            best_pos = "COF"
-                            break
-                elif defs.get(vpos, 0) >= _thresholds.get(vpos, 45):
-                    best_pos = vpos
-                if best_pos:
-                    break
-            if not best_pos:
-                best_pos = "1B"  # fallback
-            if best_pos != bucket:
-                entry["pos_note"] = best_pos
+            # Position mismatch detection: show note when our evaluation bucket
+            # differs meaningfully from the player's listed position.
+            listed_pos = entry["pos"]
+            bucket_display = "LF/RF" if bucket == "COF" else bucket
+            # Determine if there's a real mismatch worth showing
+            same = (bucket_display == listed_pos or
+                    (bucket == "COF" and listed_pos in ("LF", "RF")) or
+                    listed_pos in ("P", "DH", "?"))
+            if not same:
+                entry["pos_note"] = bucket_display
 
         # Career outcome summary for range indicator
         try:

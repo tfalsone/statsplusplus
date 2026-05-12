@@ -274,10 +274,12 @@ of control, and converts to dollar value using league-calibrated $/WAR.
 
 ## Carrying Tool Bonus
 
+**Status: DISABLED (Session 57)**
+
 **Function:** `compute_carrying_tool_bonus(tools, position, config)`
 
 Additive bonus for elite offensive tools (≥65) at positions where that tool
-is scarce. Applied to the offensive grade before recombination.
+is scarce. Was applied to the offensive grade before recombination.
 
 ```
 bonus = war_premium_factor × (tool_grade - 60) × scarcity_multiplier(grade)
@@ -285,21 +287,22 @@ bonus = war_premium_factor × (tool_grade - 60) × scarcity_multiplier(grade)
 
 Scarcity schedule: 1.0× at 65, 1.5× at 70, 2.0× at 75, 3.0× at 80.
 
-Applied in both the composite and ceiling calculations.
+Disabled for composite (Session 56) and ceiling (Session 57). Redundant with
+the piecewise tool transform (1.3× above 60) and peak tool bonus (capped +10
+in `compute_ceiling`). Was inflating `ceiling_score` by +5 to +31 without
+affecting FV or surplus. `true_ceiling` (without bonus) predicts outcomes
+better (r=0.912 vs 0.897). Function retained for potential future use.
 
 ---
 
 ## Known Limitations / Future Work
 
-1. **Stat blending uses FIP-** — should use ERA- (OOTP WAR is RA9-based).
-   `_refresh_stat_percentiles` exists but isn't wired to conversion functions.
-
-2. **Carrying tool config** — VMLB calibrated config is very sparse. Default
-   config may be more appropriate until larger sample available.
-
-3. **Score compression** — composite maxes at ~76 on VMLB vs ~80 on eMLB.
+1. **Score compression** — composite maxes at ~76 on VMLB vs ~80 on eMLB.
    Leagues with tighter tool distributions (1-100 scale) compress more.
 
-4. **RP WAR correlation** — composite predicts RP rate quality (ERA) well
+2. **RP WAR correlation** — composite predicts RP rate quality (ERA) well
    (r=-0.53 to -0.73) but not counting-stat WAR (driven by IP volume).
    Accepted as design choice: composite measures quality, not usage.
+
+3. **Arsenal bonus** — adds no predictive value beyond stuff/movement/control
+   (residual r≈0). Retained at ~10% weight for now; low-priority cleanup.

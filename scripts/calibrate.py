@@ -184,12 +184,10 @@ def _calibrate_tool_weights(conn, game_year, role_map):
             "contact": contact, "gap": gap, "power": power,
             "eye": eye,
         }
-        # Interaction terms: capture compounding tool synergies that the
-        # linear model misses. Normalized to 50*50=2500 baseline.
-        # contact_eye: getting on base requires both (synergy +1.29)
-        # power_eye: eye gets into counts where power plays (synergy +0.70)
-        tool_dict["contact_eye"] = (contact * eye) / 2500.0 * 50.0
-        tool_dict["power_eye"] = (power * eye) / 2500.0 * 50.0
+        # Interaction terms disabled — collinear with individual tools
+        # (r=0.85-0.93) and add no explanatory power beyond linear model
+        # (residual correlation ~0.01). Tool transform captures the
+        # non-linearity these were meant to address.
         hitting_data[bucket][0].append(tool_dict)
         hitting_data[bucket][1].append(float(war))
 
@@ -330,9 +328,7 @@ def _calibrate_tool_weights(conn, game_year, role_map):
             "stuff": stuff, "movement": movement,
             "control": control, "arsenal": arsenal_quality,
         }
-        # Interaction: stuff × movement (synergy +1.09). Nasty stuff with
-        # movement is unhittable; stuff alone can be squared up.
-        tool_dict["stuff_mov"] = (stuff * movement) / 2500.0 * 50.0
+        # stuff × movement interaction disabled — residual correlation ~0.006.
         # Extended ratings: HRA and PBABIP (when available in the league)
         hra_rating = norm(r["rating_hra"])
         pbabip_rating = norm(r["rating_pbabip"])

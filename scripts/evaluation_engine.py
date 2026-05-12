@@ -909,17 +909,10 @@ def _offensive_grade_raw(
 
     raw = sum(val * (w / total_weight) for val, w in available)
 
-    # Interaction terms: capture compounding tool synergies.
-    # If calibrated weight exists, apply as additive adjustment.
-    for inter_key, tool_a, tool_b in [("contact_eye", "contact", "eye"),
-                                       ("power_eye", "power", "eye")]:
-        iw = weights.get(inter_key, 0.0)
-        if iw != 0.0:
-            va = tools.get(tool_a)
-            vb = tools.get(tool_b)
-            if va is not None and vb is not None:
-                score = (float(va) * float(vb)) / 2500.0 * 50.0
-                raw += (score - 50.0) * iw
+    # Interaction terms disabled — empirically redundant with tool transform.
+    # Residual correlation with WAR after linear model is ~0.01 (no signal).
+    # The product (contact×eye, power×eye) is collinear with the individual
+    # tools (r=0.85-0.93) and adds no explanatory power beyond them.
 
     return raw
 
@@ -1250,14 +1243,8 @@ def compute_composite_pitcher(
     core_tools = {k: v for k, v in tools.items() if k in ('stuff', 'movement', 'control')}
     raw -= _sub_mlb_floor_penalty(core_tools)
 
-    # Interaction: stuff × movement synergy
-    sm_weight = weights.get("stuff_mov", 0.0)
-    if sm_weight != 0.0:
-        stuff_val = tools.get("stuff")
-        mov_val = tools.get("movement")
-        if stuff_val is not None and mov_val is not None:
-            sm_score = (float(stuff_val) * float(mov_val)) / 2500.0 * 50.0
-            raw += (sm_score - 50.0) * sm_weight
+    # Interaction (stuff × movement) disabled — redundant with tool transform.
+    # Residual correlation with -FIP after linear model is ~0.006 (no signal).
 
     return max(20, min(80, round(raw)))
 
@@ -2994,17 +2981,18 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 potential_hitter_tools, h_weights, current_components,
                 defense=defense_tools, def_weights=def_weights,
                 age=player_age,
-                ct_config=ct_config, position=hitter_bucket,
+                ct_config=None, position=hitter_bucket,
             )
             offensive_ceiling = ceilings.get("offensive_ceiling")
             baserunning_ceiling = ceilings.get("baserunning_ceiling")
             defensive_ceiling = ceilings.get("defensive_ceiling")
-            ceiling_ct_bonus = ceilings.get("ceiling_carrying_tool_bonus", 0.0)
-            ceiling_ct_breakdown = ceilings.get("ceiling_carrying_tool_breakdown", [])
+            ceiling_ct_bonus = 0.0
+            ceiling_ct_breakdown = []
 
-            # Boost ceiling_score by the ceiling carrying tool bonus (Req 6.5)
-            if ceiling_ct_bonus > 0:
-                ceiling_score = max(20, min(80, ceiling_score + round(ceiling_ct_bonus)))
+            # Carrying tool bonus on ceiling disabled — redundant with tool
+            # transform (1.3× above 60) + peak tool bonus (capped +10).
+            # Was inflating ceiling_score by +5 to +31 for elite prospects
+            # without affecting FV or surplus (those use true_ceiling).
 
         elif is_pitcher:
             role = bucket if bucket in ("SP", "RP") else "SP"
@@ -3111,17 +3099,13 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 potential_hitter_tools, h_weights, current_components,
                 defense=defense_tools, def_weights=def_weights,
                 age=player_age,
-                ct_config=ct_config, position=bucket,
+                ct_config=None, position=bucket,
             )
             offensive_ceiling = ceilings.get("offensive_ceiling")
             baserunning_ceiling = ceilings.get("baserunning_ceiling")
             defensive_ceiling = ceilings.get("defensive_ceiling")
-            ceiling_ct_bonus = ceilings.get("ceiling_carrying_tool_bonus", 0.0)
-            ceiling_ct_breakdown = ceilings.get("ceiling_carrying_tool_breakdown", [])
-
-            # Boost ceiling_score by the ceiling carrying tool bonus (Req 6.5)
-            if ceiling_ct_bonus > 0:
-                ceiling_score = max(20, min(80, ceiling_score + round(ceiling_ct_bonus)))
+            ceiling_ct_bonus = 0.0
+            ceiling_ct_breakdown = []
 
         # -- MLB stat blending --
         level = row_dict.get("level")
