@@ -195,16 +195,19 @@ Draft board analysis, simulation, and auto-draft list generation.
 ```bash
 python3 scripts/draft_board.py board [--top 30]           # Full ranked board (FV sort)
 python3 scripts/draft_board.py available [--top 30]       # Board minus taken players
-python3 scripts/draft_board.py pick N                     # Urgency-greedy ranked list for N players
-python3 scripts/draft_board.py upload [--top 500]         # Generate auto-draft file (urgency-greedy)
+python3 scripts/draft_board.py pick N [--no-balance]      # Two-list merge ranked list for N players
+python3 scripts/draft_board.py upload [--top 500] [--no-balance]  # Generate auto-draft file
 python3 scripts/draft_board.py compare "Name1" "Name2"    # Side-by-side comparison
 python3 scripts/draft_board.py sim PICK [--rounds 7] [--seed S]  # Draft simulation
 ```
 
-Draft value formula: `FV + (ceiling-55)×0.2 + RP(-5) + Acc(L:-2,VL:-4) + risk(Extreme:-3,High:-1) + contact(-2 if cnt<50,pow≥80,eye<70) + ctl<45(-3) + arsenal(-2 to +1) + personality(±0.9) + needs(Rd3+)`.
-ADP computed from POT rank. `pick` command uses two-list merge: List A (our draft_value + position-scaled surplus weight `0.02+0.06/√pos`) vs List B (POT rank),
+Draft value formula: `FV + (ceiling-55)×0.2 + RP_discount + Acc(L:-2,VL:-4) + risk(Extreme:-3,High:-1) + contact(-2 if cnt<50,pow≥80,eye<70) + ctl<45(-3) + arsenal(-2 to +1) + personality(±0.9) + needs(Rd3+)`.
+RP discount: -2 if stamina ≥ 30 (tweener with SP upside), -5 if stamina < 30 (pure reliever).
+ADP computed from POT rank. `pick` and `upload` commands use two-list merge: List A (our draft_value + position-scaled surplus weight `0.02+0.06/√pos`) vs List B (POT rank),
 deferring sleepers beyond survival threshold (default: `30 + 6√pos`, configurable via `_threshold_sqrt` or `_threshold_fixed`).
-Upload list uses same algorithm. Sim uses randomized other-team picks (window `8+pick×0.15`, exponent `max(1.0, 2.8 - pick×0.018)`).
+Value gap override: if the best available player's draft_value exceeds the best survival-passing player by ≥3 points, take them regardless of ADP.
+Balance adjustment (default on): tracks running pitcher/hitter ratio and applies a small bonus to the underrepresented type (target 45%, bonus 2.0). Disable with `--no-balance`.
+Sim uses randomized other-team picks (window `8+pick×0.15`, exponent `max(1.0, 2.8 - pick×0.018)`).
 
 Importable: `load_board()`, `draft_value()`, `compute_adp()`, `compute_org_needs()`,
 `build_pick_list()`, `build_urgency_list()`, `simulate_draft()`.

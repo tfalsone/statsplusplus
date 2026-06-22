@@ -103,6 +103,7 @@ Legacy components designed for OVR/POT that need updating for composite/ceiling:
 ## Data & Research
 
 - [ ] **Team vs team history** — head-to-head record lookup from the `games` table. Could be a standalone query function or CLI tool. Useful for beat reporter articles and rivalry context. **LOE: Low.**
+- [ ] **Accuracy-scaled draft penalty research** — Investigate whether Acc=L players with elite ceilings (70+) hit at a higher rate than Acc=L players with modest ceilings. If so, scale the accuracy penalty in `draft_value()` by ceiling magnitude (e.g., `penalty = base × (1 - (ceiling - 55) * 0.02)`). Requires multi-draft historical data to validate. Context: eMLB 2033 draft analysis showed Gabriel Brown (Acc=L, 97 pow / 100 eye potential) was undervalued by our board due to flat -2 penalty. **LOE: Medium (data collection + validation).**
 
 ---
 

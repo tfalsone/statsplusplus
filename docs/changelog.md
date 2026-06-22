@@ -4,6 +4,44 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 59 (2026-06-22)
+
+### Draft Board: Balance, RP Discount, and Value Gap Override
+
+**Pitcher/hitter balance adjustment** in `build_pick_list`:
+- Tracks running pitcher/hitter ratio as the list is built.
+- Applies a score bonus to the underrepresented type, scaling with picks made
+  (minimal early where talent gaps are large, stronger in mid/late rounds).
+- Parameters: `balance_target=0.45`, `balance_bonus=2.0` (keyword args with defaults).
+- Result: list maintains 38-46% pitchers throughout 500 picks. Eliminates feast-or-famine
+  runs (previously 0% pitchers in some 10-pick windows, 80% in others).
+- `--no-balance` flag added to `pick` and `upload` CLI commands.
+
+**RP tweener discount** in `draft_value`:
+- Previously: flat -5 for all RP-bucketed players.
+- Now: stamina ≥ 30 gets -2 (SP-upside tweener), stamina < 30 gets -5 (pure reliever).
+- Added `r.stm` to `_BOARD_SQL` query.
+- Prevents punishing fringe starters who happen to be bucketed as RP.
+
+**Value gap override** in `build_pick_list`:
+- If the best available player's `draft_value` exceeds the best survival-passing player
+  by ≥3 points, take them regardless of ADP survival threshold.
+- Prevents deferring elite prospects on speculative survival estimates (e.g., a board #7
+  player available at pick #31 should never be deferred).
+
+**Context:** Analysis of the eMLB 2033 draft revealed three issues:
+1. The upload list produced 10+ consecutive hitter runs in mid-rounds, forcing manual
+   pitcher intervention that resulted in weaker picks (Hams FV 35 RP, Stern FV 40 SP).
+2. RP-bucketed pitchers with SP-level stamina (30-45) were over-penalized.
+3. The survival model could theoretically defer a top-10 board player at pick 31
+   if their POT-rank fell within the (permissive) threshold window.
+
+### Draft Board: Added `r.stm` to board SQL
+
+Minor schema addition to support the RP tweener logic.
+
+---
+
 ## Session 58 (2026-05-12)
 
 ### Draft Board: Two-List Merge Algorithm + Valuation Enhancements

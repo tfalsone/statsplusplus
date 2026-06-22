@@ -42,7 +42,7 @@ _BOARD_SQL = """
            r.ofr, r.ifr, r.c_frm, r.acc, r.pot,
            r.fst, r.snk, r.crv, r.sld, r.chg, r.splt, r.cutt, r.cir_chg, r.scr, r.frk, r.kncrv, r.knbl,
            r.pot_fst, r.pot_snk, r.pot_crv, r.pot_sld, r.pot_chg, r.pot_splt, r.pot_cutt, r.pot_cir_chg, r.pot_scr, r.pot_frk, r.pot_kncrv, r.pot_knbl,
-           p.level, r.wrk_ethic, r.int_, r.lead
+           r.stm, p.level, r.wrk_ethic, r.int_, r.lead
     FROM prospect_fv pf
     JOIN players p ON pf.player_id = p.player_id
     JOIN latest_ratings r ON r.player_id = p.player_id
@@ -180,7 +180,11 @@ def draft_value(r, needs=None, pick_round=None):
     ceil = r["true_ceiling"] or 0
     val = fv + (ceil - 55) * 0.2
     if r["bucket"] == "RP":
-        val -= 5
+        stm = r["stm"] if "stm" in r.keys() else 0
+        if stm and stm >= 30:
+            val -= 2  # Tweener — SP upside with reliever risk
+        else:
+            val -= 5  # Pure reliever
     acc = r["acc"] or ""
     if acc == "L":
         val -= 2
@@ -344,7 +348,7 @@ def _surplus_weight(pos):
 
 
 def build_pick_list(rows, adp, needs, num_teams, limit, threshold_fn=None,
-                    pick_pos=None):
+                    pick_pos=None, balance_target=0.45, balance_bonus=2.0):
     """Build a ranked list for pre-draft submission using two-list merge.
 
     List A: Our evaluation (draft_value + position-scaled surplus) — who we want.
@@ -356,8 +360,16 @@ def build_pick_list(rows, adp, needs, num_teams, limit, threshold_fn=None,
     Surplus weight scales with position: heavier early in the draft (favoring
     youth and upside), fading later where talent alone matters more.
 
+    Balance adjustment: tracks running pitcher/hitter ratio and applies a small
+    score bonus to the underrepresented type. Prevents long runs of same-type
+    picks that leave the org lopsided. The bonus scales with picks made so it
+    has minimal effect early (where talent differences are large) and stronger
+    effect in the mid/late rounds (where prospects are clustered in value).
+
     threshold_fn(pos, num_teams) -> int: how many picks ahead on List B a player
     can be before we grab them. If None, uses PICK_THRESHOLDS default.
+    balance_target: target pitcher fraction (0.0-1.0). Default 0.45.
+    balance_bonus: max bonus magnitude per unit of imbalance. Default 2.0.
     """
     if threshold_fn is None:
         threshold_fn = PICK_THRESHOLDS
@@ -372,10 +384,14 @@ def build_pick_list(rows, adp, needs, num_teams, limit, threshold_fn=None,
     surplus_cache = {r["player_id"]: r["prospect_surplus"] / 1e6 for r in list_a}
     pot_rank_cache = {r["player_id"]: adp.get(r["player_id"], {}).get("pot_rank", 9999) for r in list_a}
     row_by_id = {r["player_id"]: r for r in list_a}
+    bucket_cache = {r["player_id"]: r["bucket"] for r in list_a}
 
-    # Build scored list once, re-sort periodically as surplus weight changes
-    last_sw = None
-    scored_list = None
+    def _is_pitcher(pid):
+        return bucket_cache.get(pid, "") in ("SP", "RP")
+
+    # Balance tracking
+    pitcher_count = 0
+    hitter_count = 0
 
     for pos in range(1, limit + 1):
         if not available:
@@ -384,14 +400,23 @@ def build_pick_list(rows, adp, needs, num_teams, limit, threshold_fn=None,
         threshold = threshold_fn(pos, num_teams)
         sw = _surplus_weight(pos)
 
-        # Re-sort only when surplus weight changes by >10% (roughly every few positions)
-        if scored_list is None or last_sw is None or abs(sw - last_sw) / last_sw > 0.1:
-            scored_list = sorted(
-                available,
-                key=lambda pid: dv_cache[pid] + surplus_cache[pid] * sw,
-                reverse=True
-            )
-            last_sw = sw
+        # Compute balance adjustment
+        total = pitcher_count + hitter_count
+        if total > 0 and balance_bonus > 0:
+            imbalance = balance_target - pitcher_count / total
+            effective_bonus = balance_bonus * max(1, total / 3)
+        else:
+            imbalance = 0
+            effective_bonus = 0
+
+        # Re-sort every iteration when balance is active (score depends on running count)
+        scored_list = sorted(
+            available,
+            key=lambda pid: (dv_cache[pid] + surplus_cache[pid] * sw
+                             + (imbalance * effective_bonus if _is_pitcher(pid)
+                                else -imbalance * effective_bonus)),
+            reverse=True
+        )
 
         chosen_id = None
         for pid in scored_list:
@@ -400,6 +425,16 @@ def build_pick_list(rows, adp, needs, num_teams, limit, threshold_fn=None,
             if pot_rank_cache[pid] <= pos + threshold:
                 chosen_id = pid
                 break
+
+        # Value gap override: if the best available player's draft_value is
+        # significantly above the best player that passes survival, take them
+        # regardless. Prevents deferring elite prospects on speculative survival.
+        if chosen_id is not None and scored_list:
+            best_pid = next((pid for pid in scored_list if pid in available), None)
+            if best_pid and best_pid != chosen_id:
+                gap = dv_cache[best_pid] - dv_cache[chosen_id]
+                if gap >= 3.0:
+                    chosen_id = best_pid
 
         if chosen_id is None:
             for pid in scored_list:
@@ -410,6 +445,10 @@ def build_pick_list(rows, adp, needs, num_teams, limit, threshold_fn=None,
         if chosen_id:
             ordered.append(row_by_id[chosen_id])
             available.discard(chosen_id)
+            if _is_pitcher(chosen_id):
+                pitcher_count += 1
+            else:
+                hitter_count += 1
 
     return ordered
 
@@ -683,7 +722,9 @@ def cmd_available(args):
 
 def cmd_pick(args):
     rows, adp, needs, num_teams, conn = load_board()
-    ordered = build_pick_list(rows, adp, needs, num_teams, args.n)
+    balance_bonus = 0 if args.no_balance else 2.0
+    ordered = build_pick_list(rows, adp, needs, num_teams, args.n,
+                              balance_bonus=balance_bonus)
 
     print(f"Pre-draft ranked list — Top {args.n}\n")
     _print_board(ordered, limit=args.n, adp=adp)
@@ -699,7 +740,9 @@ def cmd_pick(args):
 def cmd_upload(args):
     rows, adp, needs, num_teams, conn = load_board()
     limit = min(args.top or 500, 500)
-    ordered = build_pick_list(rows, adp, needs, num_teams, limit)
+    balance_bonus = 0 if args.no_balance else 2.0
+    ordered = build_pick_list(rows, adp, needs, num_teams, limit,
+                              balance_bonus=balance_bonus)
 
     ranked_ids = [str(r["player_id"]) for r in ordered]
     out_path = get_league_dir() / "tmp" / "draft_upload.txt"
@@ -801,9 +844,13 @@ def main():
 
     p_pick = sub.add_parser("pick", help="Ranked list for pre-draft submission")
     p_pick.add_argument("n", type=int, help="Number of players to list")
+    p_pick.add_argument("--no-balance", action="store_true",
+                        help="Disable pitcher/hitter balance adjustment")
 
     p_upload = sub.add_parser("upload", help="Generate StatsPlus auto-draft file")
     p_upload.add_argument("--top", type=int, default=500)
+    p_upload.add_argument("--no-balance", action="store_true",
+                          help="Disable pitcher/hitter balance adjustment")
 
     p_cmp = sub.add_parser("compare", help="Head-to-head comparison")
     p_cmp.add_argument("players", nargs="+", help="Player IDs or names (2-3)")
