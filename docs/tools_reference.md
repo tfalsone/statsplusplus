@@ -412,8 +412,15 @@ war = stat_peak_war(pid, 'SP', bat_hist, pit_hist)
 Arb salary estimation and service time calculation.
 
 ```python
-from arb_model import arb_salary, estimate_service_time, estimate_control
+from arb_model import arb_salary, arb_salary_perpetual, estimate_service_time, estimate_control
+
+# FA leagues: exponential base + raise model
 arb_salary(60, 'SS', arb_year=1, prior_salary=825000, min_sal=825000)  # → int
+
+# Perpetual arb leagues: growth + ceiling model (calibrated from model_weights.json)
+arb_salary_perpetual(age=26, projected_war=4.0, dpw=21743, min_sal=6600,
+                     career_war=12.0, model=None)  # → int
+
 svc = estimate_service_time(conn, player_id)                            # → float (years)
 ctrl, sals, pre_arb = estimate_control(conn, player_id, age, salary)   # → (int, list, int) or (None,None,None)
 ```
@@ -518,9 +525,10 @@ Import with `sys.path.insert(0, 'web')`. All are read-only against the DB.
 | Function | Returns |
 |---|---|
 | `get_summary(team_id)` | KPI summary — game date, surplus, FV50 count |
-| `get_standings()` | All 34 teams — W/L, pct, RS/RA, pythagorean, division |
+| `get_standings()` | All teams — W/L, pct, RS/RA, pythagorean, division |
 | `get_division_standings(team_id)` | Division-only standings for a team |
 | `get_power_rankings()` | Composite rankings — pyth, L10, RD/G, surplus |
+| `get_head_to_head_matrix(year)` | Full NxN team-vs-team W-L matrix for a season |
 | `get_roster(team_id)` | Full MLB roster with ratings, contract, surplus |
 | `get_roster_hitters(team_id)` | Hitters with full stat lines and ratings |
 | `get_roster_pitchers(team_id)` | Pitchers with full stat lines and ratings |

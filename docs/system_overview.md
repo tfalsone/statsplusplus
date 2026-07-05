@@ -350,7 +350,7 @@ MLB players use a three-tab layout (Overview / Stats / Contract). Prospects disp
 | `web/percentiles.py` | Percentile rankings — hitter + pitcher, with expected range markers and performance tags |
 | `web/templates/team.html` | Team page — standings, stats, roster, contracts, farm |
 | `web/templates/player.html` | Player detail template with macros (`grade`, `pctile_grid`) and `toggleSplits()` JS |
-| `web/templates/league.html` | League page — vitals KPIs, standings, power rankings, prospects tab, trade tab, draft tab (side-by-side layout: board left, detail/picks sidebar right, settings modal with per-round-group sliders) |
+| `web/templates/league.html` | League page — vitals KPIs, standings, power rankings, prospects tab, standings tab (expanded + H2H matrix), rankings tab, trade tab, draft tab (side-by-side layout: board left, detail/picks sidebar right, settings modal with per-round-group sliders) |
 | `web/static/style.css` | Dark theme, grade bar tiers, percentile styling, rank coloring, draft bar chart styles |
 | `web/static/sort.js` | Client-side table sorting (numeric, string, positional spectrum) with smart rank renumbering |
 
