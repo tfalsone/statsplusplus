@@ -35,6 +35,7 @@
 <hr class="kpi-divider">
 <div class="tab-bar">
   <button class="tab active" data-tab="overview">Overview</button>
+  <button class="tab" data-tab="standings">Standings</button>
   <button class="tab" data-tab="prospects">Prospects</button>
   <button class="tab" data-tab="rankings">Rankings</button>
   <button class="tab" data-tab="trade">Trade</button>
@@ -80,96 +81,6 @@
       {% for lg in league_groups %}
         {% for div in lg.divisions %}{{ div_card(div, lg.color) }}{% endfor %}
       {% endfor %}
-    </div>
-
-    {# Expanded Standings — tabbed: Expanded | Head-to-Head #}
-    <div class="panel league-expanded-standings">
-      <div class="panel-tabs">
-        <button class="panel-tab active" onclick="showStandingsTab('expanded')">Expanded</button>
-        <button class="panel-tab" onclick="showStandingsTab('h2h')">Head-to-Head</button>
-      </div>
-
-      <div id="standings-expanded" class="standings-tab-content">
-        <div class="table-scroll">
-          <table class="sortable">
-            <thead>
-              <tr>
-                <th data-sort="num">#</th>
-                <th data-sort="str" class="left">Team</th>
-                <th data-sort="num">W</th>
-                <th data-sort="num" data-sort-best="low">L</th>
-                <th data-sort="num">Pct</th>
-                <th data-sort="num">PW</th>
-                <th data-sort="num" data-sort-best="low">PL</th>
-                <th data-sort="num">Diff</th>
-                <th data-sort="num">RS</th>
-                <th data-sort="num" data-sort-best="low">RA</th>
-                <th data-sort="num">RD</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for r in standings %}
-              <tr{% if r.tid == my_team_id %} class="highlight"{% endif %}>
-                <td>{{ r.rank }}</td>
-                <td class="left"><a class="team-link" href="/team/{{ r.tid }}">{{ r.name }}</a></td>
-                <td>{{ r.w }}</td>
-                <td>{{ r.l }}</td>
-                <td>{{ "%.3f"|format(r.pct) }}</td>
-                <td>{{ r.pyth_w }}</td>
-                <td>{{ r.pyth_l }}</td>
-                <td class="{{ 'text-green' if r.w - r.pyth_w > 1 else ('text-red' if r.pyth_w - r.w > 1 else '') }}">
-                  {{ "%+.0f"|format(r.w - r.pyth_w) if r.has_actual else '—' }}</td>
-                <td>{{ r.rs }}</td>
-                <td>{{ r.ra }}</td>
-                <td class="{{ 'text-green' if r.diff > 0 else ('text-red' if r.diff < 0 else '') }}">
-                  {{ "%+d"|format(r.diff) if r.diff else '—' }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div id="standings-h2h" class="standings-tab-content" style="display:none">
-        {% if h2h %}
-        <div class="table-scroll h2h-scroll">
-          <table class="h2h-matrix">
-            <thead>
-              <tr>
-                <th class="left">Team</th>
-                {% for tid, abbr in h2h.teams %}
-                <th class="h2h-col" title="{{ abbr }}">{{ abbr }}</th>
-                {% endfor %}
-              </tr>
-            </thead>
-            <tbody>
-              {% for tid, abbr in h2h.teams %}
-              <tr{% if tid == my_team_id %} class="highlight"{% endif %}>
-                <td class="left h2h-row-label"><a class="team-link" href="/team/{{ tid }}">{{ abbr }}</a></td>
-                {% for opp_tid, opp_abbr in h2h.teams %}
-                  {% if tid == opp_tid %}
-                  <td class="h2h-cell h2h-self">—</td>
-                  {% else %}
-                    {% set rec = h2h.matrix.get(tid, {}).get(opp_tid, {}) %}
-                    {% set w = rec.get('w', 0) %}
-                    {% set l = rec.get('l', 0) %}
-                    {% if w + l > 0 %}
-                    <td class="h2h-cell {{ 'h2h-win' if w > l else ('h2h-lose' if l > w else 'h2h-even') }}"
-                        title="{{ abbr }} vs {{ opp_abbr }}: {{ w }}-{{ l }}">{{ w }}-{{ l }}</td>
-                    {% else %}
-                    <td class="h2h-cell h2h-none">—</td>
-                    {% endif %}
-                  {% endif %}
-                {% endfor %}
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% else %}
-        <p class="text-dim">No game data available for head-to-head matrix.</p>
-        {% endif %}
-      </div>
     </div>
 
     {# Power Rankings — scrollable #}
@@ -228,6 +139,100 @@
   </div>
 
 </div>
+</div>
+
+{# ══════ Standings Tab ══════ #}
+<div class="tab-content" id="tab-standings">
+  <div class="league-expanded-standings">
+    <div class="panel-tabs">
+      <button class="panel-tab active" onclick="showStandingsTab('expanded')">Expanded</button>
+      <button class="panel-tab" onclick="showStandingsTab('h2h')">Head-to-Head</button>
+    </div>
+
+    <div id="standings-expanded" class="standings-tab-content">
+      <div class="table-scroll">
+        <table class="sortable">
+          <thead>
+            <tr>
+              <th data-sort="num">#</th>
+              <th data-sort="str" class="left">Team</th>
+              <th data-sort="str" class="left">Div</th>
+              <th data-sort="num">W</th>
+              <th data-sort="num" data-sort-best="low">L</th>
+              <th data-sort="num">Pct</th>
+              <th data-sort="num">PW</th>
+              <th data-sort="num" data-sort-best="low">PL</th>
+              <th data-sort="num">Diff</th>
+              <th data-sort="num">RS</th>
+              <th data-sort="num" data-sort-best="low">RA</th>
+              <th data-sort="num">RD</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in standings %}
+            <tr{% if r.tid == my_team_id %} class="highlight"{% endif %}>
+              <td>{{ r.rank }}</td>
+              <td class="left"><a class="team-link" href="/team/{{ r.tid }}">{{ r.name }}</a></td>
+              <td class="left text-dim">{{ r.div }}</td>
+              <td>{{ r.w }}</td>
+              <td>{{ r.l }}</td>
+              <td>{{ "%.3f"|format(r.pct) }}</td>
+              <td>{{ r.pyth_w }}</td>
+              <td>{{ r.pyth_l }}</td>
+              <td class="{{ 'text-green' if r.w - r.pyth_w > 1 else ('text-red' if r.pyth_w - r.w > 1 else '') }}">
+                {{ "%+.0f"|format(r.w - r.pyth_w) if r.has_actual else '—' }}</td>
+              <td>{{ r.rs }}</td>
+              <td>{{ r.ra }}</td>
+              <td class="{{ 'text-green' if r.diff > 0 else ('text-red' if r.diff < 0 else '') }}">
+                {{ "%+d"|format(r.diff) if r.diff else '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="standings-h2h" class="standings-tab-content" style="display:none">
+      {% if h2h %}
+      <div class="table-scroll h2h-scroll">
+        <table class="h2h-matrix">
+          <thead>
+            <tr>
+              <th class="left">Team</th>
+              {% for tid, abbr in h2h.teams %}
+              <th class="h2h-col" title="{{ abbr }}">{{ abbr }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for tid, abbr in h2h.teams %}
+            <tr{% if tid == my_team_id %} class="highlight"{% endif %}>
+              <td class="left h2h-row-label"><a class="team-link" href="/team/{{ tid }}">{{ abbr }}</a></td>
+              {% for opp_tid, opp_abbr in h2h.teams %}
+                {% if tid == opp_tid %}
+                <td class="h2h-cell h2h-self">—</td>
+                {% else %}
+                  {% set rec = h2h.matrix.get(tid, {}).get(opp_tid, {}) %}
+                  {% set w = rec.get('w', 0) %}
+                  {% set l = rec.get('l', 0) %}
+                  {% if w + l > 0 %}
+                  <td class="h2h-cell {{ 'h2h-win' if w > l else ('h2h-lose' if l > w else 'h2h-even') }}"
+                      title="{{ abbr }} vs {{ opp_abbr }}: {{ w }}-{{ l }}">{{ w }}-{{ l }}</td>
+                  {% else %}
+                  <td class="h2h-cell h2h-none">—</td>
+                  {% endif %}
+                {% endif %}
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-dim">No game data available for head-to-head matrix.</p>
+      {% endif %}
+    </div>
+  </div>
 </div>
 
 {# ══════ Prospects Tab ══════ #}

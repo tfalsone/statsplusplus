@@ -326,9 +326,14 @@ def league():
     for lg in cfg.leagues:
         lg_divs = []
         for div_name, _tids in lg["divisions"].items():
+            # For multi-division leagues: "AL East", "NL Central", etc.
+            # For single-division leagues: division name == league name, use as-is.
             full_name = f"{lg['short']} {div_name}".strip()
+            # Try full_name first, then div_name alone (handles single-division leagues)
             if full_name in div_teams:
                 lg_divs.append({"name": full_name, "rows": div_teams[full_name]})
+            elif div_name in div_teams:
+                lg_divs.append({"name": div_name, "rows": div_teams[div_name]})
         league_groups.append({
             "name": lg["name"], "short": lg["short"],
             "color": lg["color"], "divisions": lg_divs,
