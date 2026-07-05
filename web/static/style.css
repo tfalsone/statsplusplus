@@ -1475,3 +1475,33 @@ td.stat-bad  { color: var(--red); }
   padding: 5px 14px; border-radius: 4px; font-size: 12px; cursor: pointer; font-weight: 500;
 }
 .ds-btn-primary:hover { filter: brightness(1.15); }
+
+/* ── Expanded Standings & Head-to-Head Matrix ── */
+.league-expanded-standings { margin-bottom: 16px; }
+.league-expanded-standings .panel-tabs {
+  display: flex; gap: 0; margin-bottom: 12px; border-bottom: 1px solid var(--border);
+}
+.league-expanded-standings .panel-tab {
+  background: none; border: none; color: var(--dim); padding: 6px 14px;
+  font-size: 12px; cursor: pointer; border-bottom: 2px solid transparent;
+  font-weight: 500;
+}
+.league-expanded-standings .panel-tab.active {
+  color: var(--fg); border-bottom-color: var(--accent);
+}
+.league-expanded-standings .panel-tab:hover { color: var(--fg); }
+
+.h2h-scroll { overflow-x: auto; }
+.h2h-matrix { border-collapse: collapse; font-size: 11px; white-space: nowrap; }
+.h2h-matrix th, .h2h-matrix td { padding: 3px 5px; text-align: center; }
+.h2h-matrix th.left, .h2h-matrix td.left { text-align: left; }
+.h2h-col { font-size: 10px; writing-mode: vertical-lr; transform: rotate(180deg); min-width: 28px; }
+.h2h-row-label { font-weight: 500; min-width: 40px; position: sticky; left: 0; background: var(--bg); z-index: 1; }
+.h2h-cell { min-width: 38px; border: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.h2h-self { background: var(--bg2); color: var(--dim); }
+.h2h-win { background: rgba(80, 200, 120, 0.12); color: var(--green); }
+.h2h-lose { background: rgba(255, 100, 100, 0.08); color: var(--red); }
+.h2h-even { color: var(--dim); }
+.h2h-none { color: var(--dim); font-size: 10px; }
+.h2h-matrix tr.highlight td { background: rgba(80, 140, 255, 0.06); }
+.h2h-matrix tr.highlight .h2h-self { background: var(--bg2); }

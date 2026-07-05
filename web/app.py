@@ -381,6 +381,9 @@ def league():
     # Positional rankings
     pos_rankings = queries.get_positional_rankings()
 
+    # Head-to-head matrix for expanded standings
+    h2h = queries.get_head_to_head_matrix()
+
     return render_template("league.html", league_groups=league_groups,
                            prospects=prospects, all_prospects=all_prospects,
                            bat_leaders=bat_leaders,
@@ -390,6 +393,7 @@ def league():
                            season_remaining=round(season_remaining, 3),
                            draft_pool=draft_pool, draft_depth=draft_depth,
                            pos_rankings=pos_rankings,
+                           standings=standings, h2h=h2h,
                            num_teams=len(cfg.mlb_team_ids))
 
 

@@ -2230,3 +2230,72 @@ def get_minor_league_notables(team_id):
         })
 
     return notables
+
+
+def get_head_to_head_matrix(year=None):
+    """Full team-vs-team W-L matrix for the current year.
+
+    Returns:
+        {
+            "teams": [(tid, abbr), ...],  # sorted by standings
+            "matrix": {tid: {opp_tid: {"w": int, "l": int}, ...}, ...}
+        }
+    """
+    from web_league_context import get_db
+    state = _get_state()
+    conn = get_db()
+    year = year or state.get("stats_year", state["year"])
+
+    # Get MLB team IDs and abbreviations
+    cfg = get_cfg()
+    abbr_map = cfg.team_abbr_map
+
+    # Fetch all games for the year
+    games = conn.execute("""
+        SELECT home_team, away_team, runs0, runs1
+        FROM games
+        WHERE date LIKE ? AND played = 1 AND game_type = 0
+    """, (f"{year}%",)).fetchall()
+
+    # Fall back to prior year if no games (preseason)
+    if not games:
+        year = year - 1
+        games = conn.execute("""
+            SELECT home_team, away_team, runs0, runs1
+            FROM games
+            WHERE date LIKE ? AND played = 1 AND game_type = 0
+        """, (f"{year}%",)).fetchall()
+
+    if not games:
+        return None
+
+    # Build W-L matrix
+    # runs0 = away team runs, runs1 = home team runs
+    from collections import defaultdict
+    matrix = defaultdict(lambda: defaultdict(lambda: {"w": 0, "l": 0}))
+    team_wins = defaultdict(int)
+    team_losses = defaultdict(int)
+
+    for g in games:
+        home, away, away_runs, home_runs = g[0], g[1], g[2], g[3]
+        if home_runs > away_runs:
+            # Home wins
+            matrix[home][away]["w"] += 1
+            matrix[away][home]["l"] += 1
+            team_wins[home] += 1
+            team_losses[away] += 1
+        else:
+            # Away wins
+            matrix[away][home]["w"] += 1
+            matrix[home][away]["l"] += 1
+            team_wins[away] += 1
+            team_losses[home] += 1
+
+    # Sort teams by win pct (standings order)
+    all_tids = sorted(set(team_wins) | set(team_losses))
+    teams_sorted = sorted(all_tids, key=lambda t: team_wins[t] / max(1, team_wins[t] + team_losses[t]), reverse=True)
+
+    teams_out = [(tid, abbr_map.get(tid, "?")) for tid in teams_sorted]
+    matrix_out = {tid: dict(matrix[tid]) for tid in teams_sorted}
+
+    return {"teams": teams_out, "matrix": matrix_out, "year": year}
