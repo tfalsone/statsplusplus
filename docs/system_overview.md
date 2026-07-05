@@ -303,7 +303,7 @@ Local Flask app at `web/`. Dark theme, monospace font, no CSS/JS frameworks.
 | `/api/draft-sim` | JSON | POST — run draft simulation (`{pick, rounds, seed}`). Returns projected picks. Uses saved draft settings. |
 | `/api/draft-upload-list` | JSON | POST — generate urgency-greedy auto-draft list (`{top}`). Writes file + returns preview. Uses saved draft settings. |
 | `/api/draft-settings` | JSON | GET — load current draft settings (round groups, slider values). POST — save settings. |
-| `/api/draft-settings/copy` | JSON | POST — copy one round group's parameters to another (`{from_group, to_group}`). |
+| `/api/draft-settings/copy` | JSON | POST — copy draft settings from another league to the active league (`{from_league}`). |
 | `/api/open-file-location` | JSON | POST — open system file explorer to a file's directory. |
 | `/api/org-players/<tid>` | JSON | GET — full org roster (MLB + farm) for trade tab |
 | `/api/trade-value` | JSON | POST — single-player trade valuation with retention support |

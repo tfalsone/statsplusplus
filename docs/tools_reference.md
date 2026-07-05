@@ -219,52 +219,60 @@ Draft board settings persistence and validation. Manages per-league, per-round-g
 slider configurations that control `draft_value()` and `build_pick_list()` behavior.
 
 ```python
-from scripts.draft_settings import load_settings, save_settings, get_defaults, resolve_params
+from pathlib import Path
+from draft_settings import load_settings, save_settings, copy_settings, map_to_params, resolve_for_round
 
-settings = load_settings()              # Load from config/draft_settings.json (or defaults)
-save_settings(settings)                 # Persist to disk
-defaults = get_defaults()               # Default settings object (all sliders at 0.5)
-params = resolve_params(settings, rd=3) # Resolve slider values for a specific round
+league_dir = Path("data/emlb")
+settings = load_settings(league_dir)              # Load from config/draft_settings.json (or defaults)
+save_settings(league_dir, settings)               # Validate and persist to disk
+params = resolve_for_round(settings, round_num=3) # Resolve mapped internal parameters for round 3
+raw_params = map_to_params({"upside": 0.75, "risk_tolerance": 0.5, ...})  # Manual slider→param mapping
+copy_settings(Path("data/vmlb"), league_dir)      # Copy settings between leagues
 ```
 
 **Settings structure:**
 ```json
 {
+  "version": 1,
   "round_groups": [
-    {"label": "Rounds 1-2", "rounds": [1, 2], "params": {...}},
-    {"label": "Rounds 3-5", "rounds": [3, 4, 5], "params": {...}},
-    {"label": "Rounds 6+", "rounds": [6, 7, 8, 9, 10], "params": {...}}
+    {"start": 1, "end": 3, "settings": {"upside": 0.5, "risk_tolerance": 0.5, ...}},
+    {"start": 4, "end": null, "settings": {"upside": 0.5, "risk_tolerance": 0.5, ...}}
   ],
-  "version": 1
+  "active_preset": "balanced"
 }
 ```
 
+The last round group must have `"end": null` (catch-all). Validation enforces no overlaps,
+proper ordering, and snaps slider values to the nearest discrete position.
+
 **11 slider parameters** (all 0.0–1.0, midpoint 0.5 = original hardcoded behavior):
 
-| Slider | Param key | 0.0 | 0.5 (default) | 1.0 |
-|--------|-----------|-----|----------------|-----|
-| Ceiling weight | `ceiling_weight` | 0.0× | 0.2× | 0.4× |
-| Risk tolerance | `risk_tolerance` | 2× penalties | 1× (standard) | 0× (ignore risk) |
-| Needs weight | `needs_weight` | No needs bonus | Standard (+1/+2) | 2× needs bonus |
-| Surplus weight | `surplus_weight` | No surplus in sort | Standard scale | 2× surplus weight |
-| Balance strength | `balance_strength` | No balance | Standard (target 45%) | Aggressive balance |
-| Arsenal weight | `arsenal_weight` | No arsenal adj | Standard (-2 to +1) | 2× arsenal |
-| Personality weight | `personality_weight` | No personality | Standard (±0.9 max) | 2× personality |
-| RP discount | `rp_discount` | No RP penalty | Standard (-2/-5) | Heavy RP penalty |
-| Control penalty | `control_penalty` | No ctl penalty | Standard (-3) | Heavy ctl penalty |
-| Contact penalty | `contact_penalty` | No cnt penalty | Standard (-2) | Heavy cnt penalty |
-| Survival threshold | `survival_threshold` | Tight (take BPA) | Standard (30+6√pos) | Wide (maximize deferrals) |
+| Slider | Setting key | Internal param | 0.0 | 0.5 (default) | 1.0 |
+|--------|-------------|----------------|-----|----------------|-----|
+| Upside vs Safety | `upside` | `ceiling_weight` | 0.0× | 0.2× | 0.4× |
+| Risk Tolerance | `risk_tolerance` | `risk_scale` | 2× penalties | 1× (standard) | 0× (ignore risk) |
+| Pitcher/Hitter Mix | `balance` | `balance_target` | 25% pitcher target | 45% (standard) | 65% pitcher target |
+| Organizational Need | `need` | `need_scale` | No needs bonus | 1.5× | 3× needs bonus |
+| Reliever Penalty | `rp_discount` | `rp_discount_scale` | 2× RP penalty | 1× (standard) | 0× (no penalty) |
+| Scouting Accuracy | `acc_penalty` | `acc_scale` | 2× Acc penalty | 1× (standard) | 0× (ignore Acc) |
+| Survival Strategy | `survival` | `survival_base/scale` | Tight (grab early) | 30+6√pos | Wide (let them fall) |
+| Personality Weight | `personality` | `personality_scale` | No personality | 1× (standard) | 2× personality |
+| Arsenal Penalty | `arsenal` | `arsenal_scale` | No arsenal adj | 1× (standard) | 2× arsenal |
+| Contact Floor | `contact_floor` | `contact_floor_scale` | No cnt penalty | 1× (standard) | 2× contact penalty |
+| Balance Enforcement | `balance_strength` | `balance_bonus` | No balance | 2.0 (standard) | 4.0 (aggressive) |
 
-**Presets:** `balanced` (all 0.5), `ceiling_first` (ceiling 1.0, risk 0.75, surplus 0.75),
-`safe_floor` (ceiling 0.0, risk 0.0, surplus 0.25), `pitcher_heavy` (balance 0.0, arsenal 1.0).
+**Presets:** `balanced` (all 0.5, need 0.25 early), `upside` (ceiling 1.0, risk 0.75, acc 0.25),
+`conservative` (ceiling 0.0, risk 0.25, acc 0.75, personality 0.75, arsenal 0.75),
+`org_needs` (need 1.0, everything else 0.5).
 
 **Web API endpoints:**
-- `GET /api/draft-settings` — returns current settings JSON
-- `POST /api/draft-settings` — saves settings (body: full settings object)
-- `POST /api/draft-settings/copy` — copies params between round groups (body: `{from_group, to_group}`)
+- `GET /api/draft-settings` — returns current settings JSON + preset definitions
+- `POST /api/draft-settings` — saves settings (body: `{settings: <full settings object>}`)
+- `POST /api/draft-settings/copy` — copies settings from another league (body: `{from_league: "<slug>"}`)
 
-Importable: `load_settings()`, `save_settings()`, `get_defaults()`, `resolve_params()`,
-`PRESETS`, `SLIDER_DEFS`.
+Importable: `load_settings(league_dir)`, `save_settings(league_dir, settings)`,
+`copy_settings(from_dir, to_dir)`, `map_to_params(normalized)`, `resolve_for_round(settings, round_num)`,
+`PRESETS`, `SETTING_KEYS`, `DEFAULT_SETTINGS`, `DEFAULT_PARAMS`.
 
 ### `scripts/refresh.py`
 

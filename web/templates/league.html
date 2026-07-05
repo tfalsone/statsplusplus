@@ -1390,6 +1390,12 @@ function updateGroupBounds(idx, newStart, newEnd) {
   updateDraftPresetButtons();
 }
 
+function _defaultSliderSettings() {
+  return {upside: 0.5, risk_tolerance: 0.5, balance: 0.5, need: 0.5,
+          rp_discount: 0.5, acc_penalty: 0.5, survival: 0.5,
+          personality: 0.5, arsenal: 0.5, contact_floor: 0.5, balance_strength: 0.5};
+}
+
 function addDraftRoundGroup() {
   var groups = _dsSettings.round_groups;
   var lastGroup = groups[groups.length - 1];
@@ -1398,7 +1404,7 @@ function addDraftRoundGroup() {
   var newGroup = {
     start: splitAt,
     end: null,
-    settings: {upside: 0.5, risk_tolerance: 0.5, balance: 0.5, need: 0.5}
+    settings: _defaultSliderSettings()
   };
   // Existing last group becomes bounded
   lastGroup.end = splitAt - 1;
@@ -1429,15 +1435,12 @@ function removeDraftRoundGroup(idx) {
 function applyDraftPreset(name) {
   if (!_dsPresets || !_dsPresets[name]) return;
   var preset = _dsPresets[name];
-  // Apply to all groups
+  // Apply all slider keys from preset to all groups
   var groups = _dsSettings.round_groups;
   for (var i = 0; i < groups.length; i++) {
-    groups[i].settings = {
-      upside: preset.upside,
-      risk_tolerance: preset.risk_tolerance,
-      balance: preset.balance,
-      need: preset.need
-    };
+    var s = _defaultSliderSettings();
+    for (var k in preset) { if (preset.hasOwnProperty(k)) s[k] = preset[k]; }
+    groups[i].settings = s;
   }
   _dsSettings.active_preset = name;
   renderDraftSettingsGroups();
@@ -1468,12 +1471,15 @@ function saveDraftSettings(closeAfter) {
 }
 
 function resetDraftSettings() {
-  // Reset to default settings
+  // Reset to default settings (all sliders at midpoint, need slightly lower for early rounds)
+  var s1 = _defaultSliderSettings();
+  s1.need = 0.25;
+  var s2 = _defaultSliderSettings();
   _dsSettings = {
     version: 1,
     round_groups: [
-      {start: 1, end: 3, settings: {upside: 0.5, risk_tolerance: 0.5, balance: 0.5, need: 0.25}},
-      {start: 4, end: null, settings: {upside: 0.5, risk_tolerance: 0.5, balance: 0.5, need: 0.5}}
+      {start: 1, end: 3, settings: s1},
+      {start: 4, end: null, settings: s2}
     ],
     active_preset: 'balanced'
   };

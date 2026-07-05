@@ -95,6 +95,12 @@ draft_value = FV
 | **Personality** | -0.9 to +0.9 | WE: ±0.5, INT: ±0.25, Lead: ±0.15 |
 | **Needs bonus** | +1/+2 | Org need at position, Rd3+ only |
 
+**Settings-aware mode:** When `config/draft_settings.json` exists, `draft_value()`
+accepts a `params` dict (from `draft_settings.resolve_for_round()`) that scales every
+component above. At midpoint (0.5), all scales are 1.0× — identical to the hardcoded
+defaults. CLI commands (`pick`, `upload`, `sim`) auto-load settings from disk.
+The `available` command does NOT use settings (pure BPA for mid-draft decisions).
+
 ---
 
 ## Two-List Merge (List Building)
@@ -197,6 +203,7 @@ the SP vs RP outcome is uncertain. Scouting can clarify command trajectory.
 | `latest_ratings` view | Full tool ratings (cur/pot), defense, speed, personality, pitches |
 | `players` table | Age, level, team assignment, game position |
 | `config/draft_pool.json` | Uploaded pool — exact player_ids eligible |
+| `config/draft_settings.json` | Per-round-group slider settings (loaded by `draft_settings.py`) |
 | `config/state.json` | `my_team_id` — the team we're drafting for |
 | `player_surplus` table | MLB roster surplus by position (org depth) |
 | `get_draft_org_depth(team_id)` | Per-position surplus totals (web/team_queries.py) |

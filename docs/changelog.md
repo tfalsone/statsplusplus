@@ -13,7 +13,7 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 - 5 discrete slider positions (0.0, 0.25, 0.5, 0.75, 1.0) mapping to labeled values
 - Midpoint (0.5) reproduces exact original hardcoded behavior — full backwards compatibility
 - User-defined round groups with independent parameter sets
-- Presets (balanced, ceiling-first, safe-floor, pitcher-heavy) apply uniformly then allow per-group customization
+- Presets (balanced, upside, conservative, org_needs) apply uniformly then allow per-group customization
 - Validation, copy-between-groups, and default resolution
 
 **Core sliders (always visible):**
@@ -47,7 +47,7 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 **Web UI — settings modal on draft tab:**
 - Gear button (⚙️) opens full settings modal with round group tabs
 - 4 core sliders always visible, 7 advanced sliders behind collapsible toggle
-- Preset buttons (Balanced, Ceiling, Safe, Pitcher-Heavy)
+- Preset buttons (Balanced, Upside, Conservative, Org Needs)
 - Save/Reset/Copy functionality
 - Auto-draft list and draft sim endpoints now load and apply saved settings
 
@@ -62,6 +62,13 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 - ADP falls back to `true_ceiling` when POT unavailable (for leagues without OVR/POT)
 - Depth indicators use league-relative ratios rather than absolute dollar thresholds
 - Settings are per-league (different leagues may need different draft strategies)
+
+### Post-commit fixes (Session 60b)
+
+- **JS slider state bugs** — `addDraftRoundGroup()`, `applyDraftPreset()`, and `resetDraftSettings()` only set 4 of 11 slider keys; advanced keys were dropped on group creation, preset application, and reset. Extracted `_defaultSliderSettings()` helper returning all 11 keys.
+- **Documentation accuracy** — Fixed `docs/tools_reference.md` (wrong function names, wrong JSON structure, wrong preset names), `docs/system_overview.md` (copy endpoint description), and `docs/changelog.md` (preset names).
+- **Test coverage** — Added 12 unit tests for `draft_settings.py` in `test_scripts.py` (validation, snapping, param mapping, round resolution, persistence roundtrip).
+- **Draft agent steering** — Added `config/draft_settings.json` to data sources and documented settings-aware mode in `.kiro/steering/draft-agent.md`.
 
 ---
 

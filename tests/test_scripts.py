@@ -648,3 +648,159 @@ class TestCalibrateCarryingTools:
         assert "pos_mean_war" in cal
         assert cal["n_qualified"] == 15
         assert cal["n_total"] == 35
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# draft_settings — validation, snapping, round resolution
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestDraftSettings:
+    """Unit tests for scripts/draft_settings.py."""
+
+    def test_snap_to_discrete_rounds_correctly(self):
+        from draft_settings import _snap_to_discrete
+        assert _snap_to_discrete(0.0) == 0.0
+        assert _snap_to_discrete(0.1) == 0.0
+        assert _snap_to_discrete(0.13) == 0.25
+        assert _snap_to_discrete(0.3) == 0.25
+        assert _snap_to_discrete(0.37) == 0.25
+        assert _snap_to_discrete(0.38) == 0.5
+        assert _snap_to_discrete(0.6) == 0.5
+        assert _snap_to_discrete(0.63) == 0.75
+        assert _snap_to_discrete(0.9) == 1.0
+        assert _snap_to_discrete(1.0) == 1.0
+
+    def test_snap_handles_invalid_input(self):
+        from draft_settings import _snap_to_discrete
+        assert _snap_to_discrete(None) == 0.5
+        assert _snap_to_discrete("abc") == 0.5
+        assert _snap_to_discrete(-1.0) == 0.0
+        assert _snap_to_discrete(5.0) == 1.0
+
+    def test_validate_rejects_overlapping_groups(self):
+        from draft_settings import _validate_and_normalize
+        import pytest
+        data = {
+            "round_groups": [
+                {"start": 1, "end": 5, "settings": {}},
+                {"start": 3, "end": None, "settings": {}},
+            ]
+        }
+        with pytest.raises(ValueError, match="overlap"):
+            _validate_and_normalize(data)
+
+    def test_validate_enforces_catch_all_on_last_group(self):
+        from draft_settings import _validate_and_normalize
+        data = {
+            "round_groups": [
+                {"start": 1, "end": 3, "settings": {}},
+                {"start": 4, "end": 7, "settings": {}},
+            ]
+        }
+        result = _validate_and_normalize(data)
+        # Last group should be forced to end=None
+        assert result["round_groups"][-1]["end"] is None
+
+    def test_validate_rejects_null_end_on_non_last_group(self):
+        from draft_settings import _validate_and_normalize
+        import pytest
+        data = {
+            "round_groups": [
+                {"start": 1, "end": None, "settings": {}},
+                {"start": 4, "end": None, "settings": {}},
+            ]
+        }
+        with pytest.raises(ValueError, match="Only the last"):
+            _validate_and_normalize(data)
+
+    def test_validate_fills_missing_keys_with_default(self):
+        from draft_settings import _validate_and_normalize, SETTING_KEYS
+        data = {
+            "round_groups": [
+                {"start": 1, "end": None, "settings": {"upside": 0.75}},
+            ]
+        }
+        result = _validate_and_normalize(data)
+        settings = result["round_groups"][0]["settings"]
+        # All keys should be present
+        for key in SETTING_KEYS:
+            assert key in settings
+        # Provided key preserved
+        assert settings["upside"] == 0.75
+        # Missing keys defaulted to 0.5
+        assert settings["risk_tolerance"] == 0.5
+
+    def test_map_to_params_midpoint_matches_defaults(self):
+        from draft_settings import map_to_params, DEFAULT_PARAMS
+        midpoint = {k: 0.5 for k in ("upside", "risk_tolerance", "balance", "need",
+                                       "rp_discount", "acc_penalty", "survival",
+                                       "personality", "arsenal", "contact_floor",
+                                       "balance_strength")}
+        result = map_to_params(midpoint)
+        for key, expected in DEFAULT_PARAMS.items():
+            assert abs(result[key] - expected) < 0.001, f"{key}: {result[key]} != {expected}"
+
+    def test_map_to_params_extremes(self):
+        from draft_settings import map_to_params
+        # All sliders at 0 — max safety
+        zeros = {k: 0.0 for k in ("upside", "risk_tolerance", "balance", "need",
+                                    "rp_discount", "acc_penalty", "survival",
+                                    "personality", "arsenal", "contact_floor",
+                                    "balance_strength")}
+        result = map_to_params(zeros)
+        assert result["ceiling_weight"] == 0.0
+        assert result["risk_scale"] == 2.0
+        assert result["need_scale"] == 0.0
+
+        # All sliders at 1 — max aggression
+        ones = {k: 1.0 for k in zeros}
+        result = map_to_params(ones)
+        assert result["ceiling_weight"] == 0.4
+        assert result["risk_scale"] == 0.0
+        assert result["need_scale"] == 3.0
+
+    def test_resolve_for_round_selects_correct_group(self):
+        from draft_settings import resolve_for_round, DEFAULT_SETTINGS
+        import copy
+        settings = copy.deepcopy(DEFAULT_SETTINGS)
+        # Group 1: rounds 1-3, upside=0.5 (default)
+        # Group 2: rounds 4+, upside=0.5 (default)
+        settings["round_groups"][0]["settings"]["upside"] = 1.0
+        settings["round_groups"][1]["settings"]["upside"] = 0.0
+
+        params_rd1 = resolve_for_round(settings, 1)
+        params_rd5 = resolve_for_round(settings, 5)
+        # Round 1 should use group 0 (upside=1.0 → ceiling_weight=0.4)
+        assert params_rd1["ceiling_weight"] == 0.4
+        # Round 5 should use group 1 (upside=0.0 → ceiling_weight=0.0)
+        assert params_rd5["ceiling_weight"] == 0.0
+
+    def test_load_settings_returns_defaults_for_missing_file(self, tmp_path):
+        from draft_settings import load_settings, DEFAULT_SETTINGS
+        result = load_settings(tmp_path)
+        assert result["version"] == DEFAULT_SETTINGS["version"]
+        assert len(result["round_groups"]) == len(DEFAULT_SETTINGS["round_groups"])
+
+    def test_save_and_load_roundtrip(self, tmp_path):
+        from draft_settings import load_settings, save_settings
+        settings = load_settings(tmp_path)
+        settings["round_groups"][0]["settings"]["upside"] = 0.75
+        save_settings(tmp_path, settings)
+        loaded = load_settings(tmp_path)
+        assert loaded["round_groups"][0]["settings"]["upside"] == 0.75
+
+    def test_copy_settings_between_dirs(self, tmp_path):
+        from draft_settings import load_settings, save_settings, copy_settings
+        src = tmp_path / "league_a"
+        dst = tmp_path / "league_b"
+        src.mkdir()
+        dst.mkdir()
+        settings = load_settings(src)
+        settings["round_groups"][0]["settings"]["need"] = 1.0
+        save_settings(src, settings)
+
+        copied = copy_settings(src, dst)
+        assert copied["round_groups"][0]["settings"]["need"] == 1.0
+        # Verify it was persisted
+        loaded = load_settings(dst)
+        assert loaded["round_groups"][0]["settings"]["need"] == 1.0
