@@ -9,7 +9,7 @@ Implements Step 3 of docs/trade_analysis_guide.md.
 import argparse, json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from player_utils import dollars_per_war, league_minimum, POSITIONAL_WAR_ADJUSTMENTS, aging_mult, LEVEL_NORM_AGE, peak_war_from_ovr
-from arb_model import arb_salary
+from arb_model import arb_salary, arb_salary_perpetual as _arb_salary_perp
 from constants import ARB_PCT, FV_TO_PEAK_WAR, FV_TO_PEAK_WAR_SP, FV_TO_PEAK_WAR_RP, FV_TO_PEAK_WAR_BY_POS, DEVELOPMENT_DISCOUNT, YEARS_TO_MLB, PROSPECT_DISCOUNT_RATE, SCARCITY_MULT, LEVEL_AGE_DISCOUNT_RATE, PROSPECT_WAR_RAMP, NO_TRACK_RECORD_DISCOUNT
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -175,7 +175,29 @@ def prospect_surplus(fv, age, level, bucket, positional_adjust=False, fv_plus=Fa
 
         # Arb salary: raise-based model from arb_model.py
         # Arb is a raise system: arb 1 based on quality, arb 2-3 raise from prior
-        if ctrl_year <= 3:
+        try:
+            from league_config import config as _pv_cfg
+            _is_perpetual = _pv_cfg.perpetual_arb
+        except Exception:
+            _is_perpetual = False
+
+        if _is_perpetual:
+            # Perpetual arb: no pre-arb period. Salary = f(career_WAR, current_WAR).
+            # Accumulate projected career WAR from debut.
+            _cum_war = sum(r["war"] for r in rows) + war
+            _perp_model = None
+            try:
+                from league_context import get_league_dir
+                import json as _json
+                _mw_path = get_league_dir() / "config" / "model_weights.json"
+                if _mw_path.exists():
+                    _mw = _json.load(open(_mw_path))
+                    _perp_model = _mw.get("ARB_SALARY_MODEL")
+            except Exception:
+                pass
+            salary = _arb_salary_perp(player_age, war, dpw, lg_min,
+                                      career_war=_cum_war, model=_perp_model)
+        elif ctrl_year <= 3:
             salary = lg_min
         else:
             arb_yr = ctrl_year - 3
