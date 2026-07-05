@@ -5,6 +5,8 @@ Estimates player service time and remaining team control years from game
 appearance data. Used by contract_value.py and team_queries.py.
 
 Public API:
+  arb_salary(ovr, bucket, arb_year, prior_salary, min_sal)  → int
+  arb_salary_perpetual(age, projected_war, dpw, min_sal, model=None) → int
   estimate_service_time(conn, player_id)                    → float
   estimate_control(conn, player_id, age, salary, bucket)    → (ctrl_years, salaries, pre_arb_left)
 """
@@ -16,6 +18,72 @@ from constants import (
     ARB_HITTER_BASE, ARB_HITTER_EXP, ARB_RP_BASE, ARB_RP_EXP,
     ARB_RAISE_INTERCEPT, ARB_RAISE_SLOPE, ARB_RAISE_MIN,
 )
+
+# Default perpetual arb model parameters.
+# Calibrated from PPL cross-sectional data (1-year contracts, WAR >= 1.0).
+# Replaced by model_weights.json ARB_SALARY_MODEL when available.
+#
+# Model: salary = min(growth, ceiling), floor at min_sal
+#   growth  = min_sal + k × max(0, career_WAR - discount)^exp
+#   ceiling = ceiling_pct × current_WAR × $/WAR
+_DEFAULT_PERP_K = 2400              # $ per unit of effective career WAR^exp
+_DEFAULT_PERP_EXP = 0.72            # diminishing returns on career WAR accumulation
+_DEFAULT_PERP_DISCOUNT = 7.0        # career WAR threshold before salary moves ("proving it")
+_DEFAULT_PERP_CEILING_PCT = 0.35    # max salary as fraction of current market value
+
+
+def arb_salary_perpetual(age, projected_war, dpw, min_sal, career_war=0, model=None):
+    """Project salary for a perpetual arb league.
+
+    In perpetual arb, salary is recalculated yearly based on accumulated
+    track record (career WAR) with a ceiling tied to current production.
+    There is no pre-arb period and salaries can decrease if production declines.
+
+    Model: salary = min(growth, ceiling), floored at league minimum.
+      growth  = min_sal + k × max(0, career_WAR - discount)^exp
+      ceiling = ceiling_pct × current_WAR × $/WAR
+
+    The "discount" represents the career WAR threshold before salary moves
+    significantly (the "proving it" effect — one good year barely moves the
+    needle). The ceiling caps salary at a fraction of market value and
+    naturally ties salary to current production (drops when WAR drops).
+
+    Args:
+        age: Player age for the projected year.
+        projected_war: WAR projection for that year.
+        dpw: League dollars-per-WAR.
+        min_sal: League minimum salary.
+        career_war: Cumulative career WAR entering this year.
+        model: Optional calibrated model dict from model_weights.json
+               with keys: k, exp, discount, ceiling_pct.
+
+    Returns:
+        Projected salary as integer.
+    """
+    if model:
+        k = model.get("k", _DEFAULT_PERP_K)
+        exp = model.get("exp", _DEFAULT_PERP_EXP)
+        discount = model.get("discount", _DEFAULT_PERP_DISCOUNT)
+        ceiling_pct = model.get("ceiling_pct", _DEFAULT_PERP_CEILING_PCT)
+    else:
+        k = _DEFAULT_PERP_K
+        exp = _DEFAULT_PERP_EXP
+        discount = _DEFAULT_PERP_DISCOUNT
+        ceiling_pct = _DEFAULT_PERP_CEILING_PCT
+
+    # Growth formula: salary ramps with accumulated career production
+    effective_war = max(0, career_war - discount)
+    if effective_war > 0:
+        growth_sal = min_sal + k * (effective_war ** exp)
+    else:
+        growth_sal = min_sal
+
+    # Ceiling: salary can't exceed ceiling_pct of current market value
+    ceiling_sal = ceiling_pct * projected_war * dpw if projected_war > 0 else min_sal
+
+    # Final: minimum of growth and ceiling, floored at league minimum
+    salary = max(min_sal, min(growth_sal, ceiling_sal))
+    return int(round(salary))
 
 
 def arb_salary(ovr, bucket, arb_year, prior_salary, min_sal):

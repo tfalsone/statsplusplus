@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db
 from player_utils import assign_bucket, dollars_per_war, league_minimum, \
     peak_war_from_ovr, aging_mult, load_stat_history, stat_peak_war
-from arb_model import estimate_control, arb_salary as _arb_salary
+from arb_model import estimate_control, arb_salary as _arb_salary, arb_salary_perpetual as _arb_salary_perp
 from constants import ARB_PCT, MLB_SCARCITY, \
     PEAK_AGE_PITCHER, PEAK_AGE_HITTER, \
     NO_TRACK_RECORD_DISCOUNT
@@ -18,6 +18,27 @@ from constants import ARB_PCT, MLB_SCARCITY, \
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 _state_cache = {}
+_perp_arb_model_cache = {}
+
+
+def _load_perp_arb_model():
+    """Load calibrated perpetual arb salary model from model_weights.json.
+
+    Returns the model dict (with "curve" key) or None if not calibrated.
+    Cached after first load.
+    """
+    if "model" not in _perp_arb_model_cache:
+        try:
+            from league_context import get_league_dir
+            mw_path = get_league_dir() / "config" / "model_weights.json"
+            if mw_path.exists():
+                mw = json.load(open(mw_path))
+                _perp_arb_model_cache["model"] = mw.get("ARB_SALARY_MODEL")
+            else:
+                _perp_arb_model_cache["model"] = None
+        except Exception:
+            _perp_arb_model_cache["model"] = None
+    return _perp_arb_model_cache["model"]
 
 def _get_state():
     if not _state_cache:
@@ -168,6 +189,22 @@ def contract_value(player_id, retention_pct=0.0, _conn=None, _hist=None):
     totals   = {s: 0.0 for s in SENSITIVITY}
     breakdown = []
 
+    # For perpetual arb: track cumulative career WAR (used by salary model)
+    _career_war_accum = 0.0
+    try:
+        from league_config import config as _cfg_init
+        if _cfg_init.perpetual_arb:
+            # Sum prior career WAR from stats
+            _cw_bat = conn.execute(
+                "SELECT COALESCE(SUM(war), 0) FROM batting_stats WHERE player_id=? AND split_id=1",
+                (pid,)).fetchone()[0]
+            _cw_pit = conn.execute(
+                "SELECT COALESCE(SUM((war + COALESCE(ra9war, war))/2.0), 0) FROM pitching_stats WHERE player_id=? AND split_id=1",
+                (pid,)).fetchone()[0]
+            _career_war_accum = (_cw_bat or 0) + (_cw_pit or 0)
+    except Exception:
+        pass
+
     for i in range(remaining):
         a = age + i
 
@@ -194,10 +231,15 @@ def contract_value(player_id, retention_pct=0.0, _conn=None, _hist=None):
         # Determine salary for this year
         if ctrl_type == "estimated" and i > 0:
             # Year 0 uses actual contract salary; future years are projected
-            # Arb salary model calibrated to OOTP arb outcomes.
-            # RPs use a separate exponential (566K * exp(0.0294 * Ovr)) with
-            # 25% annual raises — calibrated from 35 RP arb contracts.
-            if i < pre_arb_left:
+            from league_config import config as _cfg_cv
+            if _cfg_cv.perpetual_arb:
+                # Perpetual arb: salary based on career WAR accumulation + ceiling
+                # Salary can decrease if WAR declines. No pre-arb concept.
+                _perp_model = _load_perp_arb_model()
+                _career_war_accum += war_base
+                sal_full = _arb_salary_perp(a, war_base, dpw, min_sal,
+                                            career_war=_career_war_accum, model=_perp_model)
+            elif i < pre_arb_left:
                 sal_full = min_sal
             else:
                 arb_yr = i - pre_arb_left + 1  # 1-indexed
@@ -207,7 +249,7 @@ def contract_value(player_id, retention_pct=0.0, _conn=None, _hist=None):
             # the team would non-tender — truncate control here.
             # Threshold at 2× to avoid premature truncation for borderline players.
             mkt_val = war_base * dpw * scarcity
-            if i >= pre_arb_left and sal_full > max(mkt_val * 2, min_sal):
+            if not _cfg_cv.perpetual_arb and i >= pre_arb_left and sal_full > max(mkt_val * 2, min_sal):
                 break
         elif ext_start is not None and i >= ext_start:
             ext_idx = i - ext_start

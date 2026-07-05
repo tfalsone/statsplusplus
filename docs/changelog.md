@@ -70,6 +70,7 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 - **Test coverage** — Added 12 unit tests for `draft_settings.py` in `test_scripts.py` (validation, snapping, param mapping, round resolution, persistence roundtrip).
 - **Draft agent steering** — Added `config/draft_settings.json` to data sources and documented settings-aware mode in `.kiro/steering/draft-agent.md`.
 - **Org needs for perpetual arb leagues** — Implemented `_compute_org_needs_weakness()`: compares team's positional starter composite vs league median (3rd-best SP for rotation depth), gated by farm FV 50+ depth. Thresholds: +2 if ≥5 below median with no farm help, +1 if ≥2 below with no farm help, +1 if ≥8 below even with farm help. FA leagues remain on departure-based logic (`_compute_org_needs_departures()`). Added 6 unit tests covering both paths.
+- **Arb salary model for perpetual arb leagues** — New `arb_salary_perpetual()` in `arb_model.py` uses a growth+ceiling formula calibrated from actual 1-year contract data. Growth: `min_sal + k × max(0, career_WAR - discount)^exp` (salary ramps with accumulated track record, "discount" captures proving-it threshold). Ceiling: `ceiling_pct × current_WAR × $/WAR` (caps salary at fraction of market value, allows decrease on decline). Calibration step added to `calibrate.py` — fits k, exp, discount, ceiling_pct from cross-sectional salary/career-WAR data. `contract_value.py` dispatches to the new model for perpetual arb leagues; FA leagues unchanged.
 
 ---
 

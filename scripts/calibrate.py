@@ -944,6 +944,148 @@ def _calibrate_arb_pct(conn, game_year, dpw):
 
 
 # ---------------------------------------------------------------------------
+# Step 3b: Perpetual arb salary model calibration
+# ---------------------------------------------------------------------------
+
+def _calibrate_arb_salary_model(conn, game_year, dpw):
+    """Calibrate the growth+ceiling arb salary model for perpetual arb leagues.
+
+    Fits parameters from actual 1-year contract data:
+      salary = min(growth, ceiling), floor at min_sal
+      growth  = min_sal + k × max(0, career_WAR - discount)^exp
+      ceiling = ceiling_pct × current_WAR × $/WAR
+
+    Only uses players on 1-year contracts (true arb, not long-term deals).
+    Requires WAR >= 0.5 and at least 30 qualifying players.
+
+    Returns dict with keys: k, exp, discount, ceiling_pct, calibration_n.
+    Returns None if insufficient data.
+    """
+    import math
+    import statistics
+
+    min_sal = _cfg.minimum_salary
+
+    # Gather 1-year contract players with career WAR data
+    rows = conn.execute("""
+        SELECT p.player_id, p.age, c.salary_0
+        FROM players p
+        JOIN contracts c ON p.player_id = c.player_id
+        WHERE p.level = '1' AND c.years = 1
+    """).fetchall()
+
+    data = []
+    for r in rows:
+        pid = r["player_id"]
+        sal = r["salary_0"] or 0
+        if sal < min_sal:
+            continue
+
+        # Career WAR (sum of all seasons)
+        career_bat = conn.execute(
+            "SELECT COALESCE(SUM(war), 0) FROM batting_stats WHERE player_id=? AND split_id=1",
+            (pid,)).fetchone()[0]
+        career_pit = conn.execute(
+            "SELECT COALESCE(SUM((war + COALESCE(ra9war, war))/2.0), 0) FROM pitching_stats WHERE player_id=? AND split_id=1",
+            (pid,)).fetchone()[0]
+        career_war = (career_bat or 0) + (career_pit or 0)
+
+        # Prior year WAR (for ceiling fitting)
+        prior_bat = conn.execute(
+            "SELECT COALESCE(SUM(war), 0) FROM batting_stats WHERE player_id=? AND split_id=1 AND year=?",
+            (pid, game_year - 1)).fetchone()[0]
+        prior_pit = conn.execute(
+            "SELECT COALESCE(SUM((war + COALESCE(ra9war, war))/2.0), 0) FROM pitching_stats WHERE player_id=? AND split_id=1 AND year=?",
+            (pid, game_year - 1)).fetchone()[0]
+        prior_war = max((prior_bat or 0), (prior_pit or 0))
+
+        if career_war < 0.5:
+            continue
+
+        data.append({
+            "salary": sal, "career_war": career_war,
+            "prior_war": prior_war, "age": r["age"],
+        })
+
+    if len(data) < 30:
+        return None
+
+    # --- Fit growth parameters via log-log regression ---
+    # Model: salary - min_sal = k × max(0, career_war - discount)^exp
+    # Try discount values and pick the one with best fit
+
+    best_r2 = -1
+    best_params = None
+
+    for discount_try in [3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]:
+        log_data = []
+        for d in data:
+            effective = d["career_war"] - discount_try
+            excess_sal = d["salary"] - min_sal
+            if effective > 0.5 and excess_sal > 0:
+                log_data.append((math.log(effective), math.log(excess_sal)))
+
+        if len(log_data) < 20:
+            continue
+
+        # Linear regression on log-log: log(sal - min) = log(k) + exp × log(eff_war)
+        n = len(log_data)
+        sx = sum(x for x, y in log_data)
+        sy = sum(y for x, y in log_data)
+        sxy = sum(x * y for x, y in log_data)
+        sxx = sum(x * x for x, y in log_data)
+
+        denom = n * sxx - sx * sx
+        if denom == 0:
+            continue
+
+        exp_fit = (n * sxy - sx * sy) / denom
+        log_k_fit = (sy - exp_fit * sx) / n
+        k_fit = math.exp(log_k_fit)
+
+        # R² calculation
+        y_mean = sy / n
+        ss_tot = sum((y - y_mean) ** 2 for x, y in log_data)
+        ss_res = sum((y - (log_k_fit + exp_fit * x)) ** 2 for x, y in log_data)
+        r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
+
+        if r2 > best_r2:
+            best_r2 = r2
+            best_params = (k_fit, exp_fit, discount_try)
+
+    if best_params is None:
+        return None
+
+    k, exp, discount = best_params
+
+    # Sanity clamp: exp should be 0.5-1.5, k > 0
+    exp = max(0.5, min(1.5, exp))
+    k = max(100, k)
+
+    # --- Fit ceiling_pct ---
+    # For established players (career_war > 15, prior_war > 2), salary should be
+    # hitting the ceiling. ceiling_pct = median(salary / (prior_war × dpw))
+    ceiling_data = [d["salary"] / (d["prior_war"] * dpw)
+                    for d in data
+                    if d["career_war"] > 15 and d["prior_war"] > 2.0 and d["prior_war"] * dpw > 0]
+
+    if len(ceiling_data) >= 10:
+        ceiling_pct = statistics.median(ceiling_data)
+        ceiling_pct = max(0.20, min(0.80, ceiling_pct))  # sanity clamp
+    else:
+        ceiling_pct = 0.35  # fallback
+
+    return {
+        "k": round(k, 1),
+        "exp": round(exp, 3),
+        "discount": round(discount, 1),
+        "ceiling_pct": round(ceiling_pct, 3),
+        "calibration_n": len(data),
+        "calibration_r2": round(best_r2, 4),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Step 4: Scarcity curve
 # ---------------------------------------------------------------------------
 
@@ -1315,6 +1457,19 @@ def calibrate(dry_run=False):
         old = ARB_PCT[yr]
         print(f"  Arb {yr}: {arb_pct[yr]:.0%} (was {old:.0%})")
 
+    # Step 3b: Perpetual arb salary model (only for perpetual arb leagues)
+    arb_salary_model = None
+    if _cfg.perpetual_arb:
+        print("\n=== ARB_SALARY_MODEL (perpetual arb) ===")
+        arb_salary_model = _calibrate_arb_salary_model(conn, game_year, dpw)
+        if arb_salary_model:
+            print(f"  k={arb_salary_model['k']:.0f}, exp={arb_salary_model['exp']:.3f}, "
+                  f"discount={arb_salary_model['discount']:.1f}, "
+                  f"ceiling={arb_salary_model['ceiling_pct']:.0%}")
+            print(f"  N={arb_salary_model['calibration_n']}, R²={arb_salary_model['calibration_r2']:.4f}")
+        else:
+            print("  Insufficient data — using defaults")
+
     # Step 4: Scarcity
     print("\n=== SCARCITY_MULT ===")
     scarcity = _calibrate_scarcity(conn, game_date)
@@ -1417,6 +1572,10 @@ def calibrate(dry_run=False):
                           (scarcity if scarcity else SCARCITY_MULT).items()},
         "PAP_SCALE": pap_scale,
     }
+
+    # Add perpetual arb salary model when calibrated
+    if arb_salary_model:
+        weights["ARB_SALARY_MODEL"] = arb_salary_model
 
     # Add development curves when available
     if dev_curves:
