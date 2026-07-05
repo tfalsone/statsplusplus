@@ -190,7 +190,8 @@ contract info, surplus, and summary rewrite flags.
 
 ### `scripts/draft_board.py`
 
-Draft board analysis, simulation, and auto-draft list generation.
+Draft board analysis, simulation, and auto-draft list generation. CLI commands
+auto-load per-round-group settings from `config/draft_settings.json` (see `draft_settings.py`).
 
 ```bash
 python3 scripts/draft_board.py board [--top 30]           # Full ranked board (FV sort)
@@ -211,6 +212,59 @@ Sim uses randomized other-team picks (window `8+pick×0.15`, exponent `max(1.0, 
 
 Importable: `load_board()`, `draft_value()`, `compute_adp()`, `compute_org_needs()`,
 `build_pick_list()`, `build_urgency_list()`, `simulate_draft()`.
+
+### `scripts/draft_settings.py`
+
+Draft board settings persistence and validation. Manages per-league, per-round-group
+slider configurations that control `draft_value()` and `build_pick_list()` behavior.
+
+```python
+from scripts.draft_settings import load_settings, save_settings, get_defaults, resolve_params
+
+settings = load_settings()              # Load from config/draft_settings.json (or defaults)
+save_settings(settings)                 # Persist to disk
+defaults = get_defaults()               # Default settings object (all sliders at 0.5)
+params = resolve_params(settings, rd=3) # Resolve slider values for a specific round
+```
+
+**Settings structure:**
+```json
+{
+  "round_groups": [
+    {"label": "Rounds 1-2", "rounds": [1, 2], "params": {...}},
+    {"label": "Rounds 3-5", "rounds": [3, 4, 5], "params": {...}},
+    {"label": "Rounds 6+", "rounds": [6, 7, 8, 9, 10], "params": {...}}
+  ],
+  "version": 1
+}
+```
+
+**11 slider parameters** (all 0.0–1.0, midpoint 0.5 = original hardcoded behavior):
+
+| Slider | Param key | 0.0 | 0.5 (default) | 1.0 |
+|--------|-----------|-----|----------------|-----|
+| Ceiling weight | `ceiling_weight` | 0.0× | 0.2× | 0.4× |
+| Risk tolerance | `risk_tolerance` | 2× penalties | 1× (standard) | 0× (ignore risk) |
+| Needs weight | `needs_weight` | No needs bonus | Standard (+1/+2) | 2× needs bonus |
+| Surplus weight | `surplus_weight` | No surplus in sort | Standard scale | 2× surplus weight |
+| Balance strength | `balance_strength` | No balance | Standard (target 45%) | Aggressive balance |
+| Arsenal weight | `arsenal_weight` | No arsenal adj | Standard (-2 to +1) | 2× arsenal |
+| Personality weight | `personality_weight` | No personality | Standard (±0.9 max) | 2× personality |
+| RP discount | `rp_discount` | No RP penalty | Standard (-2/-5) | Heavy RP penalty |
+| Control penalty | `control_penalty` | No ctl penalty | Standard (-3) | Heavy ctl penalty |
+| Contact penalty | `contact_penalty` | No cnt penalty | Standard (-2) | Heavy cnt penalty |
+| Survival threshold | `survival_threshold` | Tight (take BPA) | Standard (30+6√pos) | Wide (maximize deferrals) |
+
+**Presets:** `balanced` (all 0.5), `ceiling_first` (ceiling 1.0, risk 0.75, surplus 0.75),
+`safe_floor` (ceiling 0.0, risk 0.0, surplus 0.25), `pitcher_heavy` (balance 0.0, arsenal 1.0).
+
+**Web API endpoints:**
+- `GET /api/draft-settings` — returns current settings JSON
+- `POST /api/draft-settings` — saves settings (body: full settings object)
+- `POST /api/draft-settings/copy` — copies params between round groups (body: `{from_group, to_group}`)
+
+Importable: `load_settings()`, `save_settings()`, `get_defaults()`, `resolve_params()`,
+`PRESETS`, `SLIDER_DEFS`.
 
 ### `scripts/refresh.py`
 

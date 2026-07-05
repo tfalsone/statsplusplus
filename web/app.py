@@ -476,7 +476,10 @@ def api_draft_detail(pid):
     from player_utils import height_str as _ht
     out = {
         "pid": pid, "name": p["name"], "age": p["age"], "pos": pos_str,
-        "ovr": r["ovr"], "pot": r["pot"],
+        "ovr": n(r["ovr"]) or r.get("composite_score") or 0,
+        "pot": n(r["pot"]) or r.get("true_ceiling") or r.get("ceiling_score") or 0,
+        "composite_score": r.get("composite_score"),
+        "true_ceiling": r.get("true_ceiling") or r.get("ceiling_score"),
         "height": _ht(r["height"]) if r["height"] else None,
         "bats": r["bats"], "throws": r["throws"],
         "acc": r["acc"], "inj": r["prone"],
@@ -597,10 +600,10 @@ def api_draft_pool_upload():
         if not pids:
             return jsonify({"ok": False, "error": "No valid player IDs found in file"}), 400
         # Store
-        pool_path = get_league_dir() / "config" / "draft_pool.json"
         _json = __import__("json")
+        pool_path = get_league_dir() / "config" / "draft_pool.json"
         pool_path.write_text(_json.dumps({"player_ids": pids}, indent=2))
-        return jsonify({"ok": True, "count": len(pids)})
+        return jsonify({"ok": True, "total": len(pids)})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
@@ -612,14 +615,20 @@ def api_draft_sim():
 
     try:
         from draft_board import (load_board, simulate_draft, draft_value)
+        from draft_settings import load_settings
+        from league_context import get_league_dir
 
+        league_dir = get_league_dir()
         rows, adp, needs, num_teams, conn = load_board()
         pick_pos = data.get("pick", 30)
         num_rounds = data.get("rounds", 7)
         seed = data.get("seed")
-        seed = data.get("seed")
 
-        our_picks, _ = simulate_draft(rows, adp, needs, num_teams, pick_pos, num_rounds, seed)
+        # Load settings: use request body override if provided, else saved file
+        settings = data.get("settings") or load_settings(league_dir)
+
+        our_picks, _ = simulate_draft(rows, adp, needs, num_teams, pick_pos,
+                                      num_rounds, seed, settings=settings)
 
         picks_out = [{"round": rd, "overall": (rd - 1) * num_teams + slot,
                       "pid": r["player_id"], "name": r["name"],
@@ -638,19 +647,26 @@ def api_draft_sim():
 
 @app.route("/api/draft-upload-list", methods=["POST"])
 def api_draft_upload_list():
-    """Generate the urgency-greedy auto-draft list and return it."""
+    """Generate the auto-draft list using saved settings and return it."""
     data = request.get_json(silent=True) or {}
     limit = data.get("top", 500)
 
     try:
         from draft_board import load_board, build_pick_list, compute_adp
+        from draft_settings import load_settings
         from league_context import get_league_dir
 
+        league_dir = get_league_dir()
         rows, adp, needs, num_teams, conn = load_board()
-        ordered = build_pick_list(rows, adp, needs, num_teams, min(limit, 500))
+
+        # Load settings: use request body override if provided, else saved file
+        settings = data.get("settings") or load_settings(league_dir)
+
+        ordered = build_pick_list(rows, adp, needs, num_teams, min(limit, 500),
+                                  settings=settings)
         ranked_ids = [str(r["player_id"]) for r in ordered]
 
-        out_path = get_league_dir() / "tmp" / "draft_upload.txt"
+        out_path = league_dir / "tmp" / "draft_upload.txt"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text("\n".join(ranked_ids) + "\n")
 
@@ -660,6 +676,71 @@ def api_draft_upload_list():
                    for i, r in enumerate(ordered[:30])]
         return jsonify({"ok": True, "count": len(ranked_ids),
                         "path": str(out_path), "preview": preview})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/draft-settings", methods=["GET"])
+def api_draft_settings_get():
+    """Return current draft board settings for the active league."""
+    try:
+        from draft_settings import load_settings, PRESETS
+        from league_context import get_league_dir
+        settings = load_settings(get_league_dir())
+        return jsonify({"ok": True, "settings": settings, "presets": PRESETS})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/draft-settings", methods=["POST"])
+def api_draft_settings_post():
+    """Save draft board settings for the active league."""
+    data = request.get_json(silent=True) or {}
+    settings = data.get("settings")
+    if not settings:
+        return jsonify({"ok": False, "error": "Missing 'settings' in request body"}), 400
+    try:
+        from draft_settings import save_settings
+        from league_context import get_league_dir
+        save_settings(get_league_dir(), settings)
+        return jsonify({"ok": True})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/draft-settings/copy", methods=["POST"])
+def api_draft_settings_copy():
+    """Copy draft settings from another league to the active league."""
+    data = request.get_json(silent=True) or {}
+    from_league = data.get("from_league")
+    if not from_league:
+        return jsonify({"ok": False, "error": "Missing 'from_league'"}), 400
+    try:
+        from draft_settings import copy_settings, load_settings
+        from league_context import get_league_dir
+        from pathlib import Path
+        import json as _json
+
+        # Resolve source league directory
+        app_config_path = Path("data/app_config.json")
+        if app_config_path.exists():
+            app_config = _json.loads(app_config_path.read_text())
+        else:
+            return jsonify({"ok": False, "error": "Cannot find app config"}), 500
+
+        # Source league dir is data/<from_league>/
+        source_dir = Path("data") / from_league
+        if not source_dir.exists():
+            return jsonify({"ok": False, "error": f"League '{from_league}' not found"}), 404
+
+        copied = copy_settings(source_dir, get_league_dir())
+        return jsonify({"ok": True, "settings": copied})
+    except FileNotFoundError as e:
+        return jsonify({"ok": False, "error": str(e)}), 404
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 

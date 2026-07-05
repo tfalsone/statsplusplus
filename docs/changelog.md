@@ -4,6 +4,67 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 60 (2026-07-05)
+
+### Draft Board Settings Feature
+
+**New module: `scripts/draft_settings.py`** — Per-league, per-round-group settings persistence and validation. Manages 11 configurable slider parameters (4 core, 3 Tier 2, 4 Tier 3) stored at `data/<league>/config/draft_settings.json`. Features:
+
+- 5 discrete slider positions (0.0, 0.25, 0.5, 0.75, 1.0) mapping to labeled values
+- Midpoint (0.5) reproduces exact original hardcoded behavior — full backwards compatibility
+- User-defined round groups with independent parameter sets
+- Presets (balanced, ceiling-first, safe-floor, pitcher-heavy) apply uniformly then allow per-group customization
+- Validation, copy-between-groups, and default resolution
+
+**Core sliders (always visible):**
+1. Ceiling weight — how much ceiling bonus influences draft value
+2. Risk tolerance — penalty magnitude for High/Extreme risk and Acc=L/VL
+3. Needs weight — org need bonus strength (Rd3+ only)
+4. Surplus weight — position-scaled surplus influence on list building
+
+**Advanced sliders (collapsible):**
+5. Balance strength — pitcher/hitter ratio enforcement
+6. Arsenal weight — SP depth bonus/penalty magnitude
+7. Personality weight — WE/INT/Lead influence
+8. RP discount — pure reliever vs tweener penalty
+9. Control penalty — SP with pot_ctrl < 45
+10. Contact penalty — hitter with cnt<50/pow≥80/eye<70
+11. Survival threshold — ADP survival window width
+
+**`scripts/draft_board.py` refactoring:**
+- `draft_value()` accepts optional `params` dict for all 11 slider parameters
+- `build_pick_list()` accepts `settings` dict, resolves per-round parameters
+- `simulate_draft()` passes settings through
+- `compute_org_needs()` disabled for perpetual arb leagues (no FA departures = false positives)
+- `compute_adp()` falls back to `true_ceiling` when POT unavailable
+- CLI commands (`cmd_pick`, `cmd_upload`) auto-load settings from disk
+
+**Web UI — 3 new API endpoints:**
+- `GET /api/draft-settings` — load current settings
+- `POST /api/draft-settings` — save settings (full settings object)
+- `POST /api/draft-settings/copy` — copy one round group's params to another
+
+**Web UI — settings modal on draft tab:**
+- Gear button (⚙️) opens full settings modal with round group tabs
+- 4 core sliders always visible, 7 advanced sliders behind collapsible toggle
+- Preset buttons (Balanced, Ceiling, Safe, Pitcher-Heavy)
+- Save/Reset/Copy functionality
+- Auto-draft list and draft sim endpoints now load and apply saved settings
+
+**Bug fixes (PPL/non-OVR leagues):**
+- OVR/POT null display — falls back to composite_score/true_ceiling throughout draft UI
+- Outcome probabilities (C%, R%, AS%, Bust%, Profile) now compute when OVR/POT null
+- ADP/ExpRd no longer shows nonsensical rounds (e.g., Rd57 for #1 prospect) when POT unavailable
+- Draft depth indicators now use league-relative thresholds (ratio to league avg: >1.2× = green, 0.6-1.2× = orange, <0.6× = red) instead of fixed dollar amounts that didn't scale across leagues
+- `compute_org_needs()` no longer produces false positives in perpetual arbitration leagues
+
+**Design decisions:**
+- ADP falls back to `true_ceiling` when POT unavailable (for leagues without OVR/POT)
+- Depth indicators use league-relative ratios rather than absolute dollar thresholds
+- Settings are per-league (different leagues may need different draft strategies)
+
+---
+
 ## Session 59 (2026-06-22)
 
 ### Draft Board: Balance, RP Discount, and Value Gap Override

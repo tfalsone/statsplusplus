@@ -17,7 +17,8 @@ statsplusplus/
 │       │   ├── league_settings.json            # Team names/abbr, divisions, role/pos/level maps, financial settings
 │       │   ├── league_averages.json            # League-wide batting/pitching averages + $/WAR
 │       │   ├── model_weights.json              # Calibrated valuation tables (OVR_TO_WAR, COMPOSITE_TO_WAR, FV, ARB, scarcity)
-│       │   └── tool_weights.json               # Per-league calibrated tool weights (component regression coefficients)
+│       │   ├── tool_weights.json               # Per-league calibrated tool weights (component regression coefficients)
+│       │   └── draft_settings.json             # Draft board slider settings (per-round-group parameters)
 │       ├── history/
 │       │   ├── prospects.json                  # Scouting summaries + FV history (keyed by player_id)
 │       │   └── roster_notes.json               # MLB player summaries (keyed by player_id)
@@ -49,6 +50,7 @@ statsplusplus/
 │   ├── roster_analysis.py      # CLI: MLB roster scaffold generator
 │   ├── prospect_query.py       # CLI: League-wide prospect rankings
 │   ├── draft_board.py          # CLI: Draft board analysis (board, available, pick, upload, compare, sim)
+│   ├── draft_settings.py      # Draft board settings: per-league, per-round-group slider persistence and validation
 │   ├── trade_calculator.py     # CLI: Trade surplus balance evaluator (--offer/--receive or JSON)
 │   ├── trade_targets.py        # CLI: Trade target finder by position (contract status, seller classification, split ratings)
 │   ├── trade_assets.py         # CLI: Tradeable assets for any team (MLB surplus + farm prospects)

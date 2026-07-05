@@ -171,34 +171,55 @@ def _arsenal_adjustment(r):
     return adjustment
 
 
-def draft_value(r, needs=None, pick_round=None):
+def draft_value(r, needs=None, pick_round=None, params=None):
     """Compute draft value score for a prospect row.
 
     Components: FV + ceiling bonus + RP discount + Acc penalty + risk + needs.
+
+    Args:
+        r: Prospect row (sqlite3.Row or dict with rating fields).
+        needs: Dict of bucket -> bonus value from compute_org_needs().
+        pick_round: Current draft round (1-indexed). Used for needs gating
+                    when params is None (backwards compat).
+        params: Optional mapped parameter dict from draft_settings.map_to_params().
+                When None, uses original hardcoded values.
     """
     fv = r["fv"] or 0
     ceil = r["true_ceiling"] or 0
-    val = fv + (ceil - 55) * 0.2
+
+    # Ceiling weight: how much upside matters beyond base FV
+    ceiling_weight = params["ceiling_weight"] if params else 0.2
+    val = fv + (ceil - 55) * ceiling_weight
+
     if r["bucket"] == "RP":
+        rp_scale = params["rp_discount_scale"] if params else 1.0
         stm = r["stm"] if "stm" in r.keys() else 0
         if stm and stm >= 30:
-            val -= 2  # Tweener — SP upside with reliever risk
+            val -= 2 * rp_scale  # Tweener — SP upside with reliever risk
         else:
-            val -= 5  # Pure reliever
+            val -= 5 * rp_scale  # Pure reliever
+
+    # Accuracy penalty, scaled by settings
+    acc_scale = params["acc_scale"] if params else 1.0
     acc = r["acc"] or ""
     if acc == "L":
-        val -= 2
+        val -= 2 * acc_scale
     elif acc == "VL":
-        val -= 4
+        val -= 4 * acc_scale
+
+    # Risk penalty, scaled by settings
+    risk_scale = params["risk_scale"] if params else 1.0
     risk = r["risk"] or ""
     if risk == "Extreme":
-        val -= 3
+        val -= 3 * risk_scale
     elif risk == "High":
-        val -= 1
+        val -= 1 * risk_scale
+
     # Contact floor penalty: power-dependent hitters with contact ceiling < 50
     # AND eye ceiling < 70 (no plate discipline to compensate)
+    contact_floor_scale = params.get("contact_floor_scale", 1.0) if params else 1.0
     if r["bucket"] not in ("SP", "RP") and (r["pot_cntct"] or 0) < 50 and (r["pot_pow"] or 0) >= 80 and (r["pot_eye"] or 0) < 70:
-        val -= 2
+        val -= 2 * contact_floor_scale
     # Control floor penalty: SP with control ceiling < 45 (reliever risk)
     if r["bucket"] == "SP" and (r["pot_ctrl"] or 0) < 45:
         val -= 3
@@ -206,25 +227,37 @@ def draft_value(r, needs=None, pick_round=None):
     # An 18yo with a raw 3rd pitch is normal; a 21+ yo with the same is a red flag.
     # Also rewards elite arsenal depth (4+ plus pitches).
     if r["bucket"] == "SP":
-        val += _arsenal_adjustment(r)
-    if needs and pick_round and pick_round >= 3:
-        val += needs.get(r["bucket"], 0)
+        arsenal_scale = params.get("arsenal_scale", 1.0) if params else 1.0
+        val += _arsenal_adjustment(r) * arsenal_scale
+
+    # Organizational need bonus, scaled by settings
+    if params:
+        # When params provided, need_scale controls magnitude (0 = BPA only)
+        need_scale = params.get("need_scale", 1.0)
+        if needs and need_scale > 0:
+            val += needs.get(r["bucket"], 0) * need_scale
+    else:
+        # Legacy behavior: needs only apply in round 3+
+        if needs and pick_round and pick_round >= 3:
+            val += needs.get(r["bucket"], 0)
+
     # Personality: Work Ethic and Intelligence affect development probability
+    personality_scale = params.get("personality_scale", 1.0) if params else 1.0
     we = r["wrk_ethic"] if "wrk_ethic" in r.keys() else "N"
     intel = r["int_"] if "int_" in r.keys() else "N"
     if we == "H":
-        val += 0.5
+        val += 0.5 * personality_scale
     elif we == "L":
-        val -= 0.5
+        val -= 0.5 * personality_scale
     if intel == "H":
-        val += 0.25
+        val += 0.25 * personality_scale
     elif intel == "L":
-        val -= 0.25
+        val -= 0.25 * personality_scale
     lead = r["lead"] if "lead" in r.keys() else "N"
     if lead == "H":
-        val += 0.15
+        val += 0.15 * personality_scale
     elif lead == "L":
-        val -= 0.15
+        val -= 0.15 * personality_scale
     return val
 
 
@@ -233,7 +266,13 @@ def compute_adp(rows, num_teams=None):
     if num_teams is None:
         num_teams = _get_num_teams()
 
-    ranked = sorted(rows, key=lambda r: (-(r["pot"] or 0), r["age"] or 99))
+    # Use POT for ranking (what other GMs see). When POT is unavailable
+    # (e.g., leagues that don't surface OVR/POT), fall back to true_ceiling.
+    has_pot = any(r["pot"] for r in rows[:20])
+    if has_pot:
+        ranked = sorted(rows, key=lambda r: (-(r["pot"] or 0), r["age"] or 99))
+    else:
+        ranked = sorted(rows, key=lambda r: (-(r["true_ceiling"] or 0), r["age"] or 99))
     pot_rank = {r["player_id"]: i + 1 for i, r in enumerate(ranked)}
 
     fv_ranked = sorted(rows, key=lambda r: draft_value(r), reverse=True)
@@ -269,7 +308,12 @@ def compute_org_needs(conn):
     """Positional need scores: MLB departures vs farm depth. Returns bucket -> bonus."""
     try:
         from league_config import LeagueConfig
-        my_team = LeagueConfig().my_team_id
+        cfg = LeagueConfig()
+        my_team = cfg.my_team_id
+        # In perpetual arbitration leagues, players don't leave via free agency —
+        # they stay unless released. Departure-based needs don't apply.
+        if cfg.settings.get("perpetual_arb"):
+            return {}
     except Exception:
         return {}
 
@@ -348,7 +392,8 @@ def _surplus_weight(pos):
 
 
 def build_pick_list(rows, adp, needs, num_teams, limit, threshold_fn=None,
-                    pick_pos=None, balance_target=0.45, balance_bonus=2.0):
+                    pick_pos=None, balance_target=0.45, balance_bonus=2.0,
+                    settings=None):
     """Build a ranked list for pre-draft submission using two-list merge.
 
     List A: Our evaluation (draft_value + position-scaled surplus) — who we want.
@@ -369,22 +414,44 @@ def build_pick_list(rows, adp, needs, num_teams, limit, threshold_fn=None,
     threshold_fn(pos, num_teams) -> int: how many picks ahead on List B a player
     can be before we grab them. If None, uses PICK_THRESHOLDS default.
     balance_target: target pitcher fraction (0.0-1.0). Default 0.45.
+        Overridden by settings if provided.
     balance_bonus: max bonus magnitude per unit of imbalance. Default 2.0.
+    settings: Optional dict from draft_settings.load_settings(). When provided,
+        per-round parameters are resolved from round groups, overriding
+        balance_target and applying ceiling/risk/acc/need scaling per round.
     """
     if threshold_fn is None:
         threshold_fn = PICK_THRESHOLDS
+
+    # Import settings resolver if settings provided
+    _resolve = None
+    if settings:
+        from draft_settings import resolve_for_round as _resolve_fn
+        _resolve = _resolve_fn
 
     list_a = sorted(rows, key=lambda r: draft_value(r), reverse=True)
     available = set(r["player_id"] for r in list_a)
     ordered = []
 
-    # Pre-compute base scores (draft_value) — surplus weight varies by pos
-    # but changes slowly, so we re-sort only when the weight shifts meaningfully
-    dv_cache = {r["player_id"]: draft_value(r) for r in list_a}
+    # Pre-compute static caches
     surplus_cache = {r["player_id"]: r["prospect_surplus"] / 1e6 for r in list_a}
     pot_rank_cache = {r["player_id"]: adp.get(r["player_id"], {}).get("pot_rank", 9999) for r in list_a}
     row_by_id = {r["player_id"]: r for r in list_a}
     bucket_cache = {r["player_id"]: r["bucket"] for r in list_a}
+
+    # Cache draft_value per round-group to avoid redundant recomputation.
+    # Key: (player_id, round) or (player_id, None) for no-settings mode.
+    _dv_round_cache = {}
+
+    def _get_dv(pid, current_round, params):
+        """Get draft_value for a player in the context of a specific round."""
+        cache_key = (pid, current_round if params else None)
+        if cache_key not in _dv_round_cache:
+            r = row_by_id[pid]
+            _dv_round_cache[cache_key] = draft_value(r, needs=needs,
+                                                     pick_round=current_round,
+                                                     params=params)
+        return _dv_round_cache[cache_key]
 
     def _is_pitcher(pid):
         return bucket_cache.get(pid, "") in ("SP", "RP")
@@ -392,27 +459,46 @@ def build_pick_list(rows, adp, needs, num_teams, limit, threshold_fn=None,
     # Balance tracking
     pitcher_count = 0
     hitter_count = 0
+    prev_round = None
+    current_params = None
 
     for pos in range(1, limit + 1):
         if not available:
             break
 
+        current_round = (pos - 1) // num_teams + 1
         threshold = threshold_fn(pos, num_teams)
         sw = _surplus_weight(pos)
 
+        # Resolve per-round settings (only recompute when round changes)
+        if settings and _resolve:
+            if current_round != prev_round:
+                current_params = _resolve(settings, current_round)
+                prev_round = current_round
+            active_balance_target = current_params["balance_target"]
+            # Override threshold with settings-based survival aggression
+            import math
+            s_base = current_params.get("survival_base", 30)
+            s_scale = current_params.get("survival_scale", 6)
+            threshold = s_base + s_scale * math.sqrt(pos)
+        else:
+            active_balance_target = balance_target
+
         # Compute balance adjustment
+        active_balance_bonus = current_params.get("balance_bonus", balance_bonus) if current_params else balance_bonus
         total = pitcher_count + hitter_count
-        if total > 0 and balance_bonus > 0:
-            imbalance = balance_target - pitcher_count / total
-            effective_bonus = balance_bonus * max(1, total / 3)
+        if total > 0 and active_balance_bonus > 0:
+            imbalance = active_balance_target - pitcher_count / total
+            effective_bonus = active_balance_bonus * max(1, total / 3)
         else:
             imbalance = 0
             effective_bonus = 0
 
-        # Re-sort every iteration when balance is active (score depends on running count)
+        # Score each available player for this position
         scored_list = sorted(
             available,
-            key=lambda pid: (dv_cache[pid] + surplus_cache[pid] * sw
+            key=lambda pid: (_get_dv(pid, current_round, current_params)
+                             + surplus_cache[pid] * sw
                              + (imbalance * effective_bonus if _is_pitcher(pid)
                                 else -imbalance * effective_bonus)),
             reverse=True
@@ -432,7 +518,8 @@ def build_pick_list(rows, adp, needs, num_teams, limit, threshold_fn=None,
         if chosen_id is not None and scored_list:
             best_pid = next((pid for pid in scored_list if pid in available), None)
             if best_pid and best_pid != chosen_id:
-                gap = dv_cache[best_pid] - dv_cache[chosen_id]
+                gap = (_get_dv(best_pid, current_round, current_params)
+                       - _get_dv(chosen_id, current_round, current_params))
                 if gap >= 3.0:
                     chosen_id = best_pid
 
@@ -504,7 +591,8 @@ def build_urgency_list(rows, adp, needs, num_teams, limit):
     return ordered
 
 
-def simulate_draft(rows, adp, needs, num_teams, pick_pos, num_rounds, seed=None):
+def simulate_draft(rows, adp, needs, num_teams, pick_pos, num_rounds, seed=None,
+                   settings=None):
     """Simulate a draft. Returns (our_picks, other_picks_by_round).
 
     Other teams pick by POT rank with randomization (weighted top-8).
@@ -518,7 +606,8 @@ def simulate_draft(rows, adp, needs, num_teams, pick_pos, num_rounds, seed=None)
     rng = random.Random(seed)
 
     # Pre-generate our ranked list (full pool, same algorithm as pick command)
-    our_list = build_pick_list(rows, adp, needs, num_teams, len(rows))
+    our_list = build_pick_list(rows, adp, needs, num_teams, len(rows),
+                               settings=settings)
     our_list_ids = [r["player_id"] for r in our_list]
 
     pot_board = sorted(rows, key=lambda r: (-(r["pot"] or 0), r["age"] or 99))
@@ -723,8 +812,17 @@ def cmd_available(args):
 def cmd_pick(args):
     rows, adp, needs, num_teams, conn = load_board()
     balance_bonus = 0 if args.no_balance else 2.0
+
+    # Load settings from disk if available
+    settings = None
+    try:
+        from draft_settings import load_settings
+        settings = load_settings(get_league_dir())
+    except Exception:
+        pass
+
     ordered = build_pick_list(rows, adp, needs, num_teams, args.n,
-                              balance_bonus=balance_bonus)
+                              balance_bonus=balance_bonus, settings=settings)
 
     print(f"Pre-draft ranked list — Top {args.n}\n")
     _print_board(ordered, limit=args.n, adp=adp)
@@ -741,8 +839,17 @@ def cmd_upload(args):
     rows, adp, needs, num_teams, conn = load_board()
     limit = min(args.top or 500, 500)
     balance_bonus = 0 if args.no_balance else 2.0
+
+    # Load settings from disk if available
+    settings = None
+    try:
+        from draft_settings import load_settings
+        settings = load_settings(get_league_dir())
+    except Exception:
+        pass
+
     ordered = build_pick_list(rows, adp, needs, num_teams, limit,
-                              balance_bonus=balance_bonus)
+                              balance_bonus=balance_bonus, settings=settings)
 
     ranked_ids = [str(r["player_id"]) for r in ordered]
     out_path = get_league_dir() / "tmp" / "draft_upload.txt"

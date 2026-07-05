@@ -1339,3 +1339,139 @@ td.stat-bad  { color: var(--red); }
 .dp-prof-up { background: rgba(183,176,32,0.2); color: #d4cc44; }
 .dp-prof-steady { background: rgba(255,255,255,0.08); color: var(--text-dim); }
 .dp-prof-lot { background: rgba(192,57,43,0.15); color: #d06050; }
+
+/* ── Draft Settings Modal ── */
+.ds-modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  display: flex; align-items: center; justify-content: center; z-index: 1100;
+}
+.ds-modal-overlay.hidden { display: none; }
+.ds-modal {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 20px 24px; width: 600px; max-width: 95vw; max-height: 85vh;
+  overflow-y: auto; font-size: 13px;
+}
+.ds-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+}
+.ds-modal-header h3 { font-size: 15px; font-weight: 600; }
+.ds-modal-close {
+  background: none; border: none; color: var(--text-dim); font-size: 18px;
+  cursor: pointer; padding: 4px 8px; border-radius: 4px;
+}
+.ds-modal-close:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+
+/* Presets */
+.ds-presets { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+.ds-presets-label { font-size: 12px; color: var(--text-dim); }
+.ds-preset-btn {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text-dim);
+  padding: 4px 12px; border-radius: 4px; font-size: 12px; cursor: pointer;
+  transition: all 0.15s;
+}
+.ds-preset-btn:hover { color: var(--text); border-color: var(--text-dim); }
+.ds-preset-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Round groups */
+.ds-groups { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
+.ds-group {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 12px 16px;
+}
+.ds-group-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.ds-group-title { font-size: 12px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.ds-group-title label { color: var(--text-dim); font-weight: 400; }
+.ds-round-input {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  width: 42px; padding: 2px 6px; border-radius: 3px; font-size: 12px; text-align: center;
+}
+.ds-group-remove {
+  background: none; border: none; color: var(--text-dim); font-size: 14px;
+  cursor: pointer; padding: 2px 6px;
+}
+.ds-group-remove:hover { color: var(--red); }
+
+/* Sliders */
+.ds-sliders { display: flex; flex-direction: column; gap: 10px; }
+.ds-slider-row {
+  display: grid; grid-template-columns: 1fr; gap: 4px;
+}
+.ds-slider-header {
+  display: flex; align-items: center; gap: 6px;
+}
+.ds-slider-label { font-size: 12px; color: var(--text); font-weight: 500; }
+.ds-slider-info {
+  font-size: 11px; color: var(--text-dim); cursor: help;
+  border: 1px solid var(--border); border-radius: 50%; width: 15px; height: 15px;
+  display: inline-flex; align-items: center; justify-content: center;
+  line-height: 1;
+}
+.ds-slider-info:hover { color: var(--text); border-color: var(--text-dim); }
+.ds-slider-track {
+  display: flex; align-items: center; gap: 8px;
+}
+.ds-slider-end { font-size: 11px; color: var(--text-dim); min-width: 70px; }
+.ds-slider-end:last-child { text-align: right; }
+.ds-slider {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 6px;
+  background: var(--border); border-radius: 3px; outline: none; cursor: pointer;
+  flex: 1;
+}
+.ds-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 14px; height: 14px;
+  background: var(--accent); border-radius: 50%; cursor: pointer;
+  border: 2px solid var(--bg);
+}
+.ds-slider::-moz-range-thumb {
+  width: 14px; height: 14px; background: var(--accent); border-radius: 50%;
+  cursor: pointer; border: 2px solid var(--bg);
+}
+.ds-slider-value {
+  font-size: 11px; color: var(--green); text-align: center; min-height: 14px;
+}
+
+/* Advanced toggle */
+.ds-advanced-toggle {
+  font-size: 11px; color: var(--text-dim); cursor: pointer; padding: 6px 0 2px;
+  border-top: 1px solid var(--border); margin-top: 8px;
+  user-select: none;
+}
+.ds-advanced-toggle:hover { color: var(--text); }
+.ds-advanced-arrow { display: inline-block; width: 12px; font-size: 9px; }
+.ds-advanced-sliders { padding-top: 8px; }
+
+/* Add group button */
+.ds-add-group {
+  background: none; border: 1px dashed var(--border); color: var(--text-dim);
+  padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer;
+  width: 100%; margin-bottom: 16px;
+}
+.ds-add-group:hover { color: var(--text); border-color: var(--text-dim); }
+
+/* Footer */
+.ds-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-top: 12px; border-top: 1px solid var(--border);
+  flex-wrap: wrap; gap: 8px;
+}
+.ds-footer-left { display: flex; align-items: center; gap: 8px; }
+.ds-footer-right { display: flex; align-items: center; gap: 8px; }
+.ds-league-label { font-size: 11px; color: var(--text-dim); }
+.ds-copy-select {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+  padding: 3px 8px; border-radius: 4px; font-size: 12px;
+}
+.ds-btn-secondary {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text-dim);
+  padding: 5px 12px; border-radius: 4px; font-size: 12px; cursor: pointer;
+}
+.ds-btn-secondary:hover { color: var(--text); border-color: var(--text-dim); }
+.ds-btn-primary {
+  background: var(--accent); border: 1px solid var(--accent); color: #fff;
+  padding: 5px 14px; border-radius: 4px; font-size: 12px; cursor: pointer; font-weight: 500;
+}
+.ds-btn-primary:hover { filter: brightness(1.15); }

@@ -284,10 +284,10 @@
           <span class="draft-needs-sep">|</span>
           {% for pos, d in draft_depth.items() %}
           {% set total = d.total %}
-          {% set cls = 'needs-ok' if total >= 30 else ('needs-thin' if total >= 10 else 'needs-gap') %}
+          {% set cls = 'needs-ok' if d.ratio >= 1.2 else ('needs-thin' if d.ratio >= 0.6 else 'needs-gap') %}
           <button class="draft-pos-btn draft-needs-btn {{ cls }}" data-pos="{{ pos }}"
             onclick="setDraftPosFilter(this, '{{ pos }}')"
-            title="{{ pos }}: MLB ${{ d.mlb }}M · Farm ${{ d.farm }}M · Total ${{ d.total }}M">{{ pos }}</button>
+            title="{{ pos }}: MLB ${{ d.mlb }}M · Farm ${{ d.farm }}M · Total ${{ d.total }}M ({{ (d.ratio * 100)|int }}% of league avg)">{{ pos }}</button>
           {% endfor %}
           <button class="split-btn" id="draft-hide-picked-btn" onclick="toggleHideDrafted()" style="margin-left:8px">Hide Drafted</button>
         </div>
@@ -310,6 +310,7 @@
             {% endif %}
             <button class="btn" onclick="runDraftSim()" title="Simulate draft based on your pick position">🎲 Sim</button>
             <button class="btn" onclick="generateUploadList()" title="Generate auto-draft list file">📋 Auto-Draft List</button>
+            <button class="btn" onclick="openDraftSettings()" title="Configure auto-draft list preferences">⚙️</button>
             <label class="btn" style="cursor:pointer">📁 Upload Pool
               <input type="file" accept=".csv" style="display:none" onchange="uploadDraftPool(this)">
             </label>
@@ -359,6 +360,10 @@
         <div class="panel-section-title">Draft Simulation</div>
         <div id="draft-sim-results"></div>
       </div>
+      <div class="panel" id="draft-list-panel" style="display:none">
+        <div class="panel-section-title">Auto-Draft List</div>
+        <div id="draft-list-results"></div>
+      </div>
     </div>
   </div>
 {% else %}
@@ -369,6 +374,48 @@
     </label>
   </div>
 {% endif %}
+
+{# ── Draft Settings Modal ── #}
+<div id="draft-settings-modal" class="ds-modal-overlay hidden">
+  <div class="ds-modal">
+    <div class="ds-modal-header">
+      <h3>Auto-Draft List Settings</h3>
+      <button class="ds-modal-close" onclick="closeDraftSettings()">✕</button>
+    </div>
+
+    <div class="ds-presets">
+      <span class="ds-presets-label">Preset:</span>
+      <button class="ds-preset-btn active" data-preset="balanced" onclick="applyDraftPreset('balanced')">Balanced</button>
+      <button class="ds-preset-btn" data-preset="upside" onclick="applyDraftPreset('upside')">Upside</button>
+      <button class="ds-preset-btn" data-preset="conservative" onclick="applyDraftPreset('conservative')">Conservative</button>
+      <button class="ds-preset-btn" data-preset="org_needs" onclick="applyDraftPreset('org_needs')">Org Needs</button>
+    </div>
+
+    <div class="ds-groups" id="ds-groups">
+      {# Round groups rendered by JS #}
+    </div>
+
+    <button class="ds-add-group" onclick="addDraftRoundGroup()">+ Add Round Group</button>
+
+    <div class="ds-footer">
+      <div class="ds-footer-left">
+        <span class="ds-league-label">League: {{ league_name }}</span>
+        <select class="ds-copy-select" id="ds-copy-from" title="Copy settings from another league">
+          <option value="">Copy from…</option>
+          {% for lg in league_list if lg.slug != active_league_slug %}
+          <option value="{{ lg.slug }}">{{ lg.name }}</option>
+          {% endfor %}
+        </select>
+        <button class="ds-btn-secondary" onclick="copyDraftSettings()">Copy</button>
+      </div>
+      <div class="ds-footer-right">
+        <button class="ds-btn-secondary" onclick="resetDraftSettings()">Reset to Defaults</button>
+        <button class="ds-btn-primary" onclick="saveDraftSettings(false)">Save</button>
+        <button class="ds-btn-primary" onclick="saveDraftSettings(true)">Save &amp; Close</button>
+      </div>
+    </div>
+  </div>
+</div>
 </div>
 
 <script>
@@ -628,10 +675,10 @@ function renderPanel(d) {
 
   html += `<div class="panel-grades">
     <div class="panel-grade-row">
-      <span class="panel-grade-label">OVR</span><span class="panel-grade-val">${d.ovr}</span>
-      <span class="panel-grade-label">POT</span><span class="panel-grade-val">${d.pot}</span>
+      <span class="panel-grade-label">${d.composite_score && d.composite_score !== d.ovr ? 'OVR' : 'Comp'}</span><span class="panel-grade-val">${d.ovr || '—'}</span>
+      <span class="panel-grade-label">${d.true_ceiling && d.true_ceiling !== d.pot ? 'POT' : 'Ceil'}</span><span class="panel-grade-val">${d.pot || '—'}</span>
     </div>
-    ${d.composite_score ? '<div class="panel-grade-row"><span class="panel-grade-label">Comp</span><span class="panel-grade-val">' + d.composite_score + '</span><span class="panel-grade-label">Ceil</span><span class="panel-grade-val">' + (d.true_ceiling || d.ceiling_score || '—') + '</span></div>' : ''}
+    ${d.composite_score && d.composite_score !== d.ovr ? '<div class="panel-grade-row"><span class="panel-grade-label">Comp</span><span class="panel-grade-val">' + d.composite_score + '</span><span class="panel-grade-label">Ceil</span><span class="panel-grade-val">' + (d.true_ceiling || d.ceiling_score || '—') + '</span></div>' : ''}
     <div class="panel-grade-row">
       <span class="panel-grade-label">FV</span><span class="panel-grade-val ${fvClass(d.fv)}">${d.fv_str}</span>
       <span class="panel-grade-label">ETA</span><span class="panel-grade-val">${d.eta}</span>
@@ -1064,15 +1111,15 @@ function uploadDraftPool(input) {
   fetch('/api/draft-pool-upload', {method: 'POST', body: fd})
     .then(function(r) { return r.json(); }).then(function(d) {
       input.value = '';
-      if (d.ok) { alert('Uploaded ' + d.count + ' players. Reloading…'); location.reload(); }
+      if (d.ok) { alert('Uploaded ' + d.total + ' players. Reloading…'); location.reload(); }
       else { alert('Upload failed: ' + d.error); }
     }).catch(function() { alert('Upload failed'); });
 }
 
 function runDraftSim() {
-  var pick = prompt('Your pick position (1-' + {{ num_teams }} + '):', '30');
+  var pick = prompt('Your pick position in each round (1-' + {{ num_teams }} + '):', '1');
   if (!pick) return;
-  var rounds = prompt('Number of rounds:', '7');
+  var rounds = prompt('Number of rounds to simulate (you get 1 pick per round):', '10');
   if (!rounds) return;
   var panel = document.getElementById('draft-sim-panel');
   var results = document.getElementById('draft-sim-results');
@@ -1103,8 +1150,8 @@ function runDraftSim() {
 }
 
 function generateUploadList() {
-  var panel = document.getElementById('draft-sim-panel');
-  var results = document.getElementById('draft-sim-results');
+  var panel = document.getElementById('draft-list-panel');
+  var results = document.getElementById('draft-list-results');
   results.innerHTML = '<p class="text-dim">Generating list…</p>';
   panel.style.display = 'block';
 
@@ -1132,6 +1179,328 @@ function openFileLocation(path) {
   fetch('/api/open-file-location', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({path: path})
+  });
+}
+
+/* ── Draft Settings Modal ── */
+var _dsSettings = null;  // current settings state
+var _dsPresets = null;   // preset definitions from API
+
+var DS_SLIDER_CONFIG = [
+  {key: 'upside', label: 'Upside vs Safety', left: 'Safe', right: 'Upside',
+   values: ['Very Safe', 'Safe', 'Balanced', 'Upside', 'Max Upside'],
+   tooltip: 'Controls how much the board favors high-ceiling players over predictable outcomes. Higher = prefer players who could be stars but may not pan out. Lower = prefer players with a clearer path to the majors, even if their ceiling is lower.'},
+  {key: 'risk_tolerance', label: 'Risk Tolerance', left: 'Cautious', right: 'Aggressive',
+   values: ['Very Cautious', 'Cautious', 'Moderate', 'Aggressive', 'Very Aggressive'],
+   tooltip: 'Controls how much the board penalizes players with high bust probability. Aggressive = treat risky players the same as safe bets. Cautious = significantly downgrade players with Extreme or High risk labels.'},
+  {key: 'balance', label: 'Pitcher/Hitter Mix', left: 'More Bats', right: 'More Arms',
+   values: ['Heavy Bats', 'More Bats', 'Balanced', 'More Arms', 'Heavy Arms'],
+   tooltip: 'Sets the target ratio of pitchers to hitters in your draft class. The board will give a slight boost to the underrepresented group as picks are made to stay near your target. Center = roughly even split.'},
+  {key: 'need', label: 'Organizational Need', left: 'Best Available', right: 'Fill Gaps',
+   values: ['BPA Only', 'Slight', 'Moderate', 'Strong', 'Fill Gaps'],
+   tooltip: 'Controls whether the board factors in your team\u2019s positional depth when ranking players. Higher = boost players at positions where your organization is thin. Lower = ignore depth and rank purely on talent.'}
+];
+
+var DS_ADVANCED_CONFIG = [
+  {key: 'rp_discount', label: 'Reliever Penalty', left: 'Heavy', right: 'None',
+   values: ['Very Heavy', 'Heavy', 'Default', 'Light', 'None'],
+   tooltip: 'Controls how much relief pitchers are penalized relative to starters. Heavy = relievers are significantly discounted (fungible). None = relievers are valued equally to starters at the same FV.'},
+  {key: 'acc_penalty', label: 'Scouting Accuracy', left: 'Penalize', right: 'Ignore',
+   values: ['Heavy Penalty', 'Penalize', 'Default', 'Light', 'Ignore'],
+   tooltip: 'Controls how much the board penalizes players with low scouting accuracy (Acc=L or VL). Penalize = significantly downgrade players whose grades are uncertain. Ignore = treat all players the same regardless of scouting confidence.'},
+  {key: 'survival', label: 'Survival Strategy', left: 'Grab Early', right: 'Let Them Fall',
+   values: ['Very Conservative', 'Grab Early', 'Default', 'Patient', 'Very Patient'],
+   tooltip: 'Controls how aggressively the board defers players it thinks will survive to a later pick. Grab Early = take your top-ranked player immediately. Let Them Fall = defer players that other GMs undervalue, gambling they\u2019ll still be available later.'},
+  {key: 'personality', label: 'Personality Weight', left: 'Ignore', right: 'Emphasize',
+   values: ['Ignore', 'Low', 'Default', 'High', 'Max'],
+   tooltip: 'Controls how much Work Ethic, Intelligence, and Leadership ratings influence rankings. Higher = strongly favor high-character players and penalize low-character ones. Ignore = personality has no effect on draft order.'},
+  {key: 'arsenal', label: 'Arsenal Penalty', left: 'Ignore', right: 'Emphasize',
+   values: ['Ignore', 'Low', 'Default', 'High', 'Max'],
+   tooltip: 'Controls how much pitchers are penalized for thin arsenals (underdeveloped 3rd pitch for their age) or rewarded for elite arsenal depth. Ignore = arsenal quality doesn\u2019t affect rankings.'},
+  {key: 'contact_floor', label: 'Contact Floor', left: 'Ignore', right: 'Emphasize',
+   values: ['Ignore', 'Low', 'Default', 'High', 'Max'],
+   tooltip: 'Controls the penalty for power-over-contact hitters who lack plate discipline. Emphasize = heavily penalize all-or-nothing power bats with low contact ceilings. Ignore = let the raw tools speak for themselves.'},
+  {key: 'balance_strength', label: 'Balance Enforcement', left: 'Off', right: 'Strong',
+   values: ['Off', 'Light', 'Default', 'Strong', 'Very Strong'],
+   tooltip: 'Controls how aggressively the board enforces the pitcher/hitter target ratio. Off = no balance correction applied. Strong = large score bonuses to keep the draft class on-target.'}
+];
+
+function openDraftSettings() {
+  var modal = document.getElementById('draft-settings-modal');
+  modal.classList.remove('hidden');
+  // Load current settings from API
+  fetch('/api/draft-settings').then(function(r) { return r.json(); }).then(function(d) {
+    if (!d.ok) return;
+    _dsSettings = d.settings;
+    _dsPresets = d.presets;
+    renderDraftSettingsGroups();
+    updateDraftPresetButtons();
+  });
+}
+
+function closeDraftSettings() {
+  document.getElementById('draft-settings-modal').classList.add('hidden');
+}
+
+// Close on backdrop click
+document.addEventListener('click', function(e) {
+  var modal = document.getElementById('draft-settings-modal');
+  if (e.target === modal) closeDraftSettings();
+});
+
+function renderDraftSettingsGroups() {
+  var container = document.getElementById('ds-groups');
+  var groups = _dsSettings.round_groups;
+  var html = '';
+  for (var i = 0; i < groups.length; i++) {
+    html += renderDraftGroupCard(i, groups[i], groups.length);
+  }
+  container.innerHTML = html;
+}
+
+function renderDraftGroupCard(idx, group, totalGroups) {
+  var isLast = (idx === totalGroups - 1);
+  var roundLabel = '';
+  if (isLast) {
+    roundLabel = '<label>Rounds</label> ' +
+      '<input type="number" class="ds-round-input" min="1" max="30" value="' + group.start + '" ' +
+      'onchange="updateGroupBounds(' + idx + ', this.value, null)"> +';
+  } else {
+    roundLabel = '<label>Rounds</label> ' +
+      '<input type="number" class="ds-round-input" min="1" max="30" value="' + group.start + '" ' +
+      'onchange="updateGroupBounds(' + idx + ', this.value, null)"> ' +
+      '<label>to</label> ' +
+      '<input type="number" class="ds-round-input" min="1" max="30" value="' + group.end + '" ' +
+      'onchange="updateGroupBounds(' + idx + ', null, this.value)">';
+  }
+
+  var removeBtn = totalGroups > 1
+    ? '<button class="ds-group-remove" onclick="removeDraftRoundGroup(' + idx + ')" title="Remove this group">✕</button>'
+    : '';
+
+  var slidersHtml = '';
+  for (var s = 0; s < DS_SLIDER_CONFIG.length; s++) {
+    var cfg = DS_SLIDER_CONFIG[s];
+    var val = group.settings[cfg.key];
+    var stepIdx = Math.round((val || 0.5) * 4);  // 0-4
+    var valueLabel = cfg.values[stepIdx] || '';
+    slidersHtml += '<div class="ds-slider-row">' +
+      '<div class="ds-slider-header">' +
+        '<span class="ds-slider-label">' + cfg.label + '</span>' +
+        '<span class="ds-slider-info" title="' + cfg.tooltip + '">?</span>' +
+      '</div>' +
+      '<div class="ds-slider-track">' +
+        '<span class="ds-slider-end">' + cfg.left + '</span>' +
+        '<input type="range" class="ds-slider" min="0" max="4" step="1" value="' + stepIdx + '" ' +
+          'data-group="' + idx + '" data-key="' + cfg.key + '" ' +
+          'oninput="onDraftSliderChange(this)">' +
+        '<span class="ds-slider-end">' + cfg.right + '</span>' +
+      '</div>' +
+      '<div class="ds-slider-value" id="ds-val-' + idx + '-' + cfg.key + '">' + valueLabel + '</div>' +
+    '</div>';
+  }
+
+  // Advanced sliders (collapsed by default)
+  var advancedHtml = '';
+  for (var s = 0; s < DS_ADVANCED_CONFIG.length; s++) {
+    var cfg = DS_ADVANCED_CONFIG[s];
+    var val = group.settings[cfg.key];
+    var stepIdx = Math.round((val === undefined ? 0.5 : val) * 4);
+    var valueLabel = cfg.values[stepIdx] || '';
+    advancedHtml += '<div class="ds-slider-row">' +
+      '<div class="ds-slider-header">' +
+        '<span class="ds-slider-label">' + cfg.label + '</span>' +
+        '<span class="ds-slider-info" title="' + cfg.tooltip + '">?</span>' +
+      '</div>' +
+      '<div class="ds-slider-track">' +
+        '<span class="ds-slider-end">' + cfg.left + '</span>' +
+        '<input type="range" class="ds-slider" min="0" max="4" step="1" value="' + stepIdx + '" ' +
+          'data-group="' + idx + '" data-key="' + cfg.key + '" ' +
+          'oninput="onDraftSliderChange(this)">' +
+        '<span class="ds-slider-end">' + cfg.right + '</span>' +
+      '</div>' +
+      '<div class="ds-slider-value" id="ds-val-' + idx + '-' + cfg.key + '">' + valueLabel + '</div>' +
+    '</div>';
+  }
+
+  return '<div class="ds-group" data-group-idx="' + idx + '">' +
+    '<div class="ds-group-header">' +
+      '<div class="ds-group-title">' + roundLabel + '</div>' +
+      removeBtn +
+    '</div>' +
+    '<div class="ds-sliders">' + slidersHtml + '</div>' +
+    '<div class="ds-advanced-toggle" onclick="toggleAdvancedSliders(' + idx + ')">' +
+      '<span class="ds-advanced-arrow" id="ds-adv-arrow-' + idx + '">▶</span> Advanced Settings</div>' +
+    '<div class="ds-advanced-sliders" id="ds-advanced-' + idx + '" style="display:none">' + advancedHtml + '</div>' +
+  '</div>';
+}
+
+function onDraftSliderChange(el) {
+  var groupIdx = parseInt(el.dataset.group);
+  var key = el.dataset.key;
+  var stepIdx = parseInt(el.value);
+  var normalized = stepIdx * 0.25;  // 0, 0.25, 0.5, 0.75, 1.0
+
+  _dsSettings.round_groups[groupIdx].settings[key] = normalized;
+  _dsSettings.active_preset = null;
+  updateDraftPresetButtons();
+
+  // Update value label — search both core and advanced configs
+  var cfg = DS_SLIDER_CONFIG.find(function(c) { return c.key === key; })
+         || DS_ADVANCED_CONFIG.find(function(c) { return c.key === key; });
+  var label = cfg ? cfg.values[stepIdx] : '';
+  var valEl = document.getElementById('ds-val-' + groupIdx + '-' + key);
+  if (valEl) valEl.textContent = label;
+}
+
+function toggleAdvancedSliders(idx) {
+  var panel = document.getElementById('ds-advanced-' + idx);
+  var arrow = document.getElementById('ds-adv-arrow-' + idx);
+  if (panel.style.display === 'none') {
+    panel.style.display = '';
+    arrow.textContent = '▼';
+  } else {
+    panel.style.display = 'none';
+    arrow.textContent = '▶';
+  }
+}
+
+function updateGroupBounds(idx, newStart, newEnd) {
+  var groups = _dsSettings.round_groups;
+  var group = groups[idx];
+
+  if (newStart !== null) {
+    var s = Math.max(1, parseInt(newStart) || 1);
+    group.start = s;
+    // Adjust previous group's end if overlapping
+    if (idx > 0 && groups[idx - 1].end !== null && groups[idx - 1].end >= s) {
+      groups[idx - 1].end = s - 1;
+    }
+  }
+  if (newEnd !== null) {
+    var e = Math.max(group.start, parseInt(newEnd) || group.start);
+    group.end = e;
+    // Adjust next group's start if overlapping
+    if (idx < groups.length - 1 && groups[idx + 1].start <= e) {
+      groups[idx + 1].start = e + 1;
+    }
+  }
+  _dsSettings.active_preset = null;
+  renderDraftSettingsGroups();
+  updateDraftPresetButtons();
+}
+
+function addDraftRoundGroup() {
+  var groups = _dsSettings.round_groups;
+  var lastGroup = groups[groups.length - 1];
+  // Split the last (catch-all) group
+  var splitAt = lastGroup.start + 2;  // Give the new group at least 3 rounds
+  var newGroup = {
+    start: splitAt,
+    end: null,
+    settings: {upside: 0.5, risk_tolerance: 0.5, balance: 0.5, need: 0.5}
+  };
+  // Existing last group becomes bounded
+  lastGroup.end = splitAt - 1;
+  groups.push(newGroup);
+  _dsSettings.active_preset = null;
+  renderDraftSettingsGroups();
+  updateDraftPresetButtons();
+}
+
+function removeDraftRoundGroup(idx) {
+  var groups = _dsSettings.round_groups;
+  if (groups.length <= 1) return;
+
+  groups.splice(idx, 1);
+  // Ensure last group is catch-all
+  groups[groups.length - 1].end = null;
+  // Fix gaps: ensure consecutive groups connect
+  for (var i = 1; i < groups.length; i++) {
+    if (groups[i].start <= groups[i-1].end) {
+      groups[i].start = (groups[i-1].end || groups[i-1].start) + 1;
+    }
+  }
+  _dsSettings.active_preset = null;
+  renderDraftSettingsGroups();
+  updateDraftPresetButtons();
+}
+
+function applyDraftPreset(name) {
+  if (!_dsPresets || !_dsPresets[name]) return;
+  var preset = _dsPresets[name];
+  // Apply to all groups
+  var groups = _dsSettings.round_groups;
+  for (var i = 0; i < groups.length; i++) {
+    groups[i].settings = {
+      upside: preset.upside,
+      risk_tolerance: preset.risk_tolerance,
+      balance: preset.balance,
+      need: preset.need
+    };
+  }
+  _dsSettings.active_preset = name;
+  renderDraftSettingsGroups();
+  updateDraftPresetButtons();
+}
+
+function updateDraftPresetButtons() {
+  var active = _dsSettings.active_preset;
+  document.querySelectorAll('.ds-preset-btn').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.preset === active);
+  });
+}
+
+function saveDraftSettings(closeAfter) {
+  fetch('/api/draft-settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({settings: _dsSettings})
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.ok) {
+      if (closeAfter) closeDraftSettings();
+    } else {
+      alert('Error saving settings: ' + (d.error || 'Unknown error'));
+    }
+  }).catch(function() {
+    alert('Failed to save settings');
+  });
+}
+
+function resetDraftSettings() {
+  // Reset to default settings
+  _dsSettings = {
+    version: 1,
+    round_groups: [
+      {start: 1, end: 3, settings: {upside: 0.5, risk_tolerance: 0.5, balance: 0.5, need: 0.25}},
+      {start: 4, end: null, settings: {upside: 0.5, risk_tolerance: 0.5, balance: 0.5, need: 0.5}}
+    ],
+    active_preset: 'balanced'
+  };
+  renderDraftSettingsGroups();
+  updateDraftPresetButtons();
+}
+
+function copyDraftSettings() {
+  var select = document.getElementById('ds-copy-from');
+  var fromLeague = select.value;
+  if (!fromLeague) { alert('Select a league to copy from'); return; }
+  if (!confirm('Copy settings from ' + fromLeague + '? This will overwrite your current settings.')) return;
+
+  fetch('/api/draft-settings/copy', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({from_league: fromLeague})
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.ok && d.settings) {
+      _dsSettings = d.settings;
+      renderDraftSettingsGroups();
+      updateDraftPresetButtons();
+    } else {
+      alert('Error: ' + (d.error || 'Copy failed'));
+    }
+  }).catch(function() {
+    alert('Failed to copy settings');
   });
 }
 

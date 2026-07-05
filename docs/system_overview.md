@@ -52,6 +52,7 @@ fv_calc.py ───────────────────────
      ├──► trade_targets.py         (players, contracts, contract_extensions, player_surplus) │
      ├──► trade_assets.py          (player_surplus, prospect_fv, contracts)     │
      ├──► team_needs.py            (players, ratings, batting_stats, pitching_stats) │
+     ├──► draft_board.py           (prospect_fv, ratings, players + draft_settings.json) │
      ├──► standings.py             (pitching_stats, team_*_stats — read-only)   │
      └──► free_agents.py           (contracts, player_surplus — read-only)      │
 
@@ -77,6 +78,8 @@ All other analysis scripts are read-only against the DB.
 | `farm_analysis.py` | 691 | Angels farm scaffold — ranked prospects, grade tables, FV history, dev signals. |
 | `roster_analysis.py` | 515 | Angels MLB roster scaffold — player cards, stat lines, contract info, surplus. |
 | `prospect_query.py` | 220 | League-wide prospect rankings and farm system comparisons. |
+| `draft_board.py` | ~500 | Draft board analysis — board display, best-available, two-list-merge pick list, auto-draft upload, comparison, simulation. Configurable via `draft_settings.py` parameters. |
+| `draft_settings.py` | ~180 | Draft board settings persistence and validation. Manages 11 slider parameters (ceiling weight, risk tolerance, needs, surplus, balance, arsenal, personality, RP discount, control/contact penalties, survival threshold) per round group. Stored at `config/draft_settings.json`. |
 | `contract_value.py` | 344 | MLB contract surplus/deficit with year-by-year projection. CLI + library. |
 | `prospect_value.py` | 290 | Prospect trade surplus with option value model + career outcome probabilities. CLI + library. |
 | `trade_calculator.py` | 200 | Trade package evaluation — surplus balance with sensitivity ranges. Accepts player names or IDs via `--offer`/`--receive`. Team-agnostic. |
@@ -297,8 +300,10 @@ Local Flask app at `web/`. Dark theme, monospace font, no CSS/JS frameworks.
 | `/api/draft-detail/<pid>` | JSON | GET — compact grid data for draft prospect detail panel (tools, pitches, fielding, positions, character). |
 | `/api/draft-picks` | JSON | GET — fetch current draft picks from StatsPlus API. |
 | `/api/draft-pool-upload` | JSON | POST — upload CSV of draft-eligible player IDs from OOTP export. |
-| `/api/draft-sim` | JSON | POST — run draft simulation (`{pick, rounds, seed}`). Returns projected picks. |
-| `/api/draft-upload-list` | JSON | POST — generate urgency-greedy auto-draft list (`{top}`). Writes file + returns preview. |
+| `/api/draft-sim` | JSON | POST — run draft simulation (`{pick, rounds, seed}`). Returns projected picks. Uses saved draft settings. |
+| `/api/draft-upload-list` | JSON | POST — generate urgency-greedy auto-draft list (`{top}`). Writes file + returns preview. Uses saved draft settings. |
+| `/api/draft-settings` | JSON | GET — load current draft settings (round groups, slider values). POST — save settings. |
+| `/api/draft-settings/copy` | JSON | POST — copy one round group's parameters to another (`{from_group, to_group}`). |
 | `/api/open-file-location` | JSON | POST — open system file explorer to a file's directory. |
 | `/api/org-players/<tid>` | JSON | GET — full org roster (MLB + farm) for trade tab |
 | `/api/trade-value` | JSON | POST — single-player trade valuation with retention support |
@@ -345,7 +350,7 @@ MLB players use a three-tab layout (Overview / Stats / Contract). Prospects disp
 | `web/percentiles.py` | Percentile rankings — hitter + pitcher, with expected range markers and performance tags |
 | `web/templates/team.html` | Team page — standings, stats, roster, contracts, farm |
 | `web/templates/player.html` | Player detail template with macros (`grade`, `pctile_grid`) and `toggleSplits()` JS |
-| `web/templates/league.html` | League page — vitals KPIs, standings, power rankings, prospects tab, trade tab, draft tab (side-by-side layout: board left, detail/picks sidebar right) |
+| `web/templates/league.html` | League page — vitals KPIs, standings, power rankings, prospects tab, trade tab, draft tab (side-by-side layout: board left, detail/picks sidebar right, settings modal with per-round-group sliders) |
 | `web/static/style.css` | Dark theme, grade bar tiers, percentile styling, rank coloring, draft bar chart styles |
 | `web/static/sort.js` | Client-side table sorting (numeric, string, positional spectrum) with smart rank renumbering |
 

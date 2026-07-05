@@ -1231,6 +1231,7 @@ def get_draft_org_depth(team_id):
 
     Returns dict keyed by display position: {pos: {mlb: $M, farm: $M, total: $M}}
     Only counts positive surplus to avoid noise from bad contracts/low-ceiling prospects.
+    Color thresholds are relative to the league average per position.
     """
     conn = get_db()
     ed_s = conn.execute("SELECT MAX(eval_date) FROM player_surplus").fetchone()[0]
@@ -1268,12 +1269,49 @@ def get_draft_org_depth(team_id):
         if key in result:
             result[key]["farm"] += (r[1] or 0) / 1e6
 
-    # Round and add total
+    # Compute league average per position for relative thresholds
+    try:
+        from league_config import config as _cfg
+        num_teams = len(_cfg.mlb_team_ids)
+    except Exception:
+        num_teams = 16
+
+    league_avg = {p: 0.0 for p in POS_ORDER}
+    for r in conn.execute("""
+        SELECT bucket, SUM(surplus) FROM player_surplus
+        WHERE eval_date=? AND surplus > 0
+        GROUP BY bucket
+    """, (ed_s,)).fetchall():
+        bucket = r[0]
+        if not bucket:
+            continue
+        key = "LF/RF" if bucket in ("COF", "LF", "RF") else ("CF" if bucket == "CF" else _display_pos(bucket))
+        if key in league_avg:
+            league_avg[key] += (r[1] or 0) / 1e6 / num_teams
+
+    for r in conn.execute("""
+        SELECT pf.bucket, SUM(pf.prospect_surplus)
+        FROM prospect_fv pf JOIN players p ON pf.player_id = p.player_id
+        WHERE pf.eval_date=? AND p.level != '1' AND pf.prospect_surplus > 0
+        GROUP BY pf.bucket
+    """, (ed_f,)).fetchall():
+        bucket = r[0]
+        if not bucket:
+            continue
+        key = "LF/RF" if bucket in ("COF", "LF", "RF") else ("CF" if bucket == "CF" else _display_pos(bucket))
+        if key in league_avg:
+            league_avg[key] += (r[1] or 0) / 1e6 / num_teams
+
+    # Round and add total with league-relative indicator
     out = {}
     for pos in POS_ORDER:
         mlb = round(result[pos]["mlb"], 1)
         farm = round(result[pos]["farm"], 1)
-        out[pos] = {"mlb": mlb, "farm": farm, "total": round(mlb + farm, 1)}
+        total = round(mlb + farm, 1)
+        avg = league_avg.get(pos, 0)
+        # Relative: >1.2× avg = ok, 0.6-1.2× = thin, <0.6× = gap
+        ratio = total / avg if avg > 0 else (2.0 if total > 0 else 0.0)
+        out[pos] = {"mlb": mlb, "farm": farm, "total": total, "ratio": round(ratio, 2)}
     return out
     """Rank all 34 MLB teams by WAR at each position. Returns {pos: [(team_id, war), ...]}."""
     from projections import project_war

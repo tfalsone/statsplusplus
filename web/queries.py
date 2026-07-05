@@ -851,8 +851,14 @@ def _annotate_adp(results):
         num_teams = 30
 
     # POT rank (other GMs' likely order): POT desc, age asc for ties
-    pot_sorted = sorted(range(len(results)),
-                        key=lambda i: (-(results[i].get("pot") or 0), results[i].get("age") or 99))
+    # When POT is unavailable (league doesn't surface it), fall back to ceiling.
+    has_pot = any(results[i].get("pot") for i in range(min(20, len(results))))
+    if has_pot:
+        pot_sorted = sorted(range(len(results)),
+                            key=lambda i: (-(results[i].get("pot") or 0), results[i].get("age") or 99))
+    else:
+        pot_sorted = sorted(range(len(results)),
+                            key=lambda i: (-(results[i].get("true_ceiling") or results[i].get("ceiling_score") or results[i].get("pot") or 0), results[i].get("age") or 99))
     pot_rank = {}
     for rank, idx in enumerate(pot_sorted, 1):
         pot_rank[idx] = rank
@@ -935,7 +941,8 @@ def get_draft_pool():
         entry = {
             "pid": p["ID"], "name": p["Name"], "age": p["Age"],
             "pos": pos_str, "bucket": bucket, "type": college_hs,
-            "ovr": p["Ovr"], "pot": p["Pot"],
+            "ovr": n(p["Ovr"]) or p.get("composite_score") or 0,
+            "pot": n(p["Pot"]) or p.get("true_ceiling") or p.get("ceiling_score") or 0,
             "fv": fv_base, "fv_str": fv_str_display,
             "risk": pf_risk,
             "bats": p.get("Bats", ""), "throws": p.get("Throws", ""),
@@ -1006,15 +1013,17 @@ def get_draft_pool():
         # Career outcome summary for range indicator
         try:
             import prospect_value as _pv
+            # Use composite_score as fallback when OVR is unavailable
+            _ovr = n(p["Ovr"]) or p.get("composite_score") or 0
+            _pot = n(p["Pot"]) or p.get("true_ceiling") or p.get("ceiling_score") or 0
             # Map Ovr to equivalent minor league level for outcome model
-            _ovr = p["Ovr"]
             if _ovr >= 45: _oc_level = 'aaa'
             elif _ovr >= 35: _oc_level = 'aa'
             elif _ovr >= 28: _oc_level = 'a'
             else: _oc_level = 'a-short'
             oc = _pv.career_outcome_probs(
                 fv_base, p["Age"], _oc_level, bucket,
-                ovr=p["Ovr"], pot=p["Pot"])
+                ovr=_ovr, pot=_pot)
             if oc:
                 entry["outcome"] = {
                     "thresholds": oc.get("thresholds", {}),
@@ -1022,7 +1031,7 @@ def get_draft_pool():
                 }
             surplus_val = _pv.prospect_surplus_with_option(
                 fv_base, p["Age"], _oc_level, bucket,
-                ovr=p["Ovr"], pot=p["Pot"])
+                ovr=_ovr, pot=_pot)
             entry["surplus"] = round(surplus_val / 1e6, 1) if surplus_val else 0
         except Exception:
             entry["surplus"] = 0
