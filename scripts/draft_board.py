@@ -305,18 +305,30 @@ def compute_adp(rows, num_teams=None):
 
 
 def compute_org_needs(conn):
-    """Positional need scores: MLB departures vs farm depth. Returns bucket -> bonus."""
+    """Positional need scores based on roster weakness + farm depth.
+
+    For standard FA leagues: departure-based (players leaving with thin farm depth).
+    For perpetual arb leagues: weakness-based (MLB starter below league median
+    AND farm has no FV 50+ prospect to replace them).
+
+    Returns bucket -> bonus (0, 1, or 2).
+    """
     try:
         from league_config import LeagueConfig
         cfg = LeagueConfig()
         my_team = cfg.my_team_id
-        # In perpetual arbitration leagues, players don't leave via free agency —
-        # they stay unless released. Departure-based needs don't apply.
-        if cfg.settings.get("perpetual_arb"):
-            return {}
+        is_perpetual = cfg.settings.get("perpetual_arb", False)
     except Exception:
         return {}
 
+    if is_perpetual:
+        return _compute_org_needs_weakness(conn, my_team)
+    else:
+        return _compute_org_needs_departures(conn, my_team)
+
+
+def _compute_org_needs_departures(conn, my_team):
+    """FA leagues: positions losing contributors with thin farm depth."""
     pos_map = {2: "C", 3: "1B", 4: "2B", 5: "3B", 6: "SS", 7: "COF", 8: "CF", 9: "COF"}
 
     rows = conn.execute("""
@@ -351,6 +363,95 @@ def compute_org_needs(conn):
             needs[bucket] = 2
         elif n_leaving > 0 and n_farm <= 3:
             needs[bucket] = 1
+    return needs
+
+
+def _compute_org_needs_weakness(conn, my_team):
+    """Perpetual arb leagues: positions where MLB starter is below league median
+    AND farm has no FV 50+ prospect in that bucket.
+
+    Logic:
+    - Hitter positions: compare team's best composite vs league median starter
+    - SP: compare team's 3rd-best SP composite vs league median 3rd SP
+      (rotation depth matters more than ace quality)
+    - Check farm for FV 50+ prospects per bucket
+    - Need = starter below median AND no strong farm replacement
+    """
+    pos_map = {2: "C", 3: "1B", 4: "2B", 5: "3B", 6: "SS", 7: "COF", 8: "CF", 9: "COF"}
+    BUCKETS = ["C", "1B", "2B", "3B", "SS", "CF", "COF", "SP"]
+    SP_SLOT = 3  # Compare 3rd-best SP (rotation depth indicator)
+
+    # ── Gather all MLB player composites by team and bucket ──
+    all_rows = conn.execute("""
+        SELECT p.pos, p.role, p.team_id, r.composite_score
+        FROM players p
+        JOIN latest_ratings r ON p.player_id = r.player_id
+        WHERE p.level = '1' AND r.composite_score IS NOT NULL
+    """).fetchall()
+
+    from collections import defaultdict
+    # team_id -> bucket -> list of scores (descending sort later)
+    team_scores = defaultdict(lambda: defaultdict(list))
+    for r in all_rows:
+        bucket = {11: "SP", 12: "RP", 13: "RP"}.get(r["role"]) or pos_map.get(r["pos"], "COF")
+        score = r["composite_score"] or 0
+        if bucket in BUCKETS and score > 0:
+            team_scores[r["team_id"]][bucket].append(score)
+
+    # ── Extract my team's representative score per bucket ──
+    my_rep = {}
+    for bucket in BUCKETS:
+        scores = sorted(team_scores.get(my_team, {}).get(bucket, []), reverse=True)
+        if bucket == "SP":
+            # Use the Nth-best SP as the "depth" indicator
+            my_rep[bucket] = scores[SP_SLOT - 1] if len(scores) >= SP_SLOT else (scores[-1] if scores else 0)
+        else:
+            my_rep[bucket] = scores[0] if scores else 0
+
+    # ── Compute league median representative score per bucket ──
+    league_median = {}
+    for bucket in BUCKETS:
+        reps = []
+        for tid, buckets in team_scores.items():
+            scores = sorted(buckets.get(bucket, []), reverse=True)
+            if bucket == "SP":
+                rep = scores[SP_SLOT - 1] if len(scores) >= SP_SLOT else (scores[-1] if scores else 0)
+            else:
+                rep = scores[0] if scores else 0
+            if rep > 0:
+                reps.append(rep)
+        reps.sort()
+        if reps:
+            league_median[bucket] = reps[len(reps) // 2]
+        else:
+            league_median[bucket] = 50  # fallback
+
+    # ── Farm depth: FV 50+ prospects per bucket ──
+    farm_rows = conn.execute("""
+        SELECT pf.bucket, COUNT(*) as cnt
+        FROM prospect_fv pf
+        JOIN players p ON pf.player_id = p.player_id
+        WHERE (p.parent_team_id = ? OR p.team_id = ?) AND pf.fv >= 50
+        GROUP BY pf.bucket
+    """, (my_team, my_team)).fetchall()
+    farm_50 = {r["bucket"]: r["cnt"] for r in farm_rows}
+
+    # ── Score needs ──
+    needs = {}
+    for bucket in BUCKETS:
+        my_score = my_rep.get(bucket, 0)
+        median = league_median.get(bucket, 50)
+        gap = median - my_score  # positive = below median
+        has_farm_help = farm_50.get(bucket, 0) >= 1
+
+        if gap >= 5 and not has_farm_help:
+            needs[bucket] = 2  # Significantly below average, no help coming
+        elif gap >= 2 and not has_farm_help:
+            needs[bucket] = 1  # Slightly below average, no help coming
+        elif gap >= 8:
+            # So far below median that even WITH farm help, still a need
+            needs[bucket] = 1
+
     return needs
 
 

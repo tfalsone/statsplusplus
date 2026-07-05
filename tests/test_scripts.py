@@ -804,3 +804,171 @@ class TestDraftSettings:
         # Verify it was persisted
         loaded = load_settings(dst)
         assert loaded["round_groups"][0]["settings"]["need"] == 1.0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# compute_org_needs — weakness-based needs for perpetual arb leagues
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestComputeOrgNeeds:
+    """Tests for the org needs computation in draft_board.py."""
+
+    def _make_db(self):
+        """Create in-memory DB with players, ratings, prospect_fv tables."""
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE players (
+                player_id INTEGER PRIMARY KEY, name TEXT, age INTEGER,
+                team_id INTEGER, parent_team_id INTEGER, level TEXT,
+                pos INTEGER, role INTEGER
+            );
+            CREATE TABLE ratings (
+                player_id INTEGER, snapshot_date TEXT,
+                composite_score INTEGER,
+                PRIMARY KEY (player_id, snapshot_date)
+            );
+            CREATE VIEW latest_ratings AS
+                SELECT * FROM ratings
+                WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM ratings);
+            CREATE TABLE prospect_fv (
+                player_id INTEGER, eval_date TEXT, fv INTEGER, fv_str TEXT,
+                level TEXT, bucket TEXT, prospect_surplus INTEGER, risk TEXT,
+                PRIMARY KEY (player_id, eval_date)
+            );
+            CREATE TABLE contracts (
+                player_id INTEGER PRIMARY KEY, team_id INTEGER,
+                years INTEGER, current_year INTEGER
+            );
+        """)
+        return conn
+
+    def _add_mlb_player(self, conn, pid, team_id, pos, role, composite, date="2033-06-01"):
+        conn.execute("INSERT INTO players VALUES (?,?,?,?,?,?,?,?)",
+                     (pid, f"P{pid}", 28, team_id, team_id, "1", pos, role))
+        conn.execute("INSERT INTO ratings VALUES (?,?,?)", (pid, date, composite))
+
+    def _add_prospect(self, conn, pid, parent_team_id, bucket, fv, date="2033-06-01"):
+        conn.execute("INSERT INTO players VALUES (?,?,?,?,?,?,?,?)",
+                     (pid, f"Prospect{pid}", 20, parent_team_id + 100, parent_team_id, "4", 6, 0))
+        conn.execute("INSERT INTO prospect_fv VALUES (?,?,?,?,?,?,?,?)",
+                     (pid, date, fv, f"{fv}", "aa", bucket, 5000000, "Medium"))
+
+    def test_weakness_detects_below_median_no_farm(self):
+        """Position below league median with no FV 50+ farm help → need."""
+        conn = self._make_db()
+
+        # My team (id=1): SS with composite 45 (weak)
+        self._add_mlb_player(conn, 1, 1, 6, 0, 45)  # SS
+        self._add_mlb_player(conn, 2, 1, 3, 0, 60)  # 1B (strong)
+
+        # Other teams: all have SS composite 55 (making median ~55)
+        for i in range(10):
+            self._add_mlb_player(conn, 100 + i, 10 + i, 6, 0, 55)
+
+        conn.commit()
+        from draft_board import _compute_org_needs_weakness
+        needs = _compute_org_needs_weakness(conn, my_team=1)
+
+        # SS should be a need (gap = 55 - 45 = 10 ≥ 5, no farm)
+        assert "SS" in needs
+        assert needs["SS"] == 2
+
+    def test_weakness_no_need_when_farm_helps(self):
+        """Position below median but FV 50+ prospect exists → reduced/no need."""
+        conn = self._make_db()
+
+        # My team: weak SS
+        self._add_mlb_player(conn, 1, 1, 6, 0, 45)
+
+        # Other teams: strong SS
+        for i in range(10):
+            self._add_mlb_player(conn, 100 + i, 10 + i, 6, 0, 55)
+
+        # Add an FV 50 SS prospect
+        self._add_prospect(conn, 500, 1, "SS", 50)
+
+        conn.commit()
+        from draft_board import _compute_org_needs_weakness
+        needs = _compute_org_needs_weakness(conn, my_team=1)
+
+        # With farm help and gap=10, should still get +1 (gap >= 8 rule)
+        assert needs.get("SS", 0) == 1
+
+    def test_weakness_no_need_when_at_median(self):
+        """Position at or above median → no need regardless of farm."""
+        conn = self._make_db()
+
+        # My team: solid SS at 55
+        self._add_mlb_player(conn, 1, 1, 6, 0, 55)
+
+        # Other teams: similar SS
+        for i in range(10):
+            self._add_mlb_player(conn, 100 + i, 10 + i, 6, 0, 55)
+
+        conn.commit()
+        from draft_board import _compute_org_needs_weakness
+        needs = _compute_org_needs_weakness(conn, my_team=1)
+
+        assert "SS" not in needs
+
+    def test_weakness_sp_uses_3rd_best(self):
+        """SP need is based on 3rd-best SP, not the ace."""
+        conn = self._make_db()
+
+        # My team: ace at 70, #2 at 60, #3 at 40 (weak back end)
+        self._add_mlb_player(conn, 1, 1, 0, 11, 70)
+        self._add_mlb_player(conn, 2, 1, 0, 11, 60)
+        self._add_mlb_player(conn, 3, 1, 0, 11, 40)
+
+        # Other teams: all have 3 SP at 55 (median 3rd SP = 55)
+        for i in range(10):
+            for j in range(3):
+                self._add_mlb_player(conn, 100 + i*10 + j, 10 + i, 0, 11, 55)
+
+        conn.commit()
+        from draft_board import _compute_org_needs_weakness
+        needs = _compute_org_needs_weakness(conn, my_team=1)
+
+        # 3rd SP gap = 55 - 40 = 15 ≥ 5, no farm → need
+        assert "SP" in needs
+        assert needs["SP"] == 2
+
+    def test_departures_unchanged_behavior(self):
+        """FA league path: leaving players with thin farm → need."""
+        conn = self._make_db()
+
+        # Player leaving in 1 year (years=2, current_year=2), composite 50
+        conn.execute("INSERT INTO players VALUES (?,?,?,?,?,?,?,?)",
+                     (1, "Leaving SS", 30, 1, 1, "1", 6, 0))
+        conn.execute("INSERT INTO ratings VALUES (?,?,?)", (1, "2033-06-01", 50))
+        conn.execute("INSERT INTO contracts VALUES (?,?,?,?)", (1, 1, 2, 2))
+
+        conn.commit()
+        from draft_board import _compute_org_needs_departures
+        needs = _compute_org_needs_departures(conn, my_team=1)
+
+        # SS leaving with 0 farm FV 45+ → need
+        assert "SS" in needs
+        assert needs["SS"] == 2
+
+    def test_departures_no_need_with_farm_depth(self):
+        """FA league path: leaving player but adequate farm → no need."""
+        conn = self._make_db()
+
+        # Player leaving
+        conn.execute("INSERT INTO players VALUES (?,?,?,?,?,?,?,?)",
+                     (1, "Leaving SS", 30, 1, 1, "1", 6, 0))
+        conn.execute("INSERT INTO ratings VALUES (?,?,?)", (1, "2033-06-01", 50))
+        conn.execute("INSERT INTO contracts VALUES (?,?,?,?)", (1, 1, 2, 2))
+
+        # 4 FV 45+ SS prospects
+        for i in range(4):
+            self._add_prospect(conn, 500 + i, 1, "SS", 45)
+
+        conn.commit()
+        from draft_board import _compute_org_needs_departures
+        needs = _compute_org_needs_departures(conn, my_team=1)
+
+        # 4 farm prospects → no need
+        assert "SS" not in needs

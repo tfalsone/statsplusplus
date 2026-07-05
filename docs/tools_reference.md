@@ -213,6 +213,10 @@ Sim uses randomized other-team picks (window `8+pick×0.15`, exponent `max(1.0, 
 Importable: `load_board()`, `draft_value()`, `compute_adp()`, `compute_org_needs()`,
 `build_pick_list()`, `build_urgency_list()`, `simulate_draft()`.
 
+`compute_org_needs(conn)` auto-detects league type: FA leagues use departure-based needs
+(players leaving with thin farm depth); perpetual arb leagues use weakness-based needs
+(starter composite below league median with no FV 50+ farm replacement).
+
 ### `scripts/draft_settings.py`
 
 Draft board settings persistence and validation. Manages per-league, per-round-group

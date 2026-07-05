@@ -69,6 +69,7 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 - **Documentation accuracy** — Fixed `docs/tools_reference.md` (wrong function names, wrong JSON structure, wrong preset names), `docs/system_overview.md` (copy endpoint description), and `docs/changelog.md` (preset names).
 - **Test coverage** — Added 12 unit tests for `draft_settings.py` in `test_scripts.py` (validation, snapping, param mapping, round resolution, persistence roundtrip).
 - **Draft agent steering** — Added `config/draft_settings.json` to data sources and documented settings-aware mode in `.kiro/steering/draft-agent.md`.
+- **Org needs for perpetual arb leagues** — Implemented `_compute_org_needs_weakness()`: compares team's positional starter composite vs league median (3rd-best SP for rotation depth), gated by farm FV 50+ depth. Thresholds: +2 if ≥5 below median with no farm help, +1 if ≥2 below with no farm help, +1 if ≥8 below even with farm help. FA leagues remain on departure-based logic (`_compute_org_needs_departures()`). Added 6 unit tests covering both paths.
 
 ---
 
