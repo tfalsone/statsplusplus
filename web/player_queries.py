@@ -1145,6 +1145,7 @@ def get_player(pid):
     return {
         "pid": pid, "name": name, "age": age, "pos": pos_str,
         "team": team_names_map().get(org_id, "?"), "team_abbr": team_abbr_map().get(org_id, "?"), "tid": org_id,
+        "actual_team_id": team_id if team_id != org_id else None,
         "level": level_str, "is_pitcher": is_pitcher, "is_two_way": is_two_way,
         "ratings": ratings, "hit_ratings": hit_ratings, "valuation": valuation, "contract": contract,
         "bat_stats": bat_stats, "pit_stats": pit_stats, "summary": summary,

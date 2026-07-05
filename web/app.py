@@ -414,6 +414,17 @@ def player(pid):
     bc = [{"label": ln, "url": "/league"}]
     if p.get("tid"):
         bc.append({"label": team_name, "url": f"/team/{p['tid']}"})
+    # For minor leaguers, show their actual affiliate team in the trail
+    actual_tid = p.get("actual_team_id")
+    if actual_tid:
+        from web_league_context import get_db as _get_db_bc
+        _conn_bc = _get_db_bc()
+        _affiliate = _conn_bc.execute(
+            "SELECT name, level FROM teams WHERE team_id=?", (actual_tid,)).fetchone()
+        if _affiliate:
+            _level_name = cfg.level_map.get(str(_affiliate["level"]), "")
+            _aff_label = f"{_level_name} {_affiliate['name']}".strip() if _level_name else _affiliate["name"]
+            bc.append({"label": _aff_label, "url": f"/team/{actual_tid}"})
     bc.append({"label": p["name"], "url": f"/player/{pid}"})
     return render_template("player.html", p=p, my_abbr=my_abbr, breadcrumbs=bc)
 
