@@ -407,6 +407,48 @@ def _detect_league_structure(conn, year):
     for tid in mlb_tids:
         div_map[find(tid)].add(tid)
 
+    # --- Fallback: detect isolated leagues (no inter-league play) ---
+    # When clustering fails (no frequency gap) but teams form disconnected
+    # groups (some pairs have 0 games), use connectivity to identify leagues.
+    # This handles leagues with no divisions and no interleague play.
+    if len(div_map) == len(mlb_tids):
+        # Every team is its own "division" — clustering found nothing.
+        # Check if teams form natural connected components (play each other).
+        all_pairs = set(pair_counts.keys())
+        # Build adjacency from game data
+        adj = defaultdict(set)
+        for (t1, t2) in all_pairs:
+            adj[t1].add(t2)
+            adj[t2].add(t1)
+        # BFS to find connected components
+        visited = set()
+        components = []
+        for tid in mlb_tids:
+            if tid in visited:
+                continue
+            component = set()
+            queue = [tid]
+            while queue:
+                curr = queue.pop()
+                if curr in visited:
+                    continue
+                visited.add(curr)
+                component.add(curr)
+                for nbr in adj.get(curr, set()):
+                    if nbr not in visited and nbr in mlb_tids:
+                        queue.append(nbr)
+            components.append(component)
+
+        if 2 <= len(components) <= 4 and all(len(c) >= 4 for c in components):
+            # Found isolated leagues — treat each component as a single division
+            log.info(f"  Detected {len(components)} isolated leagues (no inter-league play)")
+            div_map = {min(c): c for c in components}
+            # Union-find within each component
+            for component in components:
+                rep = min(component)
+                for tid in component:
+                    parent[tid] = rep
+
     # Assign unclustered teams (expansion with few games) using API ordering.
     # They sit between two division groups in the API — assign to the preceding one.
     unclustered = mlb_tids - clustered
