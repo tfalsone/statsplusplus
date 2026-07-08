@@ -1826,7 +1826,7 @@ def get_org_overview(team_id):
     # ── Position depth: MLB starters per position ──
     mlb_by_pos = defaultdict(list)  # pos_label -> [entries] sorted by WAR
 
-    # Position players from fielding_stats
+    # Position players from fielding_stats (current roster only)
     fld_rows = conn.execute("""
         SELECT f.player_id, p.name, f.position, f.g, ps.ovr, ps.surplus,
                COALESCE(b.war, pt.war, 0) as war, p.age
@@ -1836,8 +1836,9 @@ def get_org_overview(team_id):
         LEFT JOIN batting_stats b ON f.player_id = b.player_id AND b.year = ? AND b.split_id = 1
         LEFT JOIN pitching_stats pt ON f.player_id = pt.player_id AND pt.year = ? AND pt.split_id = 1
         WHERE f.team_id = ? AND f.year = ? AND f.position != 1
+          AND (p.team_id = ? OR p.parent_team_id = ?)
         ORDER BY f.player_id, f.g DESC
-    """, (ed_s, year, year, team_id, year)).fetchall()
+    """, (ed_s, year, year, team_id, year, team_id, team_id)).fetchall()
     seen_fld = set()
     for r in fld_rows:
         if r["player_id"] in seen_fld:
@@ -1847,15 +1848,16 @@ def get_org_overview(team_id):
         if pos:
             mlb_by_pos[pos].append(_entry(r))
 
-    # Pitchers — collect all, sorted by WAR
+    # Pitchers — collect all, sorted by WAR (current roster only)
     pit_rows = conn.execute("""
         SELECT p.player_id, p.name, p.role, ps.ovr, ps.surplus, pt.war, p.age
         FROM pitching_stats pt
         JOIN players p ON pt.player_id = p.player_id
         LEFT JOIN player_surplus ps ON pt.player_id = ps.player_id AND ps.eval_date = ?
         WHERE pt.team_id = ? AND pt.year = ? AND pt.split_id = 1
+          AND (p.team_id = ? OR p.parent_team_id = ?)
         ORDER BY pt.war DESC
-    """, (ed_s, team_id, year)).fetchall()
+    """, (ed_s, team_id, year, team_id, team_id)).fetchall()
     for r in pit_rows:
         bucket = "SP" if r["role"] == 11 else "RP"
         mlb_by_pos[bucket].append(_entry(r))

@@ -5,6 +5,21 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
+/**
+ * Re-initialize sort handlers for a specific table.
+ * Call after dynamically replacing thead content.
+ */
+function initSort(table) {
+  if (!table) return;
+  table.querySelectorAll("th[data-sort]").forEach(th => {
+    th.style.cursor = "pointer";
+    // Remove existing listener by cloning (prevents double-bind)
+    const newTh = th.cloneNode(true);
+    th.parentNode.replaceChild(newTh, th);
+    newTh.addEventListener("click", () => sortTable(newTh));
+  });
+}
+
 function sortTable(th) {
   const table = th.closest("table");
   const tbody = table.querySelector("tbody");
