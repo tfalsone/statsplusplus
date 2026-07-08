@@ -245,12 +245,21 @@ def contract_value(player_id, retention_pct=0.0, _conn=None, _hist=None):
                 arb_yr = i - pre_arb_left + 1  # 1-indexed
                 prior = breakdown[-1]["salary_full"] if breakdown else min_sal
                 sal_full = _arb_salary(ovr, bucket, arb_yr, prior, min_sal)
-            # Non-tender gate: if projected arb salary far exceeds market value,
-            # the team would non-tender — truncate control here.
-            # Threshold at 2× to avoid premature truncation for borderline players.
+            # Non-tender / diminishing surplus gate:
+            # FA leagues: truncate when salary > 2× market value (non-tender)
+            # Perpetual arb: truncate when surplus per year drops below 30% of
+            #   year-1 surplus (diminishing returns — remaining years add little
+            #   value). Only fires after year 2 to avoid early truncation for
+            #   players still developing.
             mkt_val = war_base * dpw * scarcity
-            if not _cfg_cv.perpetual_arb and i >= pre_arb_left and sal_full > max(mkt_val * 2, min_sal):
-                break
+            if _cfg_cv.perpetual_arb:
+                yr_surplus = mkt_val - sal_full
+                if (i >= 3 and breakdown and breakdown[0].get("surplus", 0) > 0
+                        and yr_surplus < breakdown[0]["surplus"] * 0.30):
+                    break
+            else:
+                if i >= pre_arb_left and sal_full > max(mkt_val * 2, min_sal):
+                    break
         elif ext_start is not None and i >= ext_start:
             ext_idx = i - ext_start
             sal_full = ext[f"salary_{ext_idx}"] if ext_idx < 15 else min_sal
