@@ -4,6 +4,18 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 62 (2026-07-09)
+
+### Bug Fixes
+
+- **Org page position depth blank** (`team_queries.py`, `refresh.py`) — Org overview showed no position players (only pitchers and prospects). Root cause: `fielding_stats` table was empty for leagues onboarded mid-season — refresh only fetched current-year fielding, which is empty during spring training. Fix: (1) refresh now always re-fetches prior-year fielding stats (matching the batting/pitching fix from Session 61), (2) `get_org_overview()` falls back to `batting_stats` + `players.pos` when fielding data is unavailable. Reported by Koba.
+
+### Investigation
+
+- **$/WAR discrepancy across environments** — PPL showed $153K/WAR on one machine vs $22K on another. Same 48 contracts, same $3.5M salary sum, but WAR denominator differed (22.8 vs 158.4). Root cause was the incomplete prior-year stats bug (fixed Session 61) — one machine had partial 1953 data inflating the rate. $22K/WAR is correct for PPL's financial scale ($6,600 minimum salary).
+
+---
+
 ## Session 61 (2026-07-08)
 
 ### Bug Fixes
