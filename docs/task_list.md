@@ -64,14 +64,33 @@ Legacy components designed for OVR/POT that need updating for composite/ceiling:
 
 ---
 
+## User Feedback (Beta Testers)
+
+Items identified from beta tester usage and conversations.
+
+### High Priority (Bugs)
+- [ ] **Org page — lineup card blank** — Starting lineup card on org overview shows blank for hitters (pitchers section was previously fixed). Likely related to the stale-player roster filter being too aggressive for the lineup construction query. Reported by Koba. **LOE: Low.**
+
+### Feature Requests
+- [ ] **CSV export from draft board** — Add export button to draft board that outputs the current filtered/sorted view as a CSV. Two use cases: (1) export remaining undrafted players for external LLM analysis, (2) export computed columns (FV, composite ceiling, surplus) to enrich external datasets. Should respect active filters (position, level, hide drafted). Reported by Koba. **LOE: Low.**
+- [ ] **Positional rankings: vs-average and component breakdown** — On the positional rankings page, show (1) how far above/below league average each player's composite is (delta column or bar), and (2) a visual indicator of offense vs defense contribution to the composite (e.g., stacked bar or split label showing "OFF 62 / DEF 55"). Currently the composite is a single number with no breakdown visible in list context. Reported by Koba. **LOE: Low-Medium.**
+- [ ] **Custom pool / prospect explorer** — Allow users to upload or select a custom group of players (e.g., their full minor league system) and view them in a sortable/filterable table similar to the draft board. Users want to sort their org's players by specific tools, composite, ceiling, or FV without needing the draft pool context. Could reuse the draft board table component with a different data source. Reported by Koba. **LOE: Medium.**
+- [ ] **Platoon finder** — Filter/search for players with significant platoon splits (strong vs LHP or vs RHP). Surface players meeting a platoon threshold across MLB and MiLB rosters, enabling platoon lineup construction. Criteria: large gap in L/R contact or power ratings (e.g., 15+ point split) AND the strong side is above average (55+). Display: list with name, bats, strong-side stats, weak-side stats, platoon label. Could live as a filter on the team roster page or as a standalone tool. Reported by Koba. **LOE: Medium.**
+- [ ] **Fielding stats on evaluated position** — Show observed ZR, fielding %, and games played at each position the player has manned (from `fielding_stats` table). Displayed alongside the positional evaluation section so users can validate whether a position switch recommendation has real defensive track record behind it. Useful for utility players and position-change candidates. Reported by Koba. **LOE: Low-Medium.**
+
+### Research / Model Tuning
+- [ ] **Extreme profile inflation** — Observation that players with one extreme tool + otherwise poor ratings (30/30/90 control pitcher, or 30 contact/90 power hitter) grade higher than balanced profiles in composite/FV. Other GMs tend to favor balanced players. The contact floor penalty partially addresses this for power-only hitters. Investigate: (1) do extreme profiles underperform their composite in-game? (2) would a general "tool imbalance" penalty be warranted? (3) could this be addressed via the existing draft settings sliders (contact floor, etc.) without formula changes? Reported by Koba. **LOE: Medium (research).**
+
+### UX / Onboarding
+- [ ] **Draft pool import instructions** — The OOTP export process (custom report → save as global → find import_export folder) is unintuitive for first-time users. Add in-app step-by-step guidance near the Upload button (tooltip, help modal, or inline instructions). Reported by Koba. **LOE: Low.**
+
+---
+
 ## Web UI — League Page
 
 - [x] **Positional rankings page** — League-wide page showing top players by position group (C, IF, OF, SP, RP), split into MLB and prospect sections. For MLB: rank by composite/WAR. For prospects: rank by FV/surplus. **Already implemented.**
 - [ ] **Power rankings trend indicators** — store historical rank snapshots (per eval_date or game_date) and show ▲/▼/— movement arrows next to rank. Needs: new DB table or JSON file for rank history, delta calculation. **LOE: Medium.**
 - [ ] **League news / milestone ticker** — horizontal strip between standings and power rankings showing notable milestones (e.g. "Player X: 3 HR from 50"). Needs: milestone detection logic from stats. **LOE: Medium-High.**
-- [ ] **Positional rankings: vs-average and component breakdown** — On the positional rankings page, show (1) how far above/below league average each player's composite is (delta column or bar), and (2) a visual indicator of offense vs defense contribution to the composite (e.g., stacked bar or split label showing "OFF 62 / DEF 55"). Currently the composite is a single number with no breakdown visible in list context. **LOE: Low-Medium.**
-- [ ] **Custom pool / prospect explorer** — Allow users to upload or select a custom group of players (e.g., their full minor league system) and view them in a sortable/filterable table similar to the draft board. Users want to sort their org's players by specific tools, composite, ceiling, or FV without needing the draft pool context. Could reuse the draft board table component with a different data source. **LOE: Medium.**
-- [ ] **Platoon finder** — Filter/search for players with significant platoon splits (strong vs LHP or vs RHP). Surface players meeting a platoon threshold across MLB and MiLB rosters, enabling platoon lineup construction. Criteria: large gap in L/R contact or power ratings (e.g., 15+ point split) AND the strong side is above average (55+). Display: list with name, bats, strong-side stats, weak-side stats, platoon label. Could live as a filter on the team roster page or as a standalone tool. **LOE: Medium.**
 
 ### Draft Tab — Future Improvements
 - [x] **Draft board: position filter breaks sorting** — Fixed: added `initSort(table)` to `sort.js` that rebinds click handlers after dynamic thead replacement. `renderDraftBoard()` already called it but the function didn't exist. **Done Session 61.**
@@ -91,7 +110,6 @@ Legacy components designed for OVR/POT that need updating for composite/ceiling:
 ## Web UI — Player Page
 
 - [ ] **Player development history chart** — chart showing rating trajectories over time using `ratings_history` snapshots (monthly in-game). Display current + potential for primary tools (hitter: cntct/gap/pow/eye/ks; pitcher: stf/mov/ctrl + individual pitches), ovr/pot headline, and extended ratings (babip/hra/pbabip) when available. Waiting for multiple snapshots to accumulate before building the UI. **LOE: Medium.**
-- [ ] **Fielding stats on evaluated position** — Show observed ZR, fielding %, and games played at each position the player has manned (from `fielding_stats` table). Displayed alongside the positional evaluation section so users can validate whether a position switch recommendation has real defensive track record behind it. Useful for utility players and position-change candidates. **LOE: Low-Medium.**
 
 ---
 
