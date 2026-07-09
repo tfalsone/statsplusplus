@@ -194,7 +194,17 @@ def draft_value(r, needs=None, pick_round=None, params=None):
     if r["bucket"] == "RP":
         rp_scale = params["rp_discount_scale"] if params else 1.0
         stm = r["stm"] if "stm" in r.keys() else 0
-        if stm and stm >= 30:
+        # Tweener = has SP upside (stamina + arsenal to potentially start)
+        # Requires STM >= 35 AND 3+ pitches with pot >= 45
+        viable_pitches = 0
+        if stm and stm >= 35:
+            for k in _PITCH_KEYS:
+                pot_key = f"pot_{k}"
+                pot_val = r[pot_key] if pot_key in r.keys() else 0
+                if pot_val and pot_val >= 45:
+                    viable_pitches += 1
+        is_tweener = stm >= 35 and viable_pitches >= 3
+        if is_tweener:
             val -= 2 * rp_scale  # Tweener — SP upside with reliever risk
         else:
             val -= 5 * rp_scale  # Pure reliever
@@ -268,11 +278,18 @@ def compute_adp(rows, num_teams=None):
 
     # Use POT for ranking (what other GMs see). When POT is unavailable
     # (e.g., leagues that don't surface OVR/POT), fall back to true_ceiling.
+    # Apply RP discount in ceiling-based sort: other GMs also devalue relievers.
     has_pot = any(r["pot"] for r in rows[:20])
     if has_pot:
         ranked = sorted(rows, key=lambda r: (-(r["pot"] or 0), r["age"] or 99))
     else:
-        ranked = sorted(rows, key=lambda r: (-(r["true_ceiling"] or 0), r["age"] or 99))
+        def _adp_sort_key(r):
+            ceil = r["true_ceiling"] or 0
+            # RPs drop significantly in other GMs' rankings too
+            if r["bucket"] == "RP":
+                ceil -= 15
+            return (-ceil, r["age"] or 99)
+        ranked = sorted(rows, key=_adp_sort_key)
     pot_rank = {r["player_id"]: i + 1 for i, r in enumerate(ranked)}
 
     fv_ranked = sorted(rows, key=lambda r: draft_value(r), reverse=True)

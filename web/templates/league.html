@@ -1657,7 +1657,7 @@ function renderDraftBoard(view) {
 
   var thead = document.getElementById('draft-thead');
   var base = '<th class="dd-cmp-th" title="Compare">⚖</th><th data-sort="num">Rk</th><th data-sort="str">Pos</th><th data-sort="str" class="left">Name</th>' +
-    '<th data-sort="num">Age</th><th data-sort="str">Lvl</th><th data-sort="num">Ovr</th><th data-sort="num">Pot</th><th data-sort="str">FV</th><th data-sort="num">$Val</th>';
+    '<th data-sort="num">Age</th><th data-sort="str">Lvl</th><th data-sort="num">Ovr</th><th data-sort="num">Pot</th><th data-sort="str">FV</th><th data-sort="num">$Val</th><th data-sort="str">Acc</th>';
   if (view === 'hit') {
     thead.innerHTML = '<tr>' + base +
       '<th data-sort="str">Bat</th><th data-sort="str">Thr</th>' +
@@ -1667,7 +1667,7 @@ function renderDraftBoard(view) {
       '<th data-sort="num">SS</th><th data-sort="num">LF</th><th data-sort="num">CF</th><th data-sort="num">RF</th>' +
       '<th data-sort="num" class="col-sep">IFR</th><th data-sort="num">IFA</th><th data-sort="num">OFR</th><th data-sort="num">OFA</th>' +
       '<th data-sort="num">CBlk</th><th data-sort="num">CFrm</th>' +
-      '<th data-sort="str" class="col-sep">Acc</th><th data-sort="str">W/E</th><th data-sort="str">Lead</th><th data-sort="str">Int</th></tr>';
+      '<th data-sort="str" class="col-sep">W/E</th><th data-sort="str">Lead</th><th data-sort="str">Int</th></tr>';
   } else if (view === 'pit') {
     thead.innerHTML = '<tr>' + base +
       '<th data-sort="str">Thr</th>' +
@@ -1677,7 +1677,7 @@ function renderDraftBoard(view) {
       '<th data-sort="num">SL</th><th data-sort="num">CH</th><th data-sort="num">CUT</th>' +
       '<th data-sort="num">SPL</th><th data-sort="num">FRK</th><th data-sort="num">CC</th>' +
       '<th data-sort="num">SCR</th><th data-sort="num">KC</th><th data-sort="num">KN</th><th data-sort="num">#P</th>' +
-      '<th data-sort="str" class="col-sep">Acc</th><th data-sort="str">W/E</th><th data-sort="str">Lead</th><th data-sort="str">Int</th></tr>';
+      '<th data-sort="str" class="col-sep">W/E</th><th data-sort="str">Lead</th><th data-sort="str">Int</th></tr>';
   } else {
     thead.innerHTML = '<tr>' + base + '<th data-sort="str">Bat</th><th data-sort="str">Thr</th><th data-sort="num" class="col-sep" title="P(Contributor)">C%</th><th data-sort="num" title="P(Regular)">R%</th><th data-sort="num" title="P(All-Star)">AS%</th><th data-sort="num" title="Bust probability (1 - P(Contributor))">Bust%</th><th data-sort="str">Profile</th><th data-sort="num" class="col-sep" title="Expected draft round based on POT rank">ExpRd</th><th data-sort="str" title="Value gap vs other GMs">ADP</th></tr>';
   }
@@ -1754,6 +1754,7 @@ function applyDraftFilters() {
     tr += '<td>' + p.age + '</td><td>' + lvlPill(p.type) + '</td>';
     tr += gtd(p.ovr) + gtd(p.pot) + '<td>' + fvPill(p.fv_str) + '</td>';
     tr += '<td class="text-dim" style="font-size:12px">' + (p.surplus > 0 ? '$' + p.surplus + 'M' : '—') + '</td>';
+    tr += '<td>' + charPill(p.acc) + '</td>';
     if (view === 'hit' && !isPit) {
       var t = p.tools;
       var d = p.defense || {};
@@ -1770,8 +1771,7 @@ function applyDraftFilters() {
         var v = fl[k];
         tr += v && v > 20 ? '<td class="' + (i===0 ? 'col-sep ' : '') + gradeClr(v) + '">' + v + '</td>' : '<td' + (i===0 ? ' class="col-sep"' : '') + '>-</td>';
       });
-      tr += '<td class="col-sep">' + charPill(p.acc) + '</td>';
-      tr += '<td>' + charPill(p.we) + '</td><td>' + charPill(p.lead) + '</td><td>' + charPill(p.int) + '</td>';
+      tr += '<td class="col-sep">' + charPill(p.we) + '</td><td>' + charPill(p.lead) + '</td><td>' + charPill(p.int) + '</td>';
     } else if (view === 'pit' && isPit) {
       var t = p.tools;
       var pt = t.pitches || {};
@@ -1784,8 +1784,7 @@ function applyDraftFilters() {
         tr += v ? '<td class="' + (pn==='FB' ? 'col-sep ' : '') + gradeClr(v) + '">' + v + '</td>' : '<td' + (pn==='FB' ? ' class="col-sep"' : '') + '>-</td>';
       });
       tr += '<td>' + t.num_pitches + '</td>';
-      tr += '<td class="col-sep">' + charPill(p.acc) + '</td>';
-      tr += '<td>' + charPill(p.we) + '</td><td>' + charPill(p.lead) + '</td><td>' + charPill(p.int) + '</td>';
+      tr += '<td class="col-sep">' + charPill(p.we) + '</td><td>' + charPill(p.lead) + '</td><td>' + charPill(p.int) + '</td>';
     } else {
       // All view - B/T + outcome probabilities + ADP
       tr += '<td>' + (p.bats||'') + '</td><td>' + (p.throws||'') + '</td>';
