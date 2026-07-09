@@ -684,12 +684,24 @@ def refresh_league(year, game_date=None):
     _upsert_pitching(conn, pit_rows)
     log.info(f"  {len(pit_rows)} pitching rows (year={year})")
 
+    # Always re-fetch prior year to ensure complete end-of-season stats.
+    # Mid-season refreshes may have stored partial data for the prior year;
+    # once the season ends, we need the final totals.
+    prior_year = year - 1
+    log.info(f"── prior year stats (year={prior_year})")
+    bat_prior = client.get_player_batting_stats(year=prior_year, split=1)
+    _upsert_batting(conn, bat_prior)
+    pit_prior = client.get_player_pitching_stats(year=prior_year, split=1)
+    _upsert_pitching(conn, pit_prior)
+    log.info(f"  {len(bat_prior)} bat, {len(pit_prior)} pit (year={prior_year})")
+
     # Historical stats — up to 15 prior years for $/WAR, player history, etc.
-    # Only pull years not already in the DB.
+    # Only pull years not already in the DB (excludes current and prior year
+    # which are always fetched above).
     existing_years = {r[0] for r in conn.execute(
         "SELECT DISTINCT year FROM batting_stats").fetchall()}
     hist_start = year - 15
-    hist_years = [y for y in range(hist_start, year) if y not in existing_years]
+    hist_years = [y for y in range(hist_start, prior_year) if y not in existing_years]
     if hist_years:
         log.info(f"── historical stats ({hist_years[0]}–{hist_years[-1]}, {len(hist_years)} years)")
         for y in hist_years:
