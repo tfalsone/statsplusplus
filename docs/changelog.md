@@ -4,6 +4,20 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 61 (2026-07-08)
+
+### Bug Fixes
+
+- **RP tweener classification** (`draft_board.py`) — The RP discount logic classified any RP with STM ≥ 30 as a "tweener" (−2 penalty). Fixed to require both STM ≥ 35 AND 3+ pitches with pot ≥ 45 for tweener status. Pure relievers (e.g., 2 pitches, STM 30) now correctly get the full −5 penalty.
+- **ADP ceiling-based sort for RPs** (`draft_board.py`) — In leagues without POT (using true_ceiling as ADP proxy), RPs sorted at the top (ceiling 72 → ExpRd 1). Added −15 penalty to RP ceilings in the ADP sort since other GMs also devalue relievers.
+- **Incomplete prior-year stats** (`refresh.py`) — The refresh pipeline only fetched historical years not already in the DB. A mid-season refresh stored partial prior-year data, and subsequent refreshes skipped it (year already exists). This caused incomplete WAR totals that inflated $/WAR by 7× ($153K vs correct $21K in PPL). Fix: always re-fetch year−1 stats regardless of DB state.
+
+### UI Changes
+
+- **Acc column on draft board** (`league.html`) — Added scouting accuracy as a charPill in the base columns of the draft board table (visible in All/Hitters/Pitchers views). Removed duplicate Acc column from hit/pit detail sections.
+
+---
+
 ## Session 60 (2026-07-05)
 
 ### Draft Board Settings Feature
