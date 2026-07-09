@@ -718,7 +718,10 @@ def refresh_league(year, game_date=None):
     log.info("── fielding (all orgs)")
     fielding = client.get_player_fielding_stats(year=year)
     _upsert_fielding(conn, fielding)
-    log.info(f"  {len(fielding)} rows")
+    # Always re-fetch prior year fielding (same rationale as batting/pitching above)
+    fielding_prior = client.get_player_fielding_stats(year=prior_year)
+    _upsert_fielding(conn, fielding_prior)
+    log.info(f"  {len(fielding)} rows (year={year}), {len(fielding_prior)} rows (year={prior_year})")
 
     log.info("── team stats")
     _upsert_team_stats(conn, year)

@@ -1848,6 +1848,24 @@ def get_org_overview(team_id):
         if pos:
             mlb_by_pos[pos].append(_entry(r))
 
+    # Fallback: if no fielding data, use batting_stats + players.pos
+    if not seen_fld:
+        bat_rows = conn.execute("""
+            SELECT b.player_id, p.name, p.pos as position, ps.ovr, ps.surplus,
+                   b.war, p.age
+            FROM batting_stats b
+            JOIN players p ON b.player_id = p.player_id
+            LEFT JOIN player_surplus ps ON b.player_id = ps.player_id AND ps.eval_date = ?
+            WHERE b.team_id = ? AND b.year = ? AND b.split_id = 1
+              AND p.pos != 1 AND p.role NOT IN (11, 12, 13)
+              AND (p.team_id = ? OR p.parent_team_id = ?)
+            ORDER BY b.war DESC
+        """, (ed_s, team_id, year, team_id, team_id)).fetchall()
+        for r in bat_rows:
+            pos = pos_map().get(r["position"])
+            if pos:
+                mlb_by_pos[pos].append(_entry(r))
+
     # Pitchers — collect all, sorted by WAR (current roster only)
     pit_rows = conn.execute("""
         SELECT p.player_id, p.name, p.role, ps.ovr, ps.surplus, pt.war, p.age
