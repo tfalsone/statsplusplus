@@ -126,6 +126,15 @@ def run():
 
     rows = conn.execute(RATINGS_SQL).fetchall()
 
+    # Filter to players belonging to our league's organizations.
+    # Excludes foreign league players (e.g., Japanese leagues) that have
+    # ratings in the DB but aren't part of our league structure.
+    _our_tids = _cfg.mlb_team_ids
+    if _our_tids:
+        rows = [r for r in rows if r["team_id"] in _our_tids
+                or r["parent_team_id"] in _our_tids
+                or r["team_id"] == 0]  # free agents / unsigned
+
     # Load COMPOSITE_TO_WAR tables for WAR-based FV
     import json as _json
     _mw_path = league_dir / "config" / "model_weights.json"

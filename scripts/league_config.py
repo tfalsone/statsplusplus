@@ -177,14 +177,28 @@ class LeagueConfig:
 
     @property
     def mlb_team_ids(self):
-        """MLB team IDs: teams that have at least one level=1 player in the DB."""
+        """MLB team IDs: teams configured in league_settings that have level=1 players.
+
+        Excludes foreign league teams (e.g., Japanese leagues) that happen to
+        have level=1 players in the DB but aren't part of our league.
+        """
         if not hasattr(self, "_mlb_tids") or self._mlb_tids is None:
-            import db as _db
-            conn = _db.get_conn(self._base_dir)
-            rows = conn.execute(
-                "SELECT DISTINCT team_id FROM players WHERE level='1'"
-            ).fetchall()
-            self._mlb_tids = {r[0] for r in rows}
+            configured = set(self.team_names_map.keys())
+            if configured:
+                import db as _db
+                conn = _db.get_conn(self._base_dir)
+                rows = conn.execute(
+                    "SELECT DISTINCT team_id FROM players WHERE level='1'"
+                ).fetchall()
+                self._mlb_tids = {r[0] for r in rows} & configured
+            else:
+                # No settings yet — fall back to all level=1 teams
+                import db as _db
+                conn = _db.get_conn(self._base_dir)
+                rows = conn.execute(
+                    "SELECT DISTINCT team_id FROM players WHERE level='1'"
+                ).fetchall()
+                self._mlb_tids = {r[0] for r in rows}
         return self._mlb_tids
 
     def team_name(self, tid):

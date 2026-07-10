@@ -1209,6 +1209,8 @@ def get_positional_rankings():
                 break
             pos, role = r["pos"], r["role"]
             if role in cfg["roles"] or pos in cfg["positions"]:
+                if r["team_id"] not in mlb_org_ids:
+                    continue
                 group["mlb"].append({
                     "pid": r["player_id"], "name": r["name"], "age": r["age"],
                     "team": teams.get(r["team_id"], "?"),
