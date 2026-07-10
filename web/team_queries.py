@@ -1019,12 +1019,18 @@ def get_recent_games(team_id, n=10):
         for p in conn.execute(f"SELECT player_id, name FROM players WHERE player_id IN ({ph})", list(pids)).fetchall():
             pname[p[0]] = p[1]
 
-    # Running W/L/SV from game history for these pitchers
-    all_games = conn.execute("""
-        SELECT date, winning_pitcher, losing_pitcher, save_pitcher
-        FROM games WHERE date LIKE ? AND played=1 AND game_type=0
-        ORDER BY date, game_id
-    """, (f"{year}%",)).fetchall()
+    # Running W/L/SV from game history for these pitchers (only their games)
+    if pids:
+        ph2 = ",".join("?" * len(pids))
+        pid_list = list(pids)
+        all_games = conn.execute(f"""
+            SELECT date, winning_pitcher, losing_pitcher, save_pitcher
+            FROM games WHERE date LIKE ? AND played=1 AND game_type=0
+              AND (winning_pitcher IN ({ph2}) OR losing_pitcher IN ({ph2}) OR save_pitcher IN ({ph2}))
+            ORDER BY date, game_id
+        """, [f"{year}%"] + pid_list * 3).fetchall()
+    else:
+        all_games = []
 
     # Build cumulative counts keyed by (pid, date) -> count after that date's games
     from collections import defaultdict
@@ -1033,11 +1039,17 @@ def get_recent_games(team_id, n=10):
     for g in all_games:
         d = g[0]
         if g[1] in pids:
-            pw[g[1]] += 1; pw_at[(g[1], d)] = pw[g[1]]
+            pw[g[1]] += 1
         if g[2] in pids:
-            pl[g[2]] += 1; pl_at[(g[2], d)] = pl[g[2]]
+            pl[g[2]] += 1
         if g[3] and g[3] in pids:
-            ps[g[3]] += 1; ps_at[(g[3], d)] = ps[g[3]]
+            ps[g[3]] += 1
+        # Update running totals for any pitcher who appeared in this game
+        for slot in (g[1], g[2], g[3]):
+            if slot and slot in pids:
+                pw_at[(slot, d)] = pw[slot]
+                pl_at[(slot, d)] = pl[slot]
+                ps_at[(slot, d)] = ps[slot]
 
     def _pfmt(pid, date, mode):
         if not pid or pid not in pname:
