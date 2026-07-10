@@ -6,6 +6,44 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(BASE, "scripts"))
 from web_league_context import get_db, get_cfg, has_extended_ratings
 
+
+# ── year resolution helpers ──────────────────────────────────────────────
+
+def _resolve_pctile_year(conn, year, table="batting_stats", fallback=True):
+    """Find the best year for percentile calculation.
+
+    If year is provided and has data, use it. If fallback=True (default),
+    fall back to the most recent year with data when the requested year is
+    empty (handles offseason). If fallback=False, return None when the
+    requested year has no data.
+    """
+    split_filter = " AND split_id=1" if table in ("batting_stats", "pitching_stats") else ""
+    if year is not None:
+        has_data = conn.execute(
+            f"SELECT 1 FROM {table} WHERE year=?{split_filter} LIMIT 1", (year,)
+        ).fetchone()
+        if has_data:
+            return year
+        if not fallback:
+            return None
+    # Fall back to most recent year with data
+    row = conn.execute(
+        f"SELECT MAX(year) FROM {table} WHERE 1=1{split_filter}"
+    ).fetchone()
+    return row[0] if row and row[0] else None
+
+
+def available_pctile_years(pid, is_pitcher=False):
+    """Return list of years (descending) where this player has stats."""
+    conn = get_db()
+    table = "pitching_stats" if is_pitcher else "batting_stats"
+    rows = conn.execute(
+        f"SELECT DISTINCT year FROM {table} WHERE player_id=? AND split_id=1 ORDER BY year DESC",
+        (pid,)
+    ).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
 # ── constants ────────────────────────────────────────────────────────────
 
 HITTER_PCTILE_STATS = [
@@ -126,10 +164,16 @@ def _babip_expected(pid, cntct, speed, conn, year, babip_rating=None):
 
 # ── hitter percentiles ───────────────────────────────────────────────────
 
-def get_hitter_percentiles(pid, split_id=1):
+def get_hitter_percentiles(pid, split_id=1, year=None):
     conn = get_db()
     conn.row_factory = None
-    year = get_cfg().year
+    current_year = get_cfg().year
+    explicit_year = year is not None
+    year = _resolve_pctile_year(conn, year or current_year, "batting_stats", fallback=not explicit_year)
+    if year is None:
+        conn.close()
+        return None
+    is_current = (year == current_year)
     games = _est_team_games(conn, year)
     min_pa = max(round(2.0 * games), 30) if split_id == 1 else 20
 
@@ -226,7 +270,7 @@ def get_hitter_percentiles(pid, split_id=1):
 
         tag = None
         expected = None
-        if qualified:
+        if qualified and is_current:
             if label in HITTER_TAG_MAP:
                 sk, rk, s_inv, r_inv = HITTER_TAG_MAP[label]
                 r_pctile = _pctile(player_rat[rk], rat_vals[rk])
@@ -252,10 +296,16 @@ def get_hitter_percentiles(pid, split_id=1):
 
 # ── pitcher percentiles ──────────────────────────────────────────────────
 
-def get_pitcher_percentiles(pid, split_id=1):
+def get_pitcher_percentiles(pid, split_id=1, year=None):
     conn = get_db()
     conn.row_factory = None
-    year = get_cfg().year
+    current_year = get_cfg().year
+    explicit_year = year is not None
+    year = _resolve_pctile_year(conn, year or current_year, "pitching_stats", fallback=not explicit_year)
+    if year is None:
+        conn.close()
+        return None
+    is_current = (year == current_year)
     games = _est_team_games(conn, year)
     min_ip = max(round(0.7 * games), 5) if split_id == 1 else 5
 
@@ -391,7 +441,7 @@ def get_pitcher_percentiles(pid, split_id=1):
 
         tag = None
         expected = None
-        if qualified:
+        if qualified and is_current:
             if label == "HR/9":
                 rk = "hra" if _has_hra else "mov"
                 r_pctile = _pctile(player_rat.get(rk) or 0, rat_vals[rk])
@@ -433,14 +483,19 @@ def get_pitcher_percentiles(pid, split_id=1):
 
 _POS_NAMES = {2: "C", 3: "1B", 4: "2B", 5: "3B", 6: "SS", 7: "LF", 8: "CF", 9: "RF"}
 
-def get_fielding_percentiles(pid):
+def get_fielding_percentiles(pid, year=None):
     """Return fielding percentiles per position the player has played.
 
     Returns a list of dicts: [{pos, stats: [{label, value, pctile, ...}], qualified}]
     """
     conn = get_db()
     conn.row_factory = None
-    year = get_cfg().year
+    current_year = get_cfg().year
+    explicit_year = year is not None
+    year = _resolve_pctile_year(conn, year or current_year, "fielding_stats", fallback=not explicit_year)
+    if year is None:
+        conn.close()
+        return None
     games = _est_team_games(conn, year)
     min_ip = max(round(1.0 * games), 15)
 
@@ -534,3 +589,156 @@ def get_fielding_percentiles(pid):
 
     conn.close()
     return results if results else None
+
+
+# ── multi-year percentile history ────────────────────────────────────────
+
+def get_percentile_history(pid, is_pitcher=False):
+    """Compute percentile rankings for all available years.
+
+    Returns dict with:
+      - years: [list of years descending]
+      - stats: [{label, fmt, values: {year: {value, pctile, qualified}}}]
+      - sample_sizes: {year: pa_or_ip}
+      - sample_label: "PA" or "IP"
+    """
+    years = available_pctile_years(pid, is_pitcher=is_pitcher)
+    if not years:
+        return None
+
+    # Get sample sizes per year
+    conn = get_db()
+    sample_sizes = {}
+    if is_pitcher:
+        for row in conn.execute(
+            "SELECT year, SUM(ip) FROM pitching_stats WHERE player_id=? AND split_id=1 GROUP BY year",
+            (pid,)).fetchall():
+            sample_sizes[row[0]] = round(row[1], 1) if row[1] else 0
+    else:
+        for row in conn.execute(
+            "SELECT year, SUM(pa) FROM batting_stats WHERE player_id=? AND split_id=1 GROUP BY year",
+            (pid,)).fetchall():
+            sample_sizes[row[0]] = row[1] or 0
+    conn.close()
+
+    stat_defs = PITCHER_PCTILE_STATS if is_pitcher else HITTER_PCTILE_STATS
+    # Only include overall stats (skip splits-only stats)
+    stat_defs = [(k, l, inv) for k, l, inv in stat_defs]
+
+    history = {label: {} for _, label, _ in stat_defs}
+
+    for yr in years:
+        if is_pitcher:
+            result = get_pitcher_percentiles(pid, year=yr)
+        else:
+            result = get_hitter_percentiles(pid, year=yr)
+        if not result:
+            continue
+        for entry in result:
+            label = entry["label"]
+            if label in history:
+                history[label][yr] = {
+                    "value": entry["value"],
+                    "pctile": entry["pctile"],
+                    "fmt": entry["fmt"],
+                    "qualified": entry["qualified"],
+                }
+
+    # Build structured output
+    stats = []
+    for key, label, inverted in stat_defs:
+        if not history.get(label):
+            continue
+        # Get fmt from any year's data
+        sample = next(iter(history[label].values()))
+        stats.append({
+            "label": label,
+            "fmt": sample["fmt"],
+            "values": history[label],
+        })
+
+    # Filter to years that actually have data
+    years_with_data = [yr for yr in years if any(
+        yr in s["values"] for s in stats
+    )]
+
+    if not stats:
+        return None
+
+    return {
+        "years": years_with_data,
+        "stats": stats,
+        "sample_sizes": sample_sizes,
+        "sample_label": "IP" if is_pitcher else "PA",
+    }
+
+
+def get_fielding_percentile_history(pid):
+    """Compute fielding percentile rankings for all available years.
+
+    Returns dict with:
+      - years: [list of years descending]
+      - positions: [{pos, stats: [{label, values: {year: {value, pctile, qualified}}}]}]
+    """
+    conn = get_db()
+    # Get years this player has fielding data
+    years = [r[0] for r in conn.execute(
+        "SELECT DISTINCT year FROM fielding_stats WHERE player_id=? ORDER BY year DESC",
+        (pid,)).fetchall()]
+    conn.close()
+    if not years:
+        return None
+
+    # Collect data per year
+    all_results = {}
+    for yr in years:
+        result = get_fielding_percentiles(pid, year=yr)
+        if result:
+            all_results[yr] = result
+
+    if not all_results:
+        return None
+
+    # Determine all positions the player has played
+    all_positions = []
+    seen_pos = set()
+    for yr, positions in all_results.items():
+        for fp in positions:
+            if fp["pos"] not in seen_pos:
+                seen_pos.add(fp["pos"])
+                all_positions.append(fp["pos"])
+
+    # Build per-position history
+    positions = []
+    for pos in all_positions:
+        # Collect stat labels from this position
+        stat_labels = []
+        seen_labels = set()
+        for yr, yr_positions in all_results.items():
+            for fp in yr_positions:
+                if fp["pos"] == pos:
+                    for s in fp["stats"]:
+                        if s["label"] not in seen_labels:
+                            seen_labels.add(s["label"])
+                            stat_labels.append({"label": s["label"], "fmt": s["fmt"]})
+
+        # Collect values per year
+        for stat in stat_labels:
+            stat["values"] = {}
+            for yr, yr_positions in all_results.items():
+                for fp in yr_positions:
+                    if fp["pos"] == pos:
+                        for s in fp["stats"]:
+                            if s["label"] == stat["label"]:
+                                stat["values"][yr] = {
+                                    "value": s["value"],
+                                    "pctile": s["pctile"],
+                                    "qualified": s["qualified"],
+                                    "fmt": s["fmt"],
+                                }
+
+        if stat_labels:
+            positions.append({"pos": pos, "stats": stat_labels})
+
+    years_with_data = [yr for yr in years if yr in all_results]
+    return {"years": years_with_data, "positions": positions} if positions else None

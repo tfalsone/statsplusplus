@@ -278,7 +278,15 @@
 <div class="panel">
   <h2>Percentile Rankings{% if p.percentiles[0] and not p.percentiles[0].qualified %} <span style="font-size:10px; font-weight:400; color:var(--text-dim)">(small sample)</span>{% endif %}
     {% if p.pctile_splits %}<span class="split-toggle" onclick="toggleSplits(this)">vs L / R</span>{% endif %}
+    {% if p.pctile_years and p.pctile_years|length > 1 %}
+    <select class="pctile-year-select" onchange="loadPctileYear({{ p.player_id }}, this.value)" title="Season">
+      {% for yr in p.pctile_years %}<option value="{{ yr }}"{% if yr == p.pctile_year %} selected{% endif %}>{{ yr }}</option>{% endfor %}
+    </select>
+    {% elif p.pctile_year and p.pctile_year != p.year %}
+    <span style="font-size:11px; font-weight:400; color:var(--text-dim); margin-left:8px">{{ p.pctile_year }}</span>
+    {% endif %}
   </h2>
+  <div class="pctile-container" id="pctile-main">
   <div class="split-overall">{{ pctile_grid(p.percentiles) }}</div>
   {% if p.pctile_splits %}
   <div class="split-lr" style="display:none">
@@ -286,7 +294,8 @@
     {% if p.pctile_splits.vr %}<h3 class="split-label">vs RHP</h3>{{ pctile_grid(p.pctile_splits.vr) }}{% endif %}
   </div>
   {% endif %}
-  <div class="pctile-legend"><div><div><span class="pctile-tag tag-hot">▲ Hot</span> Stat outpacing ratings</div><div><span class="pctile-tag tag-cold">▼ Cold</span> Stat trailing ratings</div></div><div><div><span class="pctile-tag tag-lucky">🍀 Lucky</span> BABIP above expected</div><div><span class="pctile-tag tag-unlucky">▽ Unlucky</span> BABIP below expected</div></div></div>
+  </div>
+  {% if p.pctile_year == p.year %}<div class="pctile-legend"><div><div><span class="pctile-tag tag-hot">▲ Hot</span> Stat outpacing ratings</div><div><span class="pctile-tag tag-cold">▼ Cold</span> Stat trailing ratings</div></div><div><div><span class="pctile-tag tag-lucky">🍀 Lucky</span> BABIP above expected</div><div><span class="pctile-tag tag-unlucky">▽ Unlucky</span> BABIP below expected</div></div></div>{% endif %}
 </div>
 {% endif %}
 </div>
@@ -303,7 +312,7 @@
     {% if p.bat_pctile_splits.vr %}<h3 class="split-label">vs RHP</h3>{{ pctile_grid(p.bat_pctile_splits.vr) }}{% endif %}
   </div>
   {% endif %}
-  <div class="pctile-legend"><div><div><span class="pctile-tag tag-hot">▲ Hot</span> Stat outpacing ratings</div><div><span class="pctile-tag tag-cold">▼ Cold</span> Stat trailing ratings</div></div><div><div><span class="pctile-tag tag-lucky">🍀 Lucky</span> BABIP above expected</div><div><span class="pctile-tag tag-unlucky">▽ Unlucky</span> BABIP below expected</div></div></div>
+  {% if p.pctile_year == p.year %}<div class="pctile-legend"><div><div><span class="pctile-tag tag-hot">▲ Hot</span> Stat outpacing ratings</div><div><span class="pctile-tag tag-cold">▼ Cold</span> Stat trailing ratings</div></div><div><div><span class="pctile-tag tag-lucky">🍀 Lucky</span> BABIP above expected</div><div><span class="pctile-tag tag-unlucky">▽ Unlucky</span> BABIP below expected</div></div></div>{% endif %}
 </div>
 {% endif %}
 </div>
@@ -311,7 +320,15 @@
 <div class="panel">
   <h2>Percentile Rankings{% if p.percentiles[0] and not p.percentiles[0].qualified %} <span style="font-size:10px; font-weight:400; color:var(--text-dim)">(small sample)</span>{% endif %}
     {% if p.pctile_splits %}<span class="split-toggle" onclick="toggleSplits(this)">vs L / R</span>{% endif %}
+    {% if p.pctile_years and p.pctile_years|length > 1 %}
+    <select class="pctile-year-select" onchange="loadPctileYear({{ p.player_id }}, this.value)" title="Season">
+      {% for yr in p.pctile_years %}<option value="{{ yr }}"{% if yr == p.pctile_year %} selected{% endif %}>{{ yr }}</option>{% endfor %}
+    </select>
+    {% elif p.pctile_year and p.pctile_year != p.year %}
+    <span style="font-size:11px; font-weight:400; color:var(--text-dim); margin-left:8px">{{ p.pctile_year }}</span>
+    {% endif %}
   </h2>
+  <div class="pctile-container" id="pctile-main">
   <div class="split-overall">{{ pctile_grid(p.percentiles) }}</div>
   {% if p.pctile_splits %}
   <div class="split-lr" style="display:none">
@@ -319,7 +336,8 @@
     {% if p.pctile_splits.vr %}<h3 class="split-label">vs RHP</h3>{{ pctile_grid(p.pctile_splits.vr) }}{% endif %}
   </div>
   {% endif %}
-  <div class="pctile-legend"><div><div><span class="pctile-tag tag-hot">▲ Hot</span> Stat outpacing ratings</div><div><span class="pctile-tag tag-cold">▼ Cold</span> Stat trailing ratings</div></div><div><div><span class="pctile-tag tag-lucky">🍀 Lucky</span> BABIP above expected</div><div><span class="pctile-tag tag-unlucky">▽ Unlucky</span> BABIP below expected</div></div></div>
+  </div>
+  {% if p.pctile_year == p.year %}<div class="pctile-legend"><div><div><span class="pctile-tag tag-hot">▲ Hot</span> Stat outpacing ratings</div><div><span class="pctile-tag tag-cold">▼ Cold</span> Stat trailing ratings</div></div><div><div><span class="pctile-tag tag-lucky">🍀 Lucky</span> BABIP above expected</div><div><span class="pctile-tag tag-unlucky">▽ Unlucky</span> BABIP below expected</div></div></div>{% endif %}
 </div>
 {% endif %}
 {% endmacro %}
@@ -328,11 +346,19 @@
 {% macro fielding_pctile_panel() %}
 {% if p.fielding_pctiles %}
 <div class="panel">
-  <h2>Fielding Percentiles</h2>
+  <h2>Fielding Percentiles
+    {% if p.fld_pctile_years and p.fld_pctile_years|length > 1 %}
+    <select class="pctile-year-select" onchange="loadFldPctileYear({{ p.player_id }}, this.value)" title="Season">
+      {% for yr in p.fld_pctile_years %}<option value="{{ yr }}"{% if loop.first %} selected{% endif %}>{{ yr }}</option>{% endfor %}
+    </select>
+    {% endif %}
+  </h2>
+  <div id="fld-pctile-container">
   {% for fp in p.fielding_pctiles %}
   <h3 style="margin:12px 0 4px; font-size:12px; color:var(--text-dim)">{{ fp.pos }}{% if not fp.qualified %} <span style="font-size:10px">(small sample)</span>{% endif %}</h3>
   {{ pctile_grid(fp.stats) }}
   {% endfor %}
+  </div>
 </div>
 {% endif %}
 {% endmacro %}
@@ -683,6 +709,7 @@
 <div class="tab-bar">
   <button class="tab active" data-tab="overview">Overview</button>
   <button class="tab" data-tab="stats">Stats</button>
+  {% if p.pctile_history %}<button class="tab" data-tab="advanced">Advanced</button>{% endif %}
   {% if p.prospect_comps %}<button class="tab" data-tab="outlook">Outlook</button>{% endif %}
   <button class="tab" data-tab="contract">Contract</button>
 </div>
@@ -704,6 +731,160 @@
     </div>
   </div>
 </div>
+
+{% if p.pctile_history %}
+{# ══ Advanced tab ══ #}
+<div class="tab-content" id="tab-advanced">
+  <div class="panel" style="max-width:100%">
+    <div class="ph-header">
+      <h2>{{ "Pitching" if p.is_pitcher else "Batting" }} Percentiles by Season
+        <span class="ph-toggle" onclick="togglePctileDisplay(this)">Show Percentiles</span>
+      </h2>
+      {% set war_data = p.pctile_history.stats|selectattr("label", "equalto", "WAR")|first %}
+      {% if war_data %}
+      <div class="ph-war-mini">
+        <span class="ph-war-mini-label">WAR</span>
+        {% set war_vals = [] %}
+        {% for yr in p.pctile_history.years|reverse %}
+          {% set wd = war_data["values"].get(yr) %}
+          {% if wd %}{% if war_vals.append(wd.value) %}{% endif %}{% endif %}
+        {% endfor %}
+        {% if war_vals %}
+          {% set max_abs = [war_vals|map('abs')|max, 1]|max %}
+          <div class="ph-war-bars">
+            {% for v in war_vals %}
+            <div class="ph-war-bar-col" title="{{ "%.1f"|format(v) }} WAR">
+              {% if v >= 0 %}
+              <div class="ph-war-pos" style="height:{{ [(v / max_abs * 28)|round|int, 2]|max }}px"></div>
+              {% else %}
+              <div class="ph-war-neg" style="height:{{ [((-v) / max_abs * 28)|round|int, 2]|max }}px"></div>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    <div class="pctile-history-table-wrap">
+    <table class="pctile-history-table">
+      <thead>
+        <tr>
+          <th class="ph-stat-col">Season</th>
+          <th class="ph-sample-col">{{ p.pctile_history.sample_label }}</th>
+          {% for s in p.pctile_history.stats %}<th>{{ s.label }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for yr in p.pctile_history.years %}
+        <tr>
+          <td class="ph-year">{{ yr }}</td>
+          <td class="ph-sample">{{ p.pctile_history.sample_sizes.get(yr, "—") }}</td>
+          {% for s in p.pctile_history.stats %}
+            {% set yr_data = s["values"].get(yr) %}
+            {% if yr_data %}
+              {% set v = yr_data %}
+              {% if v.pctile <= 50 %}
+                {% set r = (60 + (240 - 60) * v.pctile / 50)|round|int %}
+                {% set g = (80 + (240 - 80) * v.pctile / 50)|round|int %}
+                {% set b = (220 + (240 - 220) * v.pctile / 50)|round|int %}
+              {% else %}
+                {% set r = (240 + (235 - 240) * (v.pctile - 50) / 50)|round|int %}
+                {% set g = (240 + (45 - 240) * (v.pctile - 50) / 50)|round|int %}
+                {% set b = (240 + (45 - 240) * (v.pctile - 50) / 50)|round|int %}
+              {% endif %}
+              <td class="ph-cell{% if not v.qualified %} ph-unqualified{% endif %}" style="--pctile:{{ v.pctile }}; --ph-bg: {{ r }},{{ g }},{{ b }}" data-pctile="{{ v.pctile }}" data-stat="{% if v.fmt == '.3f' %}{{ "%.3f"|format(v.value) }}{% elif v.fmt == '.2f' %}{{ "%.2f"|format(v.value) }}{% elif v.fmt == '.1f' %}{{ "%.1f"|format(v.value) }}{% elif v.fmt == 'd' %}{{ v.value|round|int }}{% else %}{{ "%.1f"|format(v.value) }}{% endif %}">
+                <span class="ph-val">{% if v.fmt == '.3f' %}{{ "%.3f"|format(v.value) }}{% elif v.fmt == '.2f' %}{{ "%.2f"|format(v.value) }}{% elif v.fmt == '.1f' %}{{ "%.1f"|format(v.value) }}{% elif v.fmt == 'd' %}{{ v.value|round|int }}{% else %}{{ "%.1f"|format(v.value) }}{% endif %}</span><span class="ph-pctile" style="--pctile:{{ v.pctile }}">{{ v.pctile }}{{ "st" if v.pctile % 10 == 1 and v.pctile != 11 else ("nd" if v.pctile % 10 == 2 and v.pctile != 12 else ("rd" if v.pctile % 10 == 3 and v.pctile != 13 else "th")) }} percentile</span>
+              </td>
+            {% else %}
+              <td class="ph-cell ph-empty">—</td>
+            {% endif %}
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr class="ph-career-row">
+          <td class="ph-year">Career</td>
+          <td class="ph-sample">{{ p.pctile_history.sample_sizes.values()|sum }}</td>
+          {% for s in p.pctile_history.stats %}
+            {% set pctile_vals = [] %}
+            {% for yr in p.pctile_history.years %}
+              {% set yr_data = s["values"].get(yr) %}
+              {% if yr_data and yr_data.qualified %}
+                {% if pctile_vals.append(yr_data.pctile) %}{% endif %}
+              {% endif %}
+            {% endfor %}
+            {% if pctile_vals %}
+              {% set avg_pctile = (pctile_vals|sum / pctile_vals|length)|round|int %}
+              {% if avg_pctile <= 50 %}
+                {% set r = (60 + (240 - 60) * avg_pctile / 50)|round|int %}
+                {% set g = (80 + (240 - 80) * avg_pctile / 50)|round|int %}
+                {% set b = (220 + (240 - 220) * avg_pctile / 50)|round|int %}
+              {% else %}
+                {% set r = (240 + (235 - 240) * (avg_pctile - 50) / 50)|round|int %}
+                {% set g = (240 + (45 - 240) * (avg_pctile - 50) / 50)|round|int %}
+                {% set b = (240 + (45 - 240) * (avg_pctile - 50) / 50)|round|int %}
+              {% endif %}
+              <td class="ph-cell" style="--pctile:{{ avg_pctile }}; --ph-bg: {{ r }},{{ g }},{{ b }}">
+                <span class="ph-val">{{ avg_pctile }}</span><span class="ph-pctile" style="--pctile:{{ avg_pctile }}">Avg of {{ pctile_vals|length }} qualified seasons</span>
+              </td>
+            {% else %}
+              <td class="ph-cell ph-empty">—</td>
+            {% endif %}
+          {% endfor %}
+        </tr>
+      </tfoot>
+    </table>
+    </div>
+  </div>
+  {% if p.fld_pctile_history %}
+  <div class="panel" style="max-width:100%; margin-top:16px">
+    <h2>Fielding Percentiles by Season</h2>
+    {% for pos_data in p.fld_pctile_history.positions %}
+    <h3 style="margin:16px 0 6px; font-size:13px; color:var(--text)">{{ pos_data.pos }}</h3>
+    <div class="pctile-history-table-wrap">
+    <table class="pctile-history-table">
+      <thead>
+        <tr>
+          <th class="ph-stat-col">Season</th>
+          {% for s in pos_data.stats %}<th>{{ s.label }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for yr in p.fld_pctile_history.years %}
+          <tr>
+            <td class="ph-year">{{ yr }}</td>
+            {% for s in pos_data.stats %}
+              {% set yr_data = s["values"].get(yr) %}
+              {% if yr_data %}
+                {% set v = yr_data %}
+                {% if v.pctile <= 50 %}
+                  {% set r = (60 + (240 - 60) * v.pctile / 50)|round|int %}
+                  {% set g = (80 + (240 - 80) * v.pctile / 50)|round|int %}
+                  {% set b = (220 + (240 - 220) * v.pctile / 50)|round|int %}
+                {% else %}
+                  {% set r = (240 + (235 - 240) * (v.pctile - 50) / 50)|round|int %}
+                  {% set g = (240 + (45 - 240) * (v.pctile - 50) / 50)|round|int %}
+                  {% set b = (240 + (45 - 240) * (v.pctile - 50) / 50)|round|int %}
+                {% endif %}
+                <td class="ph-cell{% if not v.qualified %} ph-unqualified{% endif %}" style="--pctile:{{ v.pctile }}; --ph-bg: {{ r }},{{ g }},{{ b }}">
+                  <span class="ph-val">{% if v.fmt == '.3f' %}{{ "%.3f"|format(v.value) }}{% elif v.fmt == '.1f' %}{{ "%.1f"|format(v.value) }}{% else %}{{ "%.2f"|format(v.value) }}{% endif %}</span><span class="ph-pctile" style="--pctile:{{ v.pctile }}">{{ v.pctile }}{{ "st" if v.pctile % 10 == 1 and v.pctile != 11 else ("nd" if v.pctile % 10 == 2 and v.pctile != 12 else ("rd" if v.pctile % 10 == 3 and v.pctile != 13 else "th")) }} percentile</span>
+                </td>
+              {% else %}
+                <td class="ph-cell ph-empty">—</td>
+              {% endif %}
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
 
 {% if p.prospect_comps %}
 {# ══ Outlook tab ══ #}
@@ -964,6 +1145,100 @@ function switchSplit(btn, split) {
   panel.querySelectorAll('.split-view').forEach(function(t) {
     t.style.display = t.dataset.split === split ? '' : 'none';
   });
+}
+
+function loadPctileYear(pid, year) {
+  var container = document.getElementById('pctile-main');
+  if (!container) return;
+  container.style.opacity = '0.5';
+  fetch('/api/player-percentiles/' + pid + '?year=' + year)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) { container.style.opacity = '1'; return; }
+      var html = '<div class="pctile-grid">';
+      data.stats.forEach(function(s) {
+        var fmt = s.value;
+        if (s.fmt === '.3f') fmt = s.value.toFixed(3);
+        else if (s.fmt === '.2f') fmt = s.value.toFixed(2);
+        else if (s.fmt === '.1f') fmt = s.value.toFixed(1);
+        else if (s.fmt === 'd') fmt = Math.round(s.value);
+        var suffix = (s.label === 'BB%' || s.label === 'K%' || s.label === 'SO%') ? '%' : '';
+        html += '<div class="pctile-row">'
+          + '<span class="pctile-label">' + s.label + '</span>'
+          + '<span class="pctile-val">' + fmt + suffix + '</span>'
+          + '<span class="pctile-track">'
+          + '<span class="pctile-fill" style="width:' + s.pctile + '%; --pctile:' + s.pctile + '"></span>'
+          + '<span class="pctile-dot" style="left:' + s.pctile + '%; --pctile:' + s.pctile + '"></span>'
+          + '</span>'
+          + '<span class="pctile-num" style="--pctile:' + s.pctile + '">' + s.pctile + '</span>'
+          + '<span class="pctile-tag"></span>'
+          + '</div>';
+      });
+      html += '</div>';
+      container.innerHTML = html;
+      container.style.opacity = '1';
+      // Hide legend for historical years (no tags)
+      var legend = container.closest('.panel').querySelector('.pctile-legend');
+      if (legend) legend.style.display = 'none';
+    })
+    .catch(function() { container.style.opacity = '1'; });
+}
+
+function togglePctileDisplay(btn) {
+  var table = btn.closest('.panel').querySelector('.pctile-history-table');
+  var showPctile = !table.classList.contains('ph-show-pctile');
+  table.classList.toggle('ph-show-pctile', showPctile);
+  btn.textContent = showPctile ? 'Show Values' : 'Show Percentiles';
+  table.querySelectorAll('.ph-cell[data-pctile]').forEach(function(cell) {
+    var val = cell.querySelector('.ph-val');
+    var tooltip = cell.querySelector('.ph-pctile');
+    if (showPctile) {
+      val.textContent = cell.dataset.pctile;
+      tooltip.textContent = cell.dataset.stat;
+    } else {
+      val.textContent = cell.dataset.stat;
+      var p = parseInt(cell.dataset.pctile);
+      var suffix = (p % 10 === 1 && p !== 11) ? 'st' : (p % 10 === 2 && p !== 12) ? 'nd' : (p % 10 === 3 && p !== 13) ? 'rd' : 'th';
+      tooltip.textContent = p + suffix + ' percentile';
+    }
+  });
+}
+
+function loadFldPctileYear(pid, year) {
+  var container = document.getElementById('fld-pctile-container');
+  if (!container) return;
+  container.style.opacity = '0.5';
+  fetch('/api/player-percentiles/' + pid + '?year=' + year + '&type=fielding')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) { container.style.opacity = '1'; return; }
+      var html = '';
+      data.positions.forEach(function(fp) {
+        html += '<h3 style="margin:12px 0 4px; font-size:12px; color:var(--text-dim)">' + fp.pos;
+        if (!fp.qualified) html += ' <span style="font-size:10px">(small sample)</span>';
+        html += '</h3><div class="pctile-grid">';
+        fp.stats.forEach(function(s) {
+          var fmt = s.value;
+          if (s.fmt === '.3f') fmt = s.value.toFixed(3);
+          else if (s.fmt === '.2f') fmt = s.value.toFixed(2);
+          else if (s.fmt === '.1f') fmt = s.value.toFixed(1);
+          html += '<div class="pctile-row">'
+            + '<span class="pctile-label">' + s.label + '</span>'
+            + '<span class="pctile-val">' + fmt + '</span>'
+            + '<span class="pctile-track">'
+            + '<span class="pctile-fill" style="width:' + s.pctile + '%; --pctile:' + s.pctile + '"></span>'
+            + '<span class="pctile-dot" style="left:' + s.pctile + '%; --pctile:' + s.pctile + '"></span>'
+            + '</span>'
+            + '<span class="pctile-num" style="--pctile:' + s.pctile + '">' + s.pctile + '</span>'
+            + '<span class="pctile-tag"></span>'
+            + '</div>';
+        });
+        html += '</div>';
+      });
+      container.innerHTML = html;
+      container.style.opacity = '1';
+    })
+    .catch(function() { container.style.opacity = '1'; });
 }
 
 // Tab switching

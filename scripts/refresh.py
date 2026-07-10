@@ -709,11 +709,26 @@ def refresh_league(year, game_date=None):
             _upsert_batting(conn, bat)
             pit = client.get_player_pitching_stats(year=y, split=1)
             _upsert_pitching(conn, pit)
+            fld = client.get_player_fielding_stats(year=y)
+            _upsert_fielding(conn, fld)
             _upsert_team_stats(conn, y)
-            log.info(f"  {y}: {len(bat)} bat, {len(pit)} pit")
+            log.info(f"  {y}: {len(bat)} bat, {len(pit)} pit, {len(fld)} fld")
         conn.commit()
     else:
         log.info(f"── historical stats: skipped (all years {hist_start}-{year-1} already in DB)")
+
+    # Backfill fielding for years that have batting/pitching but no fielding
+    existing_fld_years = {r[0] for r in conn.execute(
+        "SELECT DISTINCT year FROM fielding_stats").fetchall()}
+    fld_gap_years = [y for y in range(hist_start, prior_year)
+                     if y in existing_years and y not in existing_fld_years]
+    if fld_gap_years:
+        log.info(f"── fielding backfill ({fld_gap_years[0]}–{fld_gap_years[-1]}, {len(fld_gap_years)} years)")
+        for y in fld_gap_years:
+            fld = client.get_player_fielding_stats(year=y)
+            _upsert_fielding(conn, fld)
+            log.info(f"  {y}: {len(fld)} fld")
+        conn.commit()
 
     log.info("── fielding (all orgs)")
     fielding = client.get_player_fielding_stats(year=year)

@@ -16,7 +16,7 @@ def _fmt_money_py(val):
     return f"${val:,.0f}"
 sys.path.insert(0, os.path.join(BASE, "scripts"))
 from player_utils import norm as _norm, norm_floor as _norm_floor, height_str as _height_str, display_pos as _display_pos, calc_pap, dollars_per_war as _dollars_per_war
-from percentiles import get_hitter_percentiles, get_pitcher_percentiles, get_fielding_percentiles
+from percentiles import get_hitter_percentiles, get_pitcher_percentiles, get_fielding_percentiles, available_pctile_years, get_percentile_history, get_fielding_percentile_history
 from web_league_context import get_db, get_cfg, team_abbr_map, team_names_map, level_map, pos_map
 from constants import ROLE_MAP
 
@@ -1072,27 +1072,54 @@ def get_player(pid):
     bat_percentiles = None
     bat_pctile_splits = {}
     fielding_pctiles = None
-    if not is_pitcher and bat_stats:
+    pctile_year = None
+    pctile_years_available = []
+    if not is_pitcher:
+        pctile_years_available = available_pctile_years(pid, is_pitcher=False)
+        # Try current year first; falls back to most recent year with data
         percentiles = get_hitter_percentiles(pid)
-        for sid, key in ((2, "vl"), (3, "vr")):
-            sp = get_hitter_percentiles(pid, split_id=sid)
-            if sp:
-                pctile_splits[key] = sp
-    elif is_pitcher and pit_stats:
-        percentiles = get_pitcher_percentiles(pid)
-        for sid, key in ((2, "vl"), (3, "vr")):
-            sp = get_pitcher_percentiles(pid, split_id=sid)
-            if sp:
-                pctile_splits[key] = sp
-        # Two-way: also get hitter percentiles
-        if is_two_way:
-            bat_percentiles = get_hitter_percentiles(pid)
+        if percentiles:
             for sid, key in ((2, "vl"), (3, "vr")):
                 sp = get_hitter_percentiles(pid, split_id=sid)
                 if sp:
-                    bat_pctile_splits[key] = sp
+                    pctile_splits[key] = sp
+    elif is_pitcher:
+        pctile_years_available = available_pctile_years(pid, is_pitcher=True)
+        percentiles = get_pitcher_percentiles(pid)
+        if percentiles:
+            for sid, key in ((2, "vl"), (3, "vr")):
+                sp = get_pitcher_percentiles(pid, split_id=sid)
+                if sp:
+                    pctile_splits[key] = sp
+            # Two-way: also get hitter percentiles
+            if is_two_way:
+                bat_percentiles = get_hitter_percentiles(pid)
+                if bat_percentiles:
+                    for sid, key in ((2, "vl"), (3, "vr")):
+                        sp = get_hitter_percentiles(pid, split_id=sid)
+                        if sp:
+                            bat_pctile_splits[key] = sp
+    # Determine which year the percentiles are from
+    if pctile_years_available:
+        current_year = get_cfg().year
+        # The function auto-falls back; the displayed year is current if it has data, else most recent
+        pctile_year = current_year if current_year in pctile_years_available else (
+            pctile_years_available[0] if pctile_years_available else None)
     if fielding_stats:
         fielding_pctiles = get_fielding_percentiles(pid)
+
+    # Available fielding percentile years
+    fld_pctile_years = []
+    if fielding_stats:
+        conn = get_db()
+        fld_pctile_years = [r[0] for r in conn.execute(
+            "SELECT DISTINCT year FROM fielding_stats WHERE player_id=? ORDER BY year DESC",
+            (pid,)).fetchall()]
+        conn.close()
+
+    # Percentile history for Advanced tab
+    pctile_history = get_percentile_history(pid, is_pitcher=is_pitcher)
+    fld_pctile_history = get_fielding_percentile_history(pid) if fielding_stats else None
 
     # Prospect comps
     prospect_comps = None
@@ -1143,7 +1170,8 @@ def get_player(pid):
     insights = _compute_insights(rd, is_pitcher, composite_score, _norm)
 
     return {
-        "pid": pid, "name": name, "age": age, "pos": pos_str,
+        "pid": pid, "player_id": pid, "name": name, "age": age, "pos": pos_str,
+        "year": get_cfg().year,
         "team": team_names_map().get(org_id, "?"), "team_abbr": team_abbr_map().get(org_id, "?"), "tid": org_id,
         "actual_team_id": team_id if team_id != org_id else None,
         "level": level_str, "is_pitcher": is_pitcher, "is_two_way": is_two_way,
@@ -1152,8 +1180,10 @@ def get_player(pid):
         "bat_splits": bat_splits, "pit_splits": pit_splits,
         "surplus_detail": surplus_detail, "outcome_probs": outcome_probs, "percentiles": percentiles,
         "pctile_splits": pctile_splits, "fielding_stats": fielding_stats,
-        "fielding_pctiles": fielding_pctiles,
+        "fielding_pctiles": fielding_pctiles, "fld_pctile_years": fld_pctile_years,
         "bat_percentiles": bat_percentiles, "bat_pctile_splits": bat_pctile_splits,
+        "pctile_year": pctile_year, "pctile_years": pctile_years_available,
+        "pctile_history": pctile_history, "fld_pctile_history": fld_pctile_history,
         "prospect_comps": prospect_comps, "comp_stats": comp_stats, "pap": pap,
         "snapshot_deltas": snapshot_deltas,
         "composite_score": composite_score,

@@ -4,6 +4,30 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 63 (2026-07-09)
+
+### Features
+
+- **Percentile rankings: offseason display** (`percentiles.py`, `player_queries.py`, `player.html`) — Percentile panels now auto-fall back to the most recent year with stats during offseason (was blank). Year selector dropdown on batting/pitching and fielding percentile panels allows browsing any historical season. Tags (hot/cold/lucky/unlucky) disabled for non-current years. New API endpoint `GET /api/player-percentiles/<pid>?year=YYYY&type=main|fielding` for dynamic year switching.
+
+- **Advanced tab: percentile history** (`player.html`, `style.css`, `percentiles.py`) — New "Advanced" tab on player pages with:
+  - Color-coded percentile history table (blue→white→red, Savant-inspired palette)
+  - PA/IP sample size column per year
+  - Career averages row (qualified seasons only)
+  - "Show Percentiles" / "Show Values" toggle with bidirectional hover tooltips
+  - Unqualified seasons visually dimmed
+  - Per-position fielding percentile history table
+  - Compact WAR diverging bar chart in panel header
+
+- **Historical fielding stats** (`refresh.py`) — Fielding stats now included in the historical stats loop (up to 15 years back). Backfill pass detects leagues with batting but missing fielding data and fills the gap on next refresh. Enables multi-year fielding percentiles and player page fielding history.
+
+### Backlog Added
+
+- Discord integration (long-term — outbound patch notes, inbound feedback)
+- Split-based composite ratings on team roster (Koba request — vR/vL toggle)
+
+---
+
 ## Session 62 (2026-07-09)
 
 ### Bug Fixes
