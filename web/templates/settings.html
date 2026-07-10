@@ -3,7 +3,7 @@
 <div class="settings-page">
 
   {% if not league_ready %}
-  <div class="panel settings-section" style="border-left: 3px solid #e67e22; background: #2a2218;">
+  <div class="panel settings-section settings-full" style="border-left: 3px solid #e67e22; background: #2a2218;">
     <h2 style="color: #e67e22;">⚠ League Setup Incomplete</h2>
     <p>This league hasn't been refreshed yet — no player data is available. Run a refresh from the Connection section below, or <a href="/onboard">use the onboarding wizard</a>.</p>
   </div>
@@ -56,7 +56,7 @@
   </div>
 
   {# ── League Structure ── #}
-  <div class="panel settings-section">
+  <div class="panel settings-section settings-full">
     <h2>League Structure</h2>
     {% include '_structure_editor.html' %}
     <details style="margin-top:8px">
