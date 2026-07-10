@@ -197,21 +197,36 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Post updates to Discord")
     sub = parser.add_subparsers(dest="cmd")
 
-    sub.add_parser("latest", help="Post the latest changelog session")
-    sub.add_parser("preview", help="Preview what would be posted (no send)")
+    latest_parser = sub.add_parser("latest", help="Post the latest changelog session")
+    latest_parser.add_argument("--title", help="Override the embed title (default: session name)")
+    preview_parser = sub.add_parser("preview", help="Preview what would be posted (no send)")
+    preview_parser.add_argument("--title", help="Override the embed title")
     msg_parser = sub.add_parser("message", help="Post a custom message")
     msg_parser.add_argument("text", help="Message text")
 
     args = parser.parse_args()
 
     if args.cmd == "latest":
-        post_latest()
+        config = _load_config()
+        parsed = _parse_latest_session()
+        if not parsed:
+            print("No session entries found in changelog.md")
+            sys.exit(1)
+        embed = _format_embed(parsed)
+        if args.title:
+            embed["title"] = f"📋 {args.title}"
+        print(f"Posting: {embed['title']}")
+        print(f"  {len(parsed['sections'])} sections, "
+              f"{sum(len(s['items']) for s in parsed['sections'])} items")
+        _post_webhook(config, embed)
     elif args.cmd == "preview":
         parsed = _parse_latest_session()
         if not parsed:
             print("No session entries found in changelog.md")
             sys.exit(1)
         embed = _format_embed(parsed)
+        if args.title:
+            embed["title"] = f"📋 {args.title}"
         print(f"Title: {embed['title']}")
         print(f"Color: #{embed['color']:06x}")
         print(f"Footer: {embed['footer']['text']}")
