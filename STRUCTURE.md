@@ -56,7 +56,8 @@ statsplusplus/
 │   ├── trade_assets.py         # CLI: Tradeable assets for any team (MLB surplus + farm prospects)
 │   ├── team_needs.py           # CLI: Positional needs vs league average (upgrade priority report)
 │   ├── standings.py            # CLI: Pythagorean standings
-│   └── free_agents.py          # CLI: Free agent class analysis
+│   ├── free_agents.py          # CLI: Free agent class analysis
+│   └── discord_post.py         # CLI: Post changelog to Discord webhook
 │
 ├── web/
 │   ├── app.py                  # Flask app, routes, onboarding wizard, refresh endpoint

@@ -4,6 +4,24 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 64 (2026-07-10)
+
+### Bug Fixes
+
+- **Pitcher W-L record in recent games** (`team_queries.py`) — Running W-L counter only stored a pitcher's win count on dates they won (and vice versa). When displaying a loss date, the win count defaulted to 0. Fixed to update all running totals whenever a pitcher appears in any role. Also optimized query from scanning all season games (~555 rows) to only games involving relevant pitchers (~26 rows).
+
+- **Foreign league players in prospect/positional rankings** (`league_config.py`, `fv_calc.py`, `queries.py`) — Japanese league players (Chunichi, Yomiuri, etc.) appeared in prospect lists and positional rankings. Fixed: `mlb_team_ids()` now intersects with configured league teams, `fv_calc.py` filters out foreign orgs before evaluation, positional rankings MLB section applies the same org filter.
+
+### Features
+
+- **Discord webhook integration** (`scripts/discord_post.py`) — New script posts formatted changelog entries to Discord via webhook. Subcommands: `latest` (post), `preview` (dry run), `message` (custom text). Config stored in `data/discord_config.json` (gitignored). Added to end-of-session workflow in dev-agent steering.
+
+- **Discord widget on settings page** (`settings.html`) — Community section with embedded Discord server widget (dark theme).
+
+- **Settings page layout** (`style.css`, `settings.html`) — Two-column grid layout replacing single narrow column. League Structure spans full width. Responsive collapse on narrow screens.
+
+---
+
 ## Session 63 (2026-07-09)
 
 ### Features
