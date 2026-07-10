@@ -101,15 +101,14 @@ def _format_embed(parsed):
         description_parts.append(f"**{section['title']}**")
         for item in section["items"]:
             if item["title"]:
-                # Truncate long descriptions for Discord
                 desc = item["desc"]
-                if len(desc) > 120:
-                    desc = desc[:117] + "..."
+                if len(desc) > 300:
+                    desc = desc[:297] + "..."
                 description_parts.append(f"• **{item['title']}** — {desc}")
             else:
                 desc = item["desc"]
-                if len(desc) > 140:
-                    desc = desc[:137] + "..."
+                if len(desc) > 300:
+                    desc = desc[:297] + "..."
                 description_parts.append(f"• {desc}")
         description_parts.append("")  # blank line between sections
 
