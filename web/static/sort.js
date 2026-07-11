@@ -66,3 +66,52 @@ function sortTable(th) {
     }
   }
 }
+
+/**
+ * Export visible table rows as CSV and trigger download.
+ * @param {string} tableId - ID of the table element
+ * @param {string} filename - Download filename (default: 'export.csv')
+ */
+function exportTableCSV(tableId, filename) {
+  var table = document.getElementById(tableId);
+  if (!table) return;
+  filename = filename || 'export.csv';
+
+  var rows = [];
+
+  // Header row
+  var thead = table.querySelector('thead tr');
+  if (thead) {
+    var headers = [];
+    thead.querySelectorAll('th').forEach(function(th) {
+      var text = th.textContent.trim();
+      // Skip non-data columns (compare checkboxes, etc.)
+      if (text === '⚖') return;
+      headers.push('"' + text.replace(/"/g, '""') + '"');
+    });
+    rows.push(headers.join(','));
+  }
+
+  // Data rows (only visible)
+  var skipFirst = thead && thead.querySelector('th') && thead.querySelector('th').textContent.trim() === '⚖';
+  table.querySelectorAll('tbody tr').forEach(function(tr) {
+    if (tr.style.display === 'none') return;
+    var cells = [];
+    tr.querySelectorAll('td').forEach(function(td, i) {
+      if (skipFirst && i === 0) return;
+      var val = td.getAttribute('data-sort-value') || td.textContent.trim();
+      cells.push('"' + val.replace(/"/g, '""') + '"');
+    });
+    if (cells.length > 0) rows.push(cells.join(','));
+  });
+
+  var csv = rows.join('\n');
+  var blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+  var link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}

@@ -405,6 +405,7 @@
             {% endif %}
             <button class="btn" onclick="runDraftSim()" title="Simulate draft based on your pick position">🎲 Sim</button>
             <button class="btn" onclick="generateUploadList()" title="Generate auto-draft list file">📋 Auto-Draft List</button>
+            <button class="btn" onclick="exportTableCSV('draft-table', 'draft_board.csv')" title="Export current view as CSV">⬇ CSV</button>
             <button class="btn" onclick="openDraftSettings()" title="Configure auto-draft list preferences">⚙️</button>
             <label class="btn" style="cursor:pointer">📁 Upload Pool
               <input type="file" accept=".csv" style="display:none" onchange="uploadDraftPool(this)">
