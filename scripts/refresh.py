@@ -684,6 +684,15 @@ def refresh_league(year, game_date=None):
     _upsert_pitching(conn, pit_rows)
     log.info(f"  {len(pit_rows)} pitching rows (year={year})")
 
+    # L/R splits for current year (platoon analysis, team roster toggle)
+    log.info("── splits (vs L / vs R)")
+    for split in (2, 3):
+        bat_s = client.get_player_batting_stats(year=year, split=split)
+        _upsert_batting(conn, bat_s)
+        pit_s = client.get_player_pitching_stats(year=year, split=split)
+        _upsert_pitching(conn, pit_s)
+    log.info(f"  vs L: {len(bat_s)} bat, {len(pit_s)} pit")
+
     # Always re-fetch prior year to ensure complete end-of-season stats.
     # Mid-season refreshes may have stored partial data for the prior year;
     # once the season ends, we need the final totals.
@@ -693,7 +702,10 @@ def refresh_league(year, game_date=None):
     _upsert_batting(conn, bat_prior)
     pit_prior = client.get_player_pitching_stats(year=prior_year, split=1)
     _upsert_pitching(conn, pit_prior)
-    log.info(f"  {len(bat_prior)} bat, {len(pit_prior)} pit (year={prior_year})")
+    for split in (2, 3):
+        _upsert_batting(conn, client.get_player_batting_stats(year=prior_year, split=split))
+        _upsert_pitching(conn, client.get_player_pitching_stats(year=prior_year, split=split))
+    log.info(f"  {len(bat_prior)} bat, {len(pit_prior)} pit (year={prior_year}, +splits)")
 
     # Historical stats — up to 15 prior years for $/WAR, player history, etc.
     # Only pull years not already in the DB (excludes current and prior year

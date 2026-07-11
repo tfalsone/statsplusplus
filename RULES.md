@@ -12,7 +12,8 @@ The web layer is read-only. MCP tools are for targeted interactive queries only.
 1. **Single pipeline.** All data flows through `refresh.py` → `league.db`. No JSON data files
    are written or read by analysis scripts (config files in `data/<league>/config/` are the exception).
 
-2. **Default split is overall (`split=1`).** Only pull splits 2/3 for explicit platoon analysis.
+2. **Default split is overall (`split=1`).** Splits 2 (vs L) and 3 (vs R) are also pulled for the current
+   and prior year during refresh. Historical years (year-2 and older) only pull overall.
 
 3. **Refresh before analysis.** Either use the web UI refresh button or run `scripts/refresh.py`
    to ensure data is current before any analysis.
