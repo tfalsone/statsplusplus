@@ -813,20 +813,12 @@
           <td class="ph-year">Career</td>
           <td class="ph-sample">{{ p.pctile_history.sample_sizes.values()|sum }}</td>
           {% for s in p.pctile_history.stats %}
-            {% set pctile_vals = [] %}
-            {% set stat_vals = [] %}
-            {% set stat_fmt = '.1f' %}
-            {% for yr in p.pctile_history.years %}
-              {% set yr_data = s["values"].get(yr) %}
-              {% if yr_data and yr_data.qualified %}
-                {% if pctile_vals.append(yr_data.pctile) %}{% endif %}
-                {% if stat_vals.append(yr_data.value) %}{% endif %}
-                {% set stat_fmt = yr_data.fmt %}
-              {% endif %}
-            {% endfor %}
-            {% if pctile_vals %}
-              {% set avg_pctile = (pctile_vals|sum / pctile_vals|length)|round|int %}
-              {% set avg_val = stat_vals|sum / stat_vals|length %}
+            {% set career = s.get("career") %}
+            {% if career %}
+              {% set avg_pctile = career.avg_pctile %}
+              {% set avg_val = career.avg_value %}
+              {% set stat_fmt = career.fmt %}
+              {% set n_seasons = career.n_seasons %}
               {% if avg_pctile <= 50 %}
                 {% set r = (60 + (240 - 60) * avg_pctile / 50)|round|int %}
                 {% set g = (80 + (240 - 80) * avg_pctile / 50)|round|int %}
@@ -1296,19 +1288,22 @@ function loadPctileHistory(pid, splitId, btn) {
       html += '<td class="ph-sample">' + totalSample + '</td>';
       data.stats.forEach(function(s) {
         var pctiles = [];
-        var values = [];
+        var weightedSum = 0;
+        var weightTotal = 0;
         var fmt = '.1f';
         data.years.forEach(function(yr) {
           var v = s.values[String(yr)];
           if (v && v.qualified) {
+            var w = data.sample_sizes[String(yr)] || 1;
             pctiles.push(v.pctile);
-            values.push(v.value);
+            weightedSum += v.value * w;
+            weightTotal += w;
             fmt = v.fmt;
           }
         });
         if (pctiles.length > 0) {
           var avgPctile = Math.round(pctiles.reduce(function(a,b){return a+b;},0) / pctiles.length);
-          var avgVal = values.reduce(function(a,b){return a+b;},0) / values.length;
+          var avgVal = weightTotal > 0 ? weightedSum / weightTotal : 0;
           var color = pctileColor(avgPctile);
           html += '<td class="ph-cell" style="--pctile:' + avgPctile + '; --ph-bg:' + color + '"'
             + ' data-pctile="' + avgPctile + '" data-stat="' + fmtVal(avgVal, fmt) + '">'

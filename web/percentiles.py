@@ -651,10 +651,31 @@ def get_percentile_history(pid, is_pitcher=False, split_id=1):
             continue
         # Get fmt from any year's data
         sample = next(iter(history[label].values()))
+        # Compute PA-weighted career averages
+        weighted_sum = 0.0
+        weight_total = 0
+        pctile_sum = 0
+        n_qualified = 0
+        for yr, entry in history[label].items():
+            if entry.get("qualified"):
+                w = sample_sizes.get(yr, 1) or 1
+                weighted_sum += entry["value"] * w
+                weight_total += w
+                pctile_sum += entry["pctile"]
+                n_qualified += 1
+        career = None
+        if n_qualified > 0:
+            career = {
+                "avg_value": weighted_sum / weight_total if weight_total else 0,
+                "avg_pctile": round(pctile_sum / n_qualified),
+                "fmt": sample["fmt"],
+                "n_seasons": n_qualified,
+            }
         stats.append({
             "label": label,
             "fmt": sample["fmt"],
             "values": history[label],
+            "career": career,
         })
 
     # Filter to years that actually have data
