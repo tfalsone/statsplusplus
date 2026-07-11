@@ -1130,6 +1130,7 @@ td.stat-bad  { color: var(--red); }
 .btn-danger { background: transparent; color: #e74c3c; border: 1px solid #e74c3c; border-radius: 4px; padding: 5px 12px; font-size: 0.85em; cursor: pointer; }
 .btn-danger:hover { background: rgba(231,76,60,0.15); }
 .btn-danger-all { font-weight: 700; }
+.btn-sm { padding: 3px 8px; font-size: 11px; }
 .settings-info { font-size: 0.85em; }
 .structure-display { font-size: 0.85em; }
 .structure-div { margin: 2px 0 2px 16px; }
