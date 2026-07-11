@@ -1282,13 +1282,50 @@ function loadPctileHistory(pid, splitId, btn) {
         });
         html += '</tr>';
       });
-      html += '</tbody></table>';
+      html += '</tbody>';
+
+      // Career averages row
+      html += '<tfoot><tr class="ph-career-row"><td class="ph-year">Career</td>';
+      var totalSample = 0;
+      data.years.forEach(function(yr) { totalSample += (data.sample_sizes[String(yr)] || 0); });
+      html += '<td class="ph-sample">' + totalSample + '</td>';
+      data.stats.forEach(function(s) {
+        var pctiles = [];
+        data.years.forEach(function(yr) {
+          var v = s.values[String(yr)];
+          if (v && v.qualified) pctiles.push(v.pctile);
+        });
+        if (pctiles.length > 0) {
+          var avg = Math.round(pctiles.reduce(function(a,b){return a+b;},0) / pctiles.length);
+          var color = pctileColor(avg);
+          html += '<td class="ph-cell" style="--pctile:' + avg + '; --ph-bg:' + color + '"'
+            + ' data-pctile="' + avg + '" data-stat="' + avg + '">'
+            + '<span class="ph-val">' + avg + '</span>'
+            + '<span class="ph-pctile" style="--pctile:' + avg + '">Avg of ' + pctiles.length + ' qualified seasons</span></td>';
+        } else {
+          html += '<td class="ph-cell ph-empty">\u2014</td>';
+        }
+      });
+      html += '</tr></tfoot>';
+
+      html += '</table>';
       wrap.innerHTML = html;
       wrap.style.opacity = '1';
 
-      // Reset toggle button text
+      // Persist toggle state
       var toggle = wrap.closest('.panel').querySelector('.ph-toggle');
-      if (toggle) toggle.textContent = 'Show Percentiles';
+      if (toggle && toggle.textContent === 'Show Values') {
+        // Was in "show percentiles" mode — re-apply
+        var table = wrap.querySelector('.pctile-history-table');
+        if (table) {
+          table.classList.add('ph-show-pctile');
+          table.querySelectorAll('.ph-cell[data-pctile]').forEach(function(cell) {
+            cell.querySelector('.ph-val').textContent = cell.dataset.pctile;
+            var tt = cell.querySelector('.ph-pctile');
+            if (tt) tt.textContent = cell.dataset.stat;
+          });
+        }
+      }
     })
     .catch(function() { wrap.style.opacity = '1'; });
 }
