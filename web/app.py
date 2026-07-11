@@ -568,6 +568,7 @@ def api_player_percentiles(pid):
     from percentiles import get_hitter_percentiles, get_pitcher_percentiles, get_fielding_percentiles
     from web_league_context import get_db
     year = request.args.get("year", type=int)
+    split_id = request.args.get("split", 1, type=int)
     stat_type = request.args.get("type", "main")  # "main" or "fielding"
     if not year:
         return jsonify({"error": "year required"}), 400
@@ -585,9 +586,9 @@ def api_player_percentiles(pid):
 
     is_pitcher = role[0] in (11, 12, 13)
     if is_pitcher:
-        data = get_pitcher_percentiles(pid, year=year)
+        data = get_pitcher_percentiles(pid, split_id=split_id, year=year)
     else:
-        data = get_hitter_percentiles(pid, year=year)
+        data = get_hitter_percentiles(pid, split_id=split_id, year=year)
     if not data:
         return jsonify({"error": "no data for year"}), 404
     return jsonify({"year": year, "stats": data})
