@@ -721,13 +721,30 @@ def refresh_league(year, game_date=None):
             _upsert_batting(conn, bat)
             pit = client.get_player_pitching_stats(year=y, split=1)
             _upsert_pitching(conn, pit)
+            for split in (2, 3):
+                _upsert_batting(conn, client.get_player_batting_stats(year=y, split=split))
+                _upsert_pitching(conn, client.get_player_pitching_stats(year=y, split=split))
             fld = client.get_player_fielding_stats(year=y)
             _upsert_fielding(conn, fld)
             _upsert_team_stats(conn, y)
-            log.info(f"  {y}: {len(bat)} bat, {len(pit)} pit, {len(fld)} fld")
+            log.info(f"  {y}: {len(bat)} bat, {len(pit)} pit, {len(fld)} fld (+splits)")
         conn.commit()
     else:
         log.info(f"── historical stats: skipped (all years {hist_start}-{year-1} already in DB)")
+
+    # Backfill splits for years that have overall stats but are missing L/R splits
+    existing_split_years = {r[0] for r in conn.execute(
+        "SELECT DISTINCT year FROM batting_stats WHERE split_id=2").fetchall()}
+    split_gap_years = [y for y in range(hist_start, prior_year)
+                       if y in existing_years and y not in existing_split_years]
+    if split_gap_years:
+        log.info(f"── splits backfill ({split_gap_years[0]}–{split_gap_years[-1]}, {len(split_gap_years)} years)")
+        for y in split_gap_years:
+            for split in (2, 3):
+                _upsert_batting(conn, client.get_player_batting_stats(year=y, split=split))
+                _upsert_pitching(conn, client.get_player_pitching_stats(year=y, split=split))
+            log.info(f"  {y}: splits fetched")
+        conn.commit()
 
     # Backfill fielding for years that have batting/pitching but no fielding
     existing_fld_years = {r[0] for r in conn.execute(
