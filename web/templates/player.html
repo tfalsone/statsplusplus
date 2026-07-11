@@ -814,14 +814,19 @@
           <td class="ph-sample">{{ p.pctile_history.sample_sizes.values()|sum }}</td>
           {% for s in p.pctile_history.stats %}
             {% set pctile_vals = [] %}
+            {% set stat_vals = [] %}
+            {% set stat_fmt = '.1f' %}
             {% for yr in p.pctile_history.years %}
               {% set yr_data = s["values"].get(yr) %}
               {% if yr_data and yr_data.qualified %}
                 {% if pctile_vals.append(yr_data.pctile) %}{% endif %}
+                {% if stat_vals.append(yr_data.value) %}{% endif %}
+                {% set stat_fmt = yr_data.fmt %}
               {% endif %}
             {% endfor %}
             {% if pctile_vals %}
               {% set avg_pctile = (pctile_vals|sum / pctile_vals|length)|round|int %}
+              {% set avg_val = stat_vals|sum / stat_vals|length %}
               {% if avg_pctile <= 50 %}
                 {% set r = (60 + (240 - 60) * avg_pctile / 50)|round|int %}
                 {% set g = (80 + (240 - 80) * avg_pctile / 50)|round|int %}
@@ -831,8 +836,8 @@
                 {% set g = (240 + (45 - 240) * (avg_pctile - 50) / 50)|round|int %}
                 {% set b = (240 + (45 - 240) * (avg_pctile - 50) / 50)|round|int %}
               {% endif %}
-              <td class="ph-cell" style="--pctile:{{ avg_pctile }}; --ph-bg: {{ r }},{{ g }},{{ b }}">
-                <span class="ph-val">{{ avg_pctile }}</span><span class="ph-pctile" style="--pctile:{{ avg_pctile }}">Avg of {{ pctile_vals|length }} qualified seasons</span>
+              <td class="ph-cell" style="--pctile:{{ avg_pctile }}; --ph-bg: {{ r }},{{ g }},{{ b }}" data-pctile="{{ avg_pctile }}" data-stat="{% if stat_fmt == '.3f' %}{{ "%.3f"|format(avg_val) }}{% elif stat_fmt == '.2f' %}{{ "%.2f"|format(avg_val) }}{% elif stat_fmt == '.1f' %}{{ "%.1f"|format(avg_val) }}{% elif stat_fmt == 'd' %}{{ avg_val|round|int }}{% else %}{{ "%.1f"|format(avg_val) }}{% endif %}">
+                <span class="ph-val">{% if stat_fmt == '.3f' %}{{ "%.3f"|format(avg_val) }}{% elif stat_fmt == '.2f' %}{{ "%.2f"|format(avg_val) }}{% elif stat_fmt == '.1f' %}{{ "%.1f"|format(avg_val) }}{% elif stat_fmt == 'd' %}{{ avg_val|round|int }}{% else %}{{ "%.1f"|format(avg_val) }}{% endif %}</span><span class="ph-pctile" style="--pctile:{{ avg_pctile }}">{{ avg_pctile }}{{ "st" if avg_pctile % 10 == 1 and avg_pctile != 11 else ("nd" if avg_pctile % 10 == 2 and avg_pctile != 12 else ("rd" if avg_pctile % 10 == 3 and avg_pctile != 13 else "th")) }} percentile (avg)</span>
               </td>
             {% else %}
               <td class="ph-cell ph-empty">—</td>
@@ -1291,17 +1296,24 @@ function loadPctileHistory(pid, splitId, btn) {
       html += '<td class="ph-sample">' + totalSample + '</td>';
       data.stats.forEach(function(s) {
         var pctiles = [];
+        var values = [];
+        var fmt = '.1f';
         data.years.forEach(function(yr) {
           var v = s.values[String(yr)];
-          if (v && v.qualified) pctiles.push(v.pctile);
+          if (v && v.qualified) {
+            pctiles.push(v.pctile);
+            values.push(v.value);
+            fmt = v.fmt;
+          }
         });
         if (pctiles.length > 0) {
-          var avg = Math.round(pctiles.reduce(function(a,b){return a+b;},0) / pctiles.length);
-          var color = pctileColor(avg);
-          html += '<td class="ph-cell" style="--pctile:' + avg + '; --ph-bg:' + color + '"'
-            + ' data-pctile="' + avg + '" data-stat="' + avg + '">'
-            + '<span class="ph-val">' + avg + '</span>'
-            + '<span class="ph-pctile" style="--pctile:' + avg + '">Avg of ' + pctiles.length + ' qualified seasons</span></td>';
+          var avgPctile = Math.round(pctiles.reduce(function(a,b){return a+b;},0) / pctiles.length);
+          var avgVal = values.reduce(function(a,b){return a+b;},0) / values.length;
+          var color = pctileColor(avgPctile);
+          html += '<td class="ph-cell" style="--pctile:' + avgPctile + '; --ph-bg:' + color + '"'
+            + ' data-pctile="' + avgPctile + '" data-stat="' + fmtVal(avgVal, fmt) + '">'
+            + '<span class="ph-val">' + fmtVal(avgVal, fmt) + '</span>'
+            + '<span class="ph-pctile" style="--pctile:' + avgPctile + '">Avg of ' + pctiles.length + ' qualified seasons</span></td>';
         } else {
           html += '<td class="ph-cell ph-empty">\u2014</td>';
         }
