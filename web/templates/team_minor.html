@@ -87,7 +87,7 @@
     <thead>
       <tr>
         <th data-sort="str" class="left">Name</th>
-        <th data-sort="pos">Pos</th>
+        <th data-sort="pos" class="left">Pos</th>
         <th data-sort="num" data-sort-best="low">Age</th>
         <th data-sort="num">Ovr</th>
         <th data-sort="num">Pot</th>
@@ -101,7 +101,7 @@
       {% for p in roster %}
       <tr>
         <td class="left"><a class="player-link" href="/player/{{ p.pid }}">{{ p.name }}</a></td>
-        <td>{{ p.pos }}</td>
+        <td class="left">{{ p.pos }}</td>
         <td>{{ p.age }}</td>
         <td>{% if p.ovr %}<span class="ovr-color" data-g="{{ p.ovr }}">{{ p.ovr }}</span>{% else %}—{% endif %}</td>
         <td>{% if p.pot %}<span class="ovr-color" data-g="{{ p.pot }}">{{ p.pot }}</span>{% else %}—{% endif %}</td>

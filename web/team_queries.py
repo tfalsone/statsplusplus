@@ -2161,15 +2161,24 @@ def get_minor_league_roster(team_id):
     """, (team_id,)).fetchall()
 
     lmap = level_map()
+    _pm = pos_map()
+    _role_pos = {11: "SP", 12: "RP", 13: "RP"}
     result = []
     for r in rows:
         pid, name, age, pos, role, level = r[0:6]
         ovr, pot, composite, true_ceil, ceil_score = r[6:11]
         fv, fv_str, risk, prospect_surplus, bucket = r[11:16]
         ceiling = true_ceil or ceil_score
+        # Position display: use bucket if available, else game position
+        if bucket:
+            display_p = _display_pos(bucket, pos)
+        elif role in _role_pos:
+            display_p = _role_pos[role]
+        else:
+            display_p = _pm.get(pos, "?")
         result.append({
             "pid": pid, "name": name, "age": age,
-            "pos": _display_pos(bucket, pos) if bucket else _display_pos(None, pos),
+            "pos": display_p,
             "role": role,
             "level": lmap.get(str(level), str(level)),
             "ovr": ovr, "pot": pot,
