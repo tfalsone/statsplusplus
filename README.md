@@ -15,6 +15,8 @@ An assistant GM dashboard for [OOTP Baseball](https://www.ootpdevelopments.com/)
 - **League-calibrated models** — Tool weights, WAR curves, development curves, and financial tables derived from each league's own data
 - **Extended ratings** — BABIP, HR Avoidance, PBABIP, Injury Proneness (when the league's OOTP version provides them)
 - **One-click refresh** — Pull latest game data from StatsPlus without leaving the browser
+- **CSV export** — Export any table (draft board, roster, prospects) as CSV for external analysis
+- **Discord integration** — Automated patch notes posting to a Discord server for development updates
 - **CLI analysis tools** — Roster scaffolds, farm reports, prospect rankings, free agent analysis, trade calculator
 
 ## Prerequisites

@@ -4,6 +4,42 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 65 (2026-07-11)
+
+### Bug Fixes
+
+- **Pitcher W-L record in recent games** (`team_queries.py`) — Running W-L counter showed incomplete records (wins defaulting to 0 on loss dates). Fixed to update all running totals per appearance. Optimized query: ~26 rows instead of ~555.
+
+- **Foreign league players in rankings** (`league_config.py`, `fv_calc.py`, `queries.py`) — Japanese league players appeared in prospect lists and positional rankings. Fixed with org filter at multiple layers.
+
+- **Minor league roster position display** (`team_queries.py`, `team_minor.html`) — Non-prospect players showed blank position. Now falls back to game position. Pos column left-aligned.
+
+- **Team roster vs L/vs R toggle empty** (`refresh.py`) — Split stats (split_id 2/3) were never fetched. Now pulled for current + prior year, with backfill for historical years.
+
+- **Year selector showing same data** (`app.py`) — Missing return statement in `/api/player-percentiles` endpoint after adding split history endpoint.
+
+- **Advanced tab: split toggle reset** (`player.html`) — Show Percentiles/Values mode now persists across Overall/vs L/vs R switches. Career row restored in JS-rendered tables.
+
+- **Career averages incorrect** (`percentiles.py`, `player.html`) — Career row now uses PA-weighted averages (not simple mean of yearly rates). Proper format (`.266` not `0.3`). Toggles between stat values and percentiles.
+
+- **Draft simulation showing no players** (`fv_calc.py`) — Level 10 (college) and 11 (HS) players were missing from `LEVEL_INT_KEY` mapping, causing silent skip during FV evaluation. All 2604 draft pool players now evaluated.
+
+### Features
+
+- **CSV export** (`sort.js`, `league.html`, `team.html`) — Generic `exportTableCSV()` function. Export buttons on draft board, team roster (hitters/pitchers), and prospect list. Respects active filters and views.
+
+- **L/R split toggle on Advanced tab** (`percentiles.py`, `player.html`, `app.py`) — Overall/vs L/vs R buttons on percentile history panel. New API endpoint `/api/player-percentile-history/<pid>?split=1|2|3`.
+
+- **Historical L/R splits** (`refresh.py`) — Split stats now included in the 15-year historical loop with a one-time backfill pass.
+
+- **Discord webhook integration** (`scripts/discord_post.py`) — Patch notes posting via webhook. Subcommands: latest, preview, message. `--title` flag for custom naming. Config in gitignored `data/discord_config.json`. Added to session workflow in steering file.
+
+- **Discord widget on settings page** (`settings.html`) — Community panel with embedded server widget.
+
+- **Settings page layout** (`style.css`) — Two-column grid replacing narrow single column.
+
+---
+
 ## Session 64 (2026-07-10)
 
 ### Bug Fixes
