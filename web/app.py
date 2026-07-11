@@ -588,6 +588,9 @@ def api_player_percentiles(pid):
         data = get_pitcher_percentiles(pid, year=year)
     else:
         data = get_hitter_percentiles(pid, year=year)
+    if not data:
+        return jsonify({"error": "no data for year"}), 404
+    return jsonify({"year": year, "stats": data})
 
 
 @app.route("/api/player-percentile-history/<int:pid>")
