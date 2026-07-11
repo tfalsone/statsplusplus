@@ -850,6 +850,8 @@ h2.league-header { color: #aaa; font-size: 0.95rem; text-transform: uppercase; l
 /* WAR mini bar chart */
 .ph-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .ph-header h2 { margin: 0; flex: 1; }
+.ph-split-btns { display: inline-flex; gap: 2px; margin-left: 12px; vertical-align: middle; }
+.ph-split-btns .split-btn { font-size: 11px; padding: 2px 8px; }
 .ph-war-mini { display: flex; align-items: center; gap: 6px; }
 .ph-war-mini-label { font-size: 10px; font-weight: 600; color: var(--text-dim); }
 .ph-war-bars {

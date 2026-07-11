@@ -739,6 +739,11 @@
     <div class="ph-header">
       <h2>{{ "Pitching" if p.is_pitcher else "Batting" }} Percentiles by Season
         <span class="ph-toggle" onclick="togglePctileDisplay(this)">Show Percentiles</span>
+        <span class="ph-split-btns">
+          <button class="split-btn active" onclick="loadPctileHistory({{ p.player_id }}, 1, this)">Overall</button>
+          <button class="split-btn" onclick="loadPctileHistory({{ p.player_id }}, 2, this)">vs L</button>
+          <button class="split-btn" onclick="loadPctileHistory({{ p.player_id }}, 3, this)">vs R</button>
+        </span>
       </h2>
       {% set war_data = p.pctile_history.stats|selectattr("label", "equalto", "WAR")|first %}
       {% if war_data %}
@@ -1182,6 +1187,85 @@ function loadPctileYear(pid, year) {
       if (legend) legend.style.display = 'none';
     })
     .catch(function() { container.style.opacity = '1'; });
+}
+
+function loadPctileHistory(pid, splitId, btn) {
+  // Update active button
+  btn.closest('.ph-split-btns').querySelectorAll('.split-btn').forEach(function(b) { b.classList.remove('active'); });
+  btn.classList.add('active');
+
+  var wrap = document.querySelector('.pctile-history-table-wrap');
+  if (!wrap) return;
+  wrap.style.opacity = '0.5';
+
+  fetch('/api/player-percentile-history/' + pid + '?split=' + splitId)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) { wrap.style.opacity = '1'; return; }
+
+      function pctileColor(p) {
+        var r, g, b;
+        if (p <= 50) {
+          r = Math.round(60 + (240 - 60) * p / 50);
+          g = Math.round(80 + (240 - 80) * p / 50);
+          b = Math.round(220 + (240 - 220) * p / 50);
+        } else {
+          r = Math.round(240 + (235 - 240) * (p - 50) / 50);
+          g = Math.round(240 + (45 - 240) * (p - 50) / 50);
+          b = Math.round(240 + (45 - 240) * (p - 50) / 50);
+        }
+        return r + ',' + g + ',' + b;
+      }
+
+      function ordinal(n) {
+        var s = ['th','st','nd','rd'];
+        var v = n % 100;
+        return n + (s[(v-20)%10] || s[v] || s[0]) + ' percentile';
+      }
+
+      function fmtVal(v, fmt) {
+        if (fmt === '.3f') return v.toFixed(3);
+        if (fmt === '.2f') return v.toFixed(2);
+        if (fmt === '.1f') return v.toFixed(1);
+        if (fmt === 'd') return Math.round(v).toString();
+        return v.toFixed(1);
+      }
+
+      // Build header
+      var html = '<table class="pctile-history-table"><thead><tr>';
+      html += '<th class="ph-stat-col">Season</th>';
+      html += '<th class="ph-sample-col">' + data.sample_label + '</th>';
+      data.stats.forEach(function(s) { html += '<th>' + s.label + '</th>'; });
+      html += '</tr></thead><tbody>';
+
+      // Build rows
+      data.years.forEach(function(yr) {
+        html += '<tr><td class="ph-year">' + yr + '</td>';
+        html += '<td class="ph-sample">' + (data.sample_sizes[String(yr)] || '\u2014') + '</td>';
+        data.stats.forEach(function(s) {
+          var v = s.values[String(yr)];
+          if (v) {
+            var color = pctileColor(v.pctile);
+            var cls = v.qualified ? '' : ' ph-unqualified';
+            html += '<td class="ph-cell' + cls + '" style="--pctile:' + v.pctile + '; --ph-bg:' + color + '"'
+              + ' data-pctile="' + v.pctile + '" data-stat="' + fmtVal(v.value, v.fmt) + '">'
+              + '<span class="ph-val">' + fmtVal(v.value, v.fmt) + '</span>'
+              + '<span class="ph-pctile" style="--pctile:' + v.pctile + '">' + ordinal(v.pctile) + '</span></td>';
+          } else {
+            html += '<td class="ph-cell ph-empty">\u2014</td>';
+          }
+        });
+        html += '</tr>';
+      });
+      html += '</tbody></table>';
+      wrap.innerHTML = html;
+      wrap.style.opacity = '1';
+
+      // Reset toggle button text
+      var toggle = wrap.closest('.panel').querySelector('.ph-toggle');
+      if (toggle) toggle.textContent = 'Show Percentiles';
+    })
+    .catch(function() { wrap.style.opacity = '1'; });
 }
 
 function togglePctileDisplay(btn) {

@@ -588,6 +588,24 @@ def api_player_percentiles(pid):
         data = get_pitcher_percentiles(pid, year=year)
     else:
         data = get_hitter_percentiles(pid, year=year)
+
+
+@app.route("/api/player-percentile-history/<int:pid>")
+def api_player_percentile_history(pid):
+    """Return full percentile history for a split."""
+    from percentiles import get_percentile_history
+    from web_league_context import get_db
+    split_id = request.args.get("split", 1, type=int)
+    conn = get_db()
+    role = conn.execute("SELECT role FROM players WHERE player_id=?", (pid,)).fetchone()
+    conn.close()
+    if not role:
+        return jsonify({"error": "not found"}), 404
+    is_pitcher = role[0] in (11, 12, 13)
+    data = get_percentile_history(pid, is_pitcher=is_pitcher, split_id=split_id)
+    if not data:
+        return jsonify({"error": "no data"}), 404
+    return jsonify(data)
     if not data:
         return jsonify({"error": "no data for year"}), 404
     return jsonify({"year": year, "stats": data})

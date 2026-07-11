@@ -593,7 +593,7 @@ def get_fielding_percentiles(pid, year=None):
 
 # ── multi-year percentile history ────────────────────────────────────────
 
-def get_percentile_history(pid, is_pitcher=False):
+def get_percentile_history(pid, is_pitcher=False, split_id=1):
     """Compute percentile rankings for all available years.
 
     Returns dict with:
@@ -611,13 +611,13 @@ def get_percentile_history(pid, is_pitcher=False):
     sample_sizes = {}
     if is_pitcher:
         for row in conn.execute(
-            "SELECT year, SUM(ip) FROM pitching_stats WHERE player_id=? AND split_id=1 GROUP BY year",
-            (pid,)).fetchall():
+            "SELECT year, SUM(ip) FROM pitching_stats WHERE player_id=? AND split_id=? GROUP BY year",
+            (pid, split_id)).fetchall():
             sample_sizes[row[0]] = round(row[1], 1) if row[1] else 0
     else:
         for row in conn.execute(
-            "SELECT year, SUM(pa) FROM batting_stats WHERE player_id=? AND split_id=1 GROUP BY year",
-            (pid,)).fetchall():
+            "SELECT year, SUM(pa) FROM batting_stats WHERE player_id=? AND split_id=? GROUP BY year",
+            (pid, split_id)).fetchall():
             sample_sizes[row[0]] = row[1] or 0
     conn.close()
 
@@ -629,9 +629,9 @@ def get_percentile_history(pid, is_pitcher=False):
 
     for yr in years:
         if is_pitcher:
-            result = get_pitcher_percentiles(pid, year=yr)
+            result = get_pitcher_percentiles(pid, split_id=split_id, year=yr)
         else:
-            result = get_hitter_percentiles(pid, year=yr)
+            result = get_hitter_percentiles(pid, split_id=split_id, year=yr)
         if not result:
             continue
         for entry in result:
