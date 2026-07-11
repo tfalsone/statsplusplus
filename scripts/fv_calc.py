@@ -26,8 +26,8 @@ from player_utils import (assign_bucket, calc_fv, LEVEL_NORM_AGE,
 from prospect_value import prospect_surplus_with_option as _prospect_surplus_opt
 from contract_value import contract_value as _contract_value
 
-LEVEL_INT_KEY   = {0:"draft", 2:"aaa", 3:"aa", 4:"a", 5:"a-short", 6:"usl", 8:"intl"}
-LEVEL_INT_LABEL = {0:"Draft", 1:"MLB", 2:"AAA", 3:"AA", 4:"A", 5:"A-Short", 6:"Rookie", 8:"International"}
+LEVEL_INT_KEY   = {0:"draft", 2:"aaa", 3:"aa", 4:"a", 5:"a-short", 6:"usl", 8:"intl", 10:"draft", 11:"draft"}
+LEVEL_INT_LABEL = {0:"Draft", 1:"MLB", 2:"AAA", 3:"AA", 4:"A", 5:"A-Short", 6:"Rookie", 8:"International", 10:"College", 11:"HS"}
 
 RATINGS_SQL = """
     SELECT r.player_id AS ID,
@@ -128,12 +128,15 @@ def run():
 
     # Filter to players belonging to our league's organizations.
     # Excludes foreign league players (e.g., Japanese leagues) that have
-    # ratings in the DB but aren't part of our league structure.
+    # level=1 ratings but aren't part of our league structure.
+    # Keeps: our orgs, free agents, and amateur/draft-eligible players.
     _our_tids = _cfg.mlb_team_ids
     if _our_tids:
         rows = [r for r in rows if r["team_id"] in _our_tids
                 or r["parent_team_id"] in _our_tids
-                or r["team_id"] == 0]  # free agents / unsigned
+                or r["team_id"] == 0  # free agents / unsigned
+                or (r["parent_team_id"] == 0 and str(r["level"] or "") != "1")  # amateurs (not foreign MLB)
+                ]
 
     # Load COMPOSITE_TO_WAR tables for WAR-based FV
     import json as _json
