@@ -35,8 +35,8 @@ function sortTable(th) {
   rows.sort((a, b) => {
     const cellA = a.children[idx], cellB = b.children[idx];
     if (type === "num") {
-      const va = parseFloat(cellA.textContent.replace(/[$M,]/g, "")) || 0;
-      const vb = parseFloat(cellB.textContent.replace(/[$M,]/g, "")) || 0;
+      const va = parseFloat(cellA.dataset.sortValue ?? cellA.textContent.replace(/[$M,k]/gi, "")) || 0;
+      const vb = parseFloat(cellB.dataset.sortValue ?? cellB.textContent.replace(/[$M,k]/gi, "")) || 0;
       return (va - vb) * dir;
     }
     if (type === "pos") {

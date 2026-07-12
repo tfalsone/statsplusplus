@@ -618,8 +618,8 @@ def get_player(pid):
         valuation["type"] = "prospect"
         valuation["level"] = prospect_row[4]
         valuation["risk"] = prospect_row[5]
-        valuation["ovr"] = ratings["ovr"] if ratings else None
-        valuation["pot"] = ratings["pot"] if ratings else None
+        valuation["ovr"] = (rd.get("composite_score") if rd else None) or (ratings["ovr"] if ratings else None)
+        valuation["pot"] = (rd.get("true_ceiling") or rd.get("ceiling_score") if rd else None) or (ratings["pot"] if ratings else None)
         _def_keys = {'CF':'pot_cf','SS':'pot_ss','C':'pot_c','2B':'pot_second_b','3B':'pot_third_b'}
         valuation["def_rating"] = rd.get(_def_keys.get(prospect_row[0], "")) or 0 if rd else 0
 
@@ -981,7 +981,8 @@ def get_player(pid):
                             durability_score=eval_data.get("durability_score"))
             outcome_probs = _pv.career_outcome_probs(
                 fv, age, level_val, bucket_val,
-                ovr=valuation.get("ovr"), pot=valuation.get("pot"),
+                ovr=valuation.get("ovr") or eval_data.get("composite_score"),
+                pot=valuation.get("pot") or eval_data.get("ceiling_score"),
                 def_rating=_dr, **_comp_kw)
         # MLB player who is also rookie-eligible (in prospect_fv)
         if valuation.get("type") == "MLB" and prospect_row and outcome_probs is None:

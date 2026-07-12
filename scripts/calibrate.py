@@ -1344,6 +1344,89 @@ def _calibrate_carrying_tools(conn, game_year, role_map):
 
 
 # ---------------------------------------------------------------------------
+# Positional rating estimation from defensive tools
+# ---------------------------------------------------------------------------
+
+# For each position, which defensive tools predict the positional grade.
+_POS_MODEL_FEATURES = {
+    "pot_ss":       ["ifr", "ifa", "ife", "tdp"],
+    "pot_second_b": ["ifr", "ifa", "ife", "tdp"],
+    "pot_third_b":  ["ifr", "ifa", "ife", "tdp"],
+    "pot_cf":       ["ofr", "ofa", "ofe"],
+    "pot_lf":       ["ofr", "ofa", "ofe"],
+    "pot_rf":       ["ofr", "ofa", "ofe"],
+    "pot_first_b":  ["ifr", "ifa", "ife", "tdp", "height"],
+    "pot_c":        ["c_arm", "c_blk", "c_frm"],
+}
+
+
+def _multivariate_ols(X, y):
+    """Solve multivariate OLS via normal equations with Gaussian elimination.
+    X should already include the intercept column (column of 1s).
+    Returns coefficient vector beta."""
+    n = len(y)
+    k = len(X[0])
+    # Build augmented matrix [X^T X | X^T y]
+    XtX = [[sum(X[i][a] * X[i][b] for i in range(n)) for b in range(k)] for a in range(k)]
+    Xty = [sum(X[i][a] * y[i] for i in range(n)) for a in range(k)]
+    A = [XtX[i][:] + [Xty[i]] for i in range(k)]
+    # Gaussian elimination with partial pivoting
+    for col in range(k):
+        max_row = max(range(col, k), key=lambda r: abs(A[r][col]))
+        A[col], A[max_row] = A[max_row], A[col]
+        if abs(A[col][col]) < 1e-10:
+            continue
+        for row in range(col + 1, k):
+            f = A[row][col] / A[col][col]
+            for j in range(col, k + 1):
+                A[row][j] -= f * A[col][j]
+    # Back-substitution
+    beta = [0.0] * k
+    for i in range(k - 1, -1, -1):
+        beta[i] = A[i][k]
+        for j in range(i + 1, k):
+            beta[i] -= A[i][j] * beta[j]
+        if abs(A[i][i]) > 1e-10:
+            beta[i] /= A[i][i]
+    return beta
+
+
+def _calibrate_positional_models(conn):
+    """Fit OLS models predicting positional ratings from defensive tools.
+
+    Returns dict: {position: {"features": [...], "coefficients": [...], "r2": float, "n": int}}
+    """
+    models = {}
+    for pos_col, features in _POS_MODEL_FEATURES.items():
+        feat_sql = ", ".join(features)
+        # Only train on players who have a rating at this position AND have defensive tools
+        rows = conn.execute(
+            f"SELECT {pos_col}, {feat_sql} FROM latest_ratings "
+            f"WHERE {pos_col} > 0 AND {features[0]} > 0"
+        ).fetchall()
+        if len(rows) < 30:
+            continue
+        y = [float(r[0]) for r in rows]
+        X = [[1.0] + [float(r[i + 1]) for i in range(len(features))] for r in rows]
+        beta = _multivariate_ols(X, y)
+        # Compute R² and MAE
+        pred = [sum(beta[j] * X[i][j] for j in range(len(beta))) for i in range(len(X))]
+        mean_y = sum(y) / len(y)
+        ss_res = sum((y[i] - pred[i]) ** 2 for i in range(len(y)))
+        ss_tot = sum((y[i] - mean_y) ** 2 for i in range(len(y)))
+        r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
+        mae = sum(abs(y[i] - pred[i]) for i in range(len(y))) / len(y)
+        models[pos_col] = {
+            "features": features,
+            "coefficients": beta,  # [intercept, coeff1, coeff2, ...]
+            "r2": round(r2, 4),
+            "mae": round(mae, 2),
+            "n": len(rows),
+        }
+    return models
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1481,6 +1564,15 @@ def calibrate(dry_run=False):
         print("  Using existing curve (no update)")
         scarcity = {str(k): v for k, v in SCARCITY_MULT.items()}
 
+    # Step: Positional rating estimation models (before conn closes)
+    print("\n=== Positional Rating Models ===")
+    pos_models = _calibrate_positional_models(conn)
+    if pos_models:
+        for pos_col, model in pos_models.items():
+            print(f"  {pos_col:<14} R²={model['r2']:.3f}  MAE={model['mae']:.1f}  N={model['n']}")
+    else:
+        print("  Insufficient data — skipped")
+
     conn.close()
 
     # Step 5: PAP scale (2× stdev of surplus_yr1)
@@ -1605,6 +1697,10 @@ def calibrate(dry_run=False):
         weights["FV_TO_PEAK_WAR_COMPOSITE_SP"] = {str(k): v for k, v in comp_sp_fv.items()}
     if comp_rp_fv is not None:
         weights["FV_TO_PEAK_WAR_COMPOSITE_RP"] = {str(k): v for k, v in comp_rp_fv.items()}
+
+    # Store positional models (calibrated above before conn.close())
+    if pos_models:
+        weights["POSITIONAL_MODELS"] = pos_models
 
     if dry_run:
         print("\n=== DRY RUN — would write: ===")

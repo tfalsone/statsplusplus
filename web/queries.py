@@ -928,15 +928,17 @@ def get_draft_pool():
         fv_base, fv_plus = calc_fv(p)
         # Use prospect_fv table values when available (canonical grades)
         pf_row = conn.execute(
-            "SELECT fv, fv_str, risk FROM prospect_fv WHERE player_id=?", (p["ID"],)
+            "SELECT fv, fv_str, risk, prospect_surplus FROM prospect_fv WHERE player_id=?", (p["ID"],)
         ).fetchone()
         if pf_row:
             fv_base = pf_row[0]
             fv_str_display = pf_row[1]
             pf_risk = pf_row[2]
+            pf_surplus = pf_row[3] or 0
         else:
             fv_str_display = f"{fv_base}+" if fv_plus else str(fv_base)
             pf_risk = None
+            pf_surplus = 0
         pos_str = ROLE_MAP.get(p.get("role"), _POS_LABEL.get(p.get("pos"), "?"))
         college_hs = "College" if level == '10' else "HS" if level == '11' else ("HS" if (p.get("Age") or 0) <= 18 else "College")
         entry = {
@@ -1030,10 +1032,22 @@ def get_draft_pool():
                     "thresholds": oc.get("thresholds", {}),
                     "likely": oc.get("likely_range", [0, 0]),
                 }
-            surplus_val = _pv.prospect_surplus_with_option(
+            surplus_val = pf_surplus if pf_surplus else _pv.prospect_surplus_with_option(
                 fv_base, p["Age"], _oc_level, bucket,
                 ovr=_ovr, pot=_pot)
-            entry["surplus"] = round(surplus_val / 1e6, 1) if surplus_val else 0
+            entry["surplus"] = round(surplus_val / 1e6, 3) if surplus_val else 0
+            # Raw (ceiling scenario) surplus — what the player is worth if they
+            # fully develop to their ceiling with no time/risk discount.
+            # Uses ceiling FV to represent the best-case outcome.
+            _ceil_fv = _pv._ceiling_fv(_pot) if _pot else fv_base
+            _raw_result = _pv.prospect_surplus(_ceil_fv, p["Age"], _oc_level, bucket,
+                                               ovr=_ovr, pot=_pot)
+            if _raw_result and _raw_result.get("breakdown"):
+                _dpw = _pv.dollars_per_war()
+                raw_total = sum(b["war"] * _dpw - b["salary"] for b in _raw_result["breakdown"])
+                entry["raw_surplus"] = max(entry["surplus"], round(max(0, raw_total) / 1e6, 3))
+            else:
+                entry["raw_surplus"] = entry["surplus"]
         except Exception:
             entry["surplus"] = 0
 

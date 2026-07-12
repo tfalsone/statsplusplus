@@ -54,6 +54,7 @@ RATINGS_SQL = """
            r.pot_lf AS PotLF, r.pot_cf AS PotCF, r.pot_rf AS PotRF,
            r.ofa AS OFA, r.ifa AS IFA, r.c_arm AS CArm, r.c_blk AS CBlk, r.c_frm AS CFrm,
            r.ifr AS IFR, r.ofr AS OFR, r.ife AS IFE, r.ofe AS OFE, r.tdp AS TDP,
+           r.height AS Height,
            r.cntct_l AS Cntct_L, r.cntct_r AS Cntct_R,
            r.stf_l AS Stf_L, r.stf_r AS Stf_R,
            r.int_ AS Int, r.wrk_ethic AS WrkEthic, r.greed AS Greed,

@@ -402,7 +402,7 @@
               {% elif dp_state == 'pre_draft' %}Approximate{% endif %}
             </span>
             {% if dp_state in ('uploaded', 'active') %}
-            <button class="btn" onclick="updateDraftPicks()">⟳ Update Picks</button>
+            <button class="btn" onclick="updateDraftPicks(this)">⟳ Update Picks</button>
             {% endif %}
             <button class="btn" onclick="runDraftSim()" title="Simulate draft based on your pick position">🎲 Sim</button>
             <button class="btn" onclick="generateUploadList()" title="Generate auto-draft list file">📋 Auto-Draft List</button>
@@ -789,7 +789,10 @@ function renderPanel(d) {
       <span class="panel-grade-label">ETA</span><span class="panel-grade-val">${d.eta}</span>
     </div>
     <div class="panel-grade-row">
-      <span class="panel-grade-label">Surplus</span><span class="panel-grade-val">$${d.surplus}M</span>
+      <span class="panel-grade-label">Surplus</span><span class="panel-grade-val">${fmtSurplus(d.surplus)}</span>
+    </div>
+    <div class="panel-grade-row">
+      <span class="panel-grade-label">Ceiling value</span><span class="panel-grade-val text-dim">${fmtSurplus(d.raw_surplus)}</span>
     </div>
   </div>`;
 
@@ -1146,9 +1149,35 @@ function renderBalance() {
 var draftPicks = {};
 var draftDetailCache = {};
 var currentDraftView = 'all';
+var draftSortState = null;  // {key: 'rank'|'age'|'ovr'|'pot'|'fv'|'surplus'|'exp_round', dir: 1|-1}
 var DRAFT_POOL = {{ draft_pool.players|tojson if draft_pool else '[]' }};
 var DRAFT_PICKS_INIT = {{ draft_pool.picks|tojson if draft_pool else '[]' }};
+
+// Restore picks from localStorage, then overlay server-provided picks
+var LEAGUE_SLUG = {{ active_league_slug|tojson }};
+var DRAFT_PICKS_KEY = 'draft_picks_' + LEAGUE_SLUG;
+try {
+  var stored = JSON.parse(localStorage.getItem(DRAFT_PICKS_KEY) || '[]');
+  stored.forEach(function(p) { draftPicks[p.pid] = p; });
+} catch(e) {}
+// Server-provided picks override localStorage (fresher data)
 DRAFT_PICKS_INIT.forEach(function(p) { draftPicks[p.pid] = p; });
+// Persist merged state
+function saveDraftPicks() {
+  var arr = Object.values(draftPicks);
+  try { localStorage.setItem(DRAFT_PICKS_KEY, JSON.stringify(arr)); } catch(e) {}
+}
+saveDraftPicks();
+
+function fmtSurplus(val) {
+  if (!val || val <= 0) return '—';
+  if (val >= 100) return '$' + val.toFixed(0) + 'M';
+  if (val >= 10) return '$' + val.toFixed(1) + 'M';
+  if (val >= 1) return '$' + val.toFixed(1) + 'M';
+  if (val >= 0.1) return '$' + Math.round(val * 1000) + 'K';
+  if (val >= 0.01) return '$' + Math.round(val * 1000) + 'K';
+  return '$' + (val * 1000).toFixed(1) + 'K';
+}
 
 function gradeClr(v) {
   if (v >= 70) return 'dg-elite';
@@ -1188,16 +1217,22 @@ function ctd(v, isGreed) { var c = isGreed ? charClrGreed(v) : charClr(v); retur
 function fvPill(v) { var n = parseInt(v); return '<span class="draft-pill dp-fv ' + gradeClr(n) + '">' + v + '</span>'; }
 function charPill(v, isGreed) { var c = isGreed ? charClrGreed(v) : charClr(v); return '<span class="draft-pill dp-char ' + c + '">' + (v||'-') + '</span>'; }
 function lvlPill(v) { return '<span class="draft-pill dp-lvl">' + v + '</span>'; }
-function profilePill(oc) {
+function profilePill(oc, p) {
   if (!oc || !oc.thresholds) return '';
   var c = Math.round((oc.thresholds.Contributor||0)*100);
   var a = Math.round((oc.thresholds['All-Star']||0)*100);
   var bust = 100 - c;
+  // Realization: how developed are their tools relative to ceiling?
+  // Low realization = more uncertainty, shift toward "projection" labels
+  var realization = (p && p.ovr && p.pot && p.pot > 0) ? p.ovr / p.pot : 0.5;
+  var proven = realization >= 0.6;  // tools are well-developed
   var label, cls;
-  if (c >= 50 && a >= 25) { label = 'Safe Star'; cls = 'dp-prof-star'; }
-  else if (a >= 25 && bust >= 60) { label = 'Boom/Bust'; cls = 'dp-prof-boom'; }
-  else if (a >= 25) { label = 'Upside+'; cls = 'dp-prof-up'; }
-  else if (c >= 50) { label = 'Safe'; cls = 'dp-prof-safe'; }
+  if (proven && c >= 50 && a >= 25) { label = 'Safe Star'; cls = 'dp-prof-star'; }
+  else if (!proven && a >= 25 && bust >= 40) { label = 'Boom/Bust'; cls = 'dp-prof-boom'; }
+  else if (a >= 25 && proven) { label = 'Upside+'; cls = 'dp-prof-up'; }
+  else if (a >= 25) { label = 'Projectn'; cls = 'dp-prof-up'; }
+  else if (proven && c >= 50) { label = 'Safe'; cls = 'dp-prof-safe'; }
+  else if (c >= 50) { label = 'Likely'; cls = 'dp-prof-safe'; }
   else if (bust >= 70) { label = 'Lottery'; cls = 'dp-prof-lot'; }
   else if (c >= 35 && a >= 15) { label = 'Upside'; cls = 'dp-prof-up'; }
   else if (c >= 35) { label = 'Steady'; cls = 'dp-prof-steady'; }
@@ -1247,8 +1282,8 @@ function runDraftSim() {
       html += '<td>' + p.pos + '</td><td>' + p.fv_str + '</td><td>' + p.ceiling + '</td></tr>';
     });
     html += '</tbody></table>';
-    html += '<div style="margin-top:8px;font-size:11px;color:var(--text-dim)">Total surplus: $' +
-      d.picks.reduce(function(s, p) { return s + p.surplus; }, 0).toFixed(1) + 'M</div>';
+    html += '<div style="margin-top:8px;font-size:11px;color:var(--text-dim)">Total surplus: ' +
+      fmtSurplus(d.picks.reduce(function(s, p) { return s + p.surplus; }, 0)) + '</div>';
     html += '<button class="btn btn-sm" style="margin-top:6px" onclick="runDraftSim()">Re-run</button>';
     results.innerHTML = html;
   }).catch(function() { results.innerHTML = '<p class="text-dim">Simulation failed</p>'; });
@@ -1260,9 +1295,12 @@ function generateUploadList() {
   results.innerHTML = '<p class="text-dim">Generating list…</p>';
   panel.style.display = 'block';
 
+  // Exclude already-drafted players
+  var exclude = Object.keys(draftPicks).map(Number).filter(Boolean);
+
   fetch('/api/draft-upload-list', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({top: 500})
+    body: JSON.stringify({top: 500, exclude: exclude})
   }).then(function(r) { return r.json(); }).then(function(d) {
     if (!d.ok) { results.innerHTML = '<p class="text-dim">Error: ' + d.error + '</p>'; return; }
     var html = '<div style="font-size:12px;margin-bottom:8px"><strong>' + d.count + ' players</strong> written to auto-draft file</div>';
@@ -1284,6 +1322,15 @@ function openFileLocation(path) {
   fetch('/api/open-file-location', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({path: path})
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d.ok) alert('Could not open folder: ' + (d.error || 'unknown error'));
+  }).catch(function() {
+    // Fallback: copy path to clipboard
+    navigator.clipboard.writeText(path).then(function() {
+      alert('Could not open folder. Path copied to clipboard:\n' + path);
+    }).catch(function() {
+      alert('Could not open folder. File is at:\n' + path);
+    });
   });
 }
 
@@ -1655,11 +1702,12 @@ function setDraftPosFilter(btn, pos) {
 
 function renderDraftBoard(view) {
   currentDraftView = view;
+  draftSortState = null;  // reset sort when view changes
   document.querySelectorAll('.draft-board-controls .draft-needs-bar .draft-pos-btn:not(.draft-needs-btn):not(#draft-hide-picked-btn)').forEach(function(b) { b.classList.remove('active'); });
 
   var thead = document.getElementById('draft-thead');
   var base = '<th class="dd-cmp-th" title="Compare">⚖</th><th data-sort="num">Rk</th><th data-sort="str">Pos</th><th data-sort="str" class="left">Name</th>' +
-    '<th data-sort="num">Age</th><th data-sort="str">Lvl</th><th data-sort="num">Ovr</th><th data-sort="num">Pot</th><th data-sort="str">FV</th><th data-sort="num">$Val</th><th data-sort="str">Acc</th>';
+    '<th data-sort="num">Age</th><th data-sort="str">Lvl</th><th data-sort="num">Ovr</th><th data-sort="num">Pot</th><th data-sort="str">FV</th><th data-sort="num" title="Risk-adjusted surplus value over 6 years of team control. Hover cells for raw (undiscounted) value.">$Val</th><th data-sort="str">Acc</th>';
   if (view === 'hit') {
     thead.innerHTML = '<tr>' + base +
       '<th data-sort="str">Bat</th><th data-sort="str">Thr</th>' +
@@ -1684,7 +1732,64 @@ function renderDraftBoard(view) {
     thead.innerHTML = '<tr>' + base + '<th data-sort="str">Bat</th><th data-sort="str">Thr</th><th data-sort="num" class="col-sep" title="P(Contributor)">C%</th><th data-sort="num" title="P(Regular)">R%</th><th data-sort="num" title="P(All-Star)">AS%</th><th data-sort="num" title="Bust probability (1 - P(Contributor))">Bust%</th><th data-sort="str">Profile</th><th data-sort="num" class="col-sep" title="Expected draft round based on POT rank">ExpRd</th><th data-sort="str" title="Value gap vs other GMs">ADP</th></tr>';
   }
   applyDraftFilters();
-  if (typeof initSort === 'function') initSort(document.getElementById('draft-table'));
+  initDraftSort();
+}
+
+// Column-key map for draft table sort (by header text)
+var DRAFT_SORT_MAP = {
+  'Rk': 'rank', 'Pos': 'pos', 'Name': 'name', 'Age': 'age', 'Lvl': 'type',
+  'Ovr': 'ovr', 'Pot': 'pot', 'FV': 'fv', '$Val': 'surplus', 'Acc': 'acc',
+  'ExpRd': 'exp_round',
+  'C%': 'contrib_pct', 'R%': 'regular_pct', 'AS%': 'allstar_pct', 'Bust%': 'bust_pct'
+};
+
+function _draftSortVal(p, key) {
+  switch(key) {
+    case 'rank': return p.rank;
+    case 'age': return p.age;
+    case 'ovr': return p.ovr;
+    case 'pot': return p.pot;
+    case 'fv': return p.fv;
+    case 'surplus': return p.surplus || 0;
+    case 'exp_round': return (p.adp && p.adp.exp_round) || 99;
+    case 'contrib_pct': return p.outcome && p.outcome.thresholds ? (p.outcome.thresholds.Contributor || 0) : 0;
+    case 'regular_pct': return p.outcome && p.outcome.thresholds ? (p.outcome.thresholds.Regular || 0) : 0;
+    case 'allstar_pct': return p.outcome && p.outcome.thresholds ? (p.outcome.thresholds['All-Star'] || 0) : 0;
+    case 'bust_pct': return p.outcome && p.outcome.thresholds ? (1 - (p.outcome.thresholds.Contributor || 0)) : 1;
+    default: return 0;
+  }
+}
+
+function initDraftSort() {
+  var table = document.getElementById('draft-table');
+  if (!table) return;
+  table.querySelectorAll('th[data-sort]').forEach(function(th) {
+    th.style.cursor = 'pointer';
+    // Remove old listeners by cloning
+    var newTh = th.cloneNode(true);
+    th.parentNode.replaceChild(newTh, th);
+    newTh.addEventListener('click', function() {
+      var text = this.textContent.trim();
+      var key = DRAFT_SORT_MAP[text];
+      if (!key) {
+        // Fall back to generic DOM sort for tool columns (Con, Pow, etc.)
+        sortTable(this);
+        return;
+      }
+      // Toggle direction: if same key, flip; if new key, start ascending
+      var newDir;
+      if (draftSortState && draftSortState.key === key) {
+        newDir = -draftSortState.dir;
+      } else {
+        newDir = 1;
+      }
+      draftSortState = {key: key, dir: newDir};
+      // Update visual indicators
+      table.querySelectorAll('th').forEach(function(h) { h.classList.remove('sort-asc', 'sort-desc'); });
+      this.classList.add(newDir === 1 ? 'sort-asc' : 'sort-desc');
+      applyDraftFilters();
+    });
+  });
 }
 
 function applyDraftFilters() {
@@ -1737,6 +1842,20 @@ function applyDraftFilters() {
 
   var tbody = document.getElementById('draft-tbody');
   tbody.innerHTML = '';
+
+  // Apply sort if active
+  if (draftSortState) {
+    var sk = draftSortState.key;
+    var sd = draftSortState.dir;
+    filtered.sort(function(a, b) {
+      if (sk === 'name') return sd * a.name.localeCompare(b.name);
+      if (sk === 'pos') return sd * (a.pos || '').localeCompare(b.pos || '');
+      if (sk === 'type') return sd * (a.type || '').localeCompare(b.type || '');
+      if (sk === 'acc') return sd * (a.acc || '').localeCompare(b.acc || '');
+      return (_draftSortVal(a, sk) - _draftSortVal(b, sk)) * sd;
+    });
+  }
+
   filtered.forEach(function(p) {
     var picked = draftPicks[p.pid];
     var isMine = picked && picked.tid === MY_TEAM_ID;
@@ -1755,7 +1874,7 @@ function applyDraftFilters() {
     tr += '<td class="left"><a class="player-link" href="/player/' + p.pid + '">' + p.name + '</a>' + flags + '</td>';
     tr += '<td>' + p.age + '</td><td>' + lvlPill(p.type) + '</td>';
     tr += gtd(p.ovr) + gtd(p.pot) + '<td>' + fvPill(p.fv_str) + '</td>';
-    tr += '<td class="text-dim" style="font-size:12px">' + (p.surplus > 0 ? '$' + p.surplus + 'M' : '—') + '</td>';
+    tr += '<td class="text-dim" style="font-size:12px" data-sort-value="' + (p.surplus || 0) + '" title="Adj: ' + fmtSurplus(p.surplus) + ' · Ceiling: ' + fmtSurplus(p.raw_surplus) + '">' + fmtSurplus(p.surplus) + '</td>';
     tr += '<td>' + charPill(p.acc) + '</td>';
     if (view === 'hit' && !isPit) {
       var t = p.tools;
@@ -1795,9 +1914,9 @@ function applyDraftFilters() {
       tr += '<td>' + (oc.Regular ? Math.round(oc.Regular*100) + '%' : '-') + '</td>';
       tr += '<td>' + (oc['All-Star'] ? Math.round(oc['All-Star']*100) + '%' : '-') + '</td>';
       tr += '<td>' + bustPct(p.outcome) + '</td>';
-      tr += '<td>' + profilePill(p.outcome) + '</td>';
+      tr += '<td>' + profilePill(p.outcome, p) + '</td>';
       var adp = p.adp || {};
-      tr += '<td class="col-sep">' + (adp.exp_round ? 'Rd' + adp.exp_round : '-') + '</td>';
+      tr += '<td class="col-sep" data-sort-value="' + (adp.exp_round || 99) + '">' + (adp.exp_round ? 'Rd' + adp.exp_round : '-') + '</td>';
       tr += '<td>' + adpLabel(adp.label) + '</td>';
     }
     tr += '</tr>';
@@ -2146,8 +2265,9 @@ function renderMyPicks(allPicks) {
   }).join('');
 }
 
-function updateDraftPicks() {
-  var btn = event.target;
+function updateDraftPicks(btn) {
+  if (!btn) btn = document.querySelector('[onclick*="updateDraftPicks"]');
+  if (!btn) return;
   btn.disabled = true; btn.textContent = 'Updating…';
   fetch('/api/draft-picks').then(function(r) { return r.json(); }).then(function(data) {
     var newCount = 0;
@@ -2155,6 +2275,7 @@ function updateDraftPicks() {
       if (!draftPicks[p.pid]) newCount++;
       draftPicks[p.pid] = p;
     });
+    saveDraftPicks();
     renderMyPicks(data.picks || []);
     document.getElementById('draft-status').textContent =
       data.picks.length + ' picks' + (newCount ? ' · ' + newCount + ' new' : '');
@@ -2176,6 +2297,17 @@ document.querySelector('[data-tab="trade"]').addEventListener('click', () => {
     selectOrg('a', MY_TEAM_ID);
   }
 });
+
+// Auto-fetch picks when draft tab is opened (if draft is active)
+{% if dp_state in ('uploaded', 'active') %}
+let draftAutoFetched = false;
+document.querySelector('[data-tab="draft"]').addEventListener('click', () => {
+  if (draftAutoFetched) return;
+  draftAutoFetched = true;
+  var btn = document.querySelector('#tab-draft [onclick*="updateDraftPicks"]');
+  if (btn) updateDraftPicks(btn);
+});
+{% endif %}
 
 /* ── Tabs ── */
 document.querySelectorAll('.tab-bar .tab').forEach(btn => {

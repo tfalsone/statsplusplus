@@ -47,13 +47,35 @@ def peak_war(fv, bucket="SP"):
             return table[f0] + t * (table[f1] - table[f0])
     return table[min(fv_points)]
 
-def _age_adjusted_discount(level, age):
+def _age_adjusted_discount(level, age, ovr=None):
     """Development discount adjusted for age vs level norm.
     +4% per year younger than norm, -4% per year older. Clamped [0.15, 0.95].
-    Steeper than the original 3%/yr to better reward young-for-level prospects
-    (Session 33): a 19yo in A-ball gets 0.80 instead of 0.77."""
-    base = DEVELOPMENT_DISCOUNT.get(level, 0.45)
-    norm_key = level.lower().replace(" ", "-")
+
+    For amateur/draft prospects, uses composite score (ovr) to estimate what
+    minor league level the player's tools correspond to, rather than using
+    the literal 'Draft' label which has no meaningful development baseline.
+    """
+    # For draft/amateur levels, estimate effective level from present tools
+    effective_level = level
+    if level.lower() in ("draft", "dsl", "intl", "college", "hs") and ovr is not None:
+        if ovr >= 50:
+            effective_level = "AAA"
+        elif ovr >= 42:
+            effective_level = "AA"
+        elif ovr >= 35:
+            effective_level = "A"
+        else:
+            effective_level = "A-Short"
+
+    # Normalize level key for lookup (DEVELOPMENT_DISCOUNT uses title case)
+    _LEVEL_ALIAS = {
+        "aaa": "AAA", "aa": "AA", "a": "A", "a-short": "A-Short",
+        "usl": "USL", "dsl": "DSL", "intl": "Intl", "mlb": "MLB",
+        "draft": "DSL", "rookie": "USL",
+    }
+    lookup_level = _LEVEL_ALIAS.get(effective_level.lower(), effective_level)
+    base = DEVELOPMENT_DISCOUNT.get(lookup_level, 0.45)
+    norm_key = effective_level.lower().replace(" ", "-")
     # "Rookie" level label maps to USL in the norm age table
     if norm_key == "rookie":
         norm_key = "usl"
@@ -140,7 +162,25 @@ def prospect_surplus(fv, age, level, bucket, positional_adjust=False, fv_plus=Fa
     """
     dpw       = dollars_per_war()
     lg_min    = league_minimum()
-    years_out = YEARS_TO_MLB.get(level, 3.5)
+
+    # For draft/amateur levels, estimate years to MLB from present tools
+    effective_level = level
+    if level.lower() in ("draft", "dsl", "intl", "college", "hs") and ovr is not None:
+        if ovr >= 50:
+            effective_level = "AAA"
+        elif ovr >= 42:
+            effective_level = "AA"
+        elif ovr >= 35:
+            effective_level = "A"
+        else:
+            effective_level = "A-Short"
+    # Normalize case for lookup
+    _YTM_ALIAS = {
+        "aaa": "AAA", "aa": "AA", "a": "A", "a-short": "A-Short",
+        "usl": "USL", "dsl": "DSL", "intl": "Intl", "mlb": "MLB",
+    }
+    ytm_key = _YTM_ALIAS.get(effective_level.lower(), effective_level)
+    years_out = YEARS_TO_MLB.get(ytm_key, 3.5)
     debut_age = age + years_out
     fv_eff    = fv + (0.5 if fv_plus else 0)
     pw        = peak_war(fv_eff, bucket)
@@ -161,7 +201,7 @@ def prospect_surplus(fv, age, level, bucket, positional_adjust=False, fv_plus=Fa
 
     rows = []
     total_surplus = 0.0
-    dev_discount  = _age_adjusted_discount(level, age)
+    dev_discount  = _age_adjusted_discount(level, age, ovr=ovr)
 
     for yr in range(6):
         ctrl_year  = yr + 1
@@ -326,7 +366,7 @@ def career_outcome_probs(fv, age, level, bucket, ovr=None, pot=None, def_rating=
         offensive_grade, offensive_ceiling, defensive_value, durability_score)
 
     # Bust probability = 1 - dev_discount
-    dev = _age_adjusted_discount(level, age)
+    dev = _age_adjusted_discount(level, age, ovr=ovr)
 
     # Component-based development adjustment
     # Premium defense = more reliable development (defense translates earlier)
@@ -344,11 +384,18 @@ def career_outcome_probs(fv, age, level, bucket, ovr=None, pot=None, def_rating=
     # Within each scenario, WAR has variance (not a point estimate).
     # Logistic CDF with wide spread + elite compression: sustaining
     # high WAR is much harder than just reaching the majors.
+    # Spread narrows for players who have already realized their tools —
+    # less development uncertainty means tighter outcome distribution.
     is_rp = (bucket == "RP")
     compress_center = 1.8 if is_rp else 3.0
 
+    # Realization factor: how close is ovr to pot (0.0 = raw, 1.0 = maxed)
+    realization = (ovr / pot) if (ovr and pot and pot > 0) else 0.3
+    # Spread shrinks from 0.40 (raw prospect) to 0.20 (fully realized)
+    spread_factor = 0.40 - 0.20 * min(1.0, realization)
+
     def _p_above(mu, threshold):
-        s = max(0.5, mu * 0.40)
+        s = max(0.5, mu * spread_factor)
         base = 1.0 / (1.0 + exp((threshold - mu) / s))
         compress = 0.35 + 0.65 / (1.0 + exp((threshold - compress_center) / 1.2))
         return base * compress

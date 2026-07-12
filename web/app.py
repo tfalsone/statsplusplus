@@ -723,6 +723,7 @@ def api_draft_upload_list():
     """Generate the auto-draft list using saved settings and return it."""
     data = request.get_json(silent=True) or {}
     limit = data.get("top", 500)
+    exclude_pids = set(data.get("exclude", []))  # already-drafted player IDs
 
     try:
         from draft_board import load_board, build_pick_list, compute_adp
@@ -731,6 +732,10 @@ def api_draft_upload_list():
 
         league_dir = get_league_dir()
         rows, adp, needs, num_teams, conn = load_board()
+
+        # Exclude already-drafted players
+        if exclude_pids:
+            rows = [r for r in rows if r["player_id"] not in exclude_pids]
 
         # Load settings: use request body override if provided, else saved file
         settings = data.get("settings") or load_settings(league_dir)
@@ -821,7 +826,7 @@ def api_draft_settings_copy():
 @app.route("/api/open-file-location", methods=["POST"])
 def api_open_file_location():
     """Open the containing folder of a file in the system file explorer."""
-    import subprocess, platform
+    import subprocess, platform, shutil
     data = request.get_json(silent=True) or {}
     path = data.get("path", "")
     if not path:
@@ -830,7 +835,12 @@ def api_open_file_location():
     try:
         system = platform.system()
         if system == "Linux":
-            subprocess.Popen(["xdg-open", folder])
+            # Try multiple file managers
+            for cmd in ["xdg-open", "nautilus", "dolphin", "thunar", "nemo", "pcmanfm"]:
+                if shutil.which(cmd):
+                    subprocess.Popen([cmd, folder])
+                    return jsonify({"ok": True})
+            return jsonify({"ok": False, "error": f"No file manager found. File is at: {folder}"}), 500
         elif system == "Darwin":
             subprocess.Popen(["open", folder])
         elif system == "Windows":

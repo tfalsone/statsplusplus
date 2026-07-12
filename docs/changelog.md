@@ -4,6 +4,44 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 66 (2026-07-12)
+
+### Bug Fixes
+
+- **Career outcome probabilities wildly inconsistent** (`prospect_value.py`, `player_queries.py`) — Player page showed 20% Contributor for an FV 70 SP while draft board showed 46%. Root causes: (1) case-sensitivity bug in `DEVELOPMENT_DISCOUNT` lookup — "aaa" didn't match "AAA" keys, causing all non-MLB levels to use 0.45 default; (2) "Draft"/"College"/"HS" levels got absurd dev discounts because norm_age=18 penalized college players; (3) player page wasn't passing composite/ceiling to the outcome function. Fix: `_age_adjusted_discount` now uses composite score to estimate effective minor league level for amateur players, added case-normalization alias map, player page falls back to composite_score/true_ceiling when OVR/POT are null.
+
+- **Prospect surplus values too low** (`prospect_value.py`) — Same root cause as above: `YEARS_TO_MLB` lookup used literal "Draft"/"College"/"HS" labels (not in table, defaulting to 3.5 years). Now uses composite-based level estimation. Davidson went from ETA 3.5yr/$96K to ETA 0.5yr/$503K.
+
+- **OVR/POT vs COMP/CEIL priority** (`player_queries.py`) — Valuation now uses composite_score/ceiling_score first, falling back to game OVR/POT only when composite doesn't exist. Our calibrated evaluation is more predictive.
+
+- **Draft board ExpRd sorting broken** (`league.html`) — Clicking ExpRd column did nothing. Root cause: `applyDraftFilters()` rebuilds DOM from scratch on every filter change, destroying any DOM-level sort. Fix: implemented `draftSortState` + `initDraftSort()` that sorts the JS data array before rendering. Supports toggle (asc/desc) and persists across filter changes.
+
+- **Draft board sort toggle only worked once** — Sort direction was read from DOM class which got cleared on re-render. Now tracked in `draftSortState` variable; clicking same column flips direction.
+
+- **$Val column uninformative** (`league.html`, `queries.py`) — Values showed "$0.2M" or "$0.1M" with no differentiation. Fixed: (1) `fmtSurplus()` now shows "$139K", "$503K", "$1.2M" etc.; (2) surplus stored with 3 decimal places; (3) uses canonical `prospect_fv.prospect_surplus` instead of recalculating.
+
+- **Jack Harris bucketed as SS** (`player_utils.py`) — Listed as SS (pos=6) with pot_ss=35. Old fallback trusted game position if IFR was decent. Now uses calibrated positional models.
+
+- **Draft upload list included already-drafted players** (`app.py`, `league.html`) — Upload list now excludes players already picked (passed from localStorage-persisted draft picks).
+
+- **Open Folder button silently failed** (`app.py`, `league.html`) — `xdg-open` not installed. Now tries multiple file managers, returns useful error, JS shows path in alert with clipboard copy fallback.
+
+### Features
+
+- **Positional rating estimation model** (`calibrate.py`, `player_utils.py`) — OLS regression models predict positional ratings from defensive tools (IFR, IFA, IFE, TDP, OFR, OFA, OFE, Height, CArm/Blk/Frm). R² 0.92-0.96 across 8 positions. Calibrated per league, stored in `model_weights.json`. Used in `assign_bucket` fallback when no positional grade meets thresholds.
+
+- **Draft pick persistence** (`league.html`) — Picked players stored in localStorage by league slug. Survives page navigation. Server picks overlay on load.
+
+- **Auto-fetch picks on tab open** (`league.html`) — First click on Draft tab triggers update automatically.
+
+- **Raw/ceiling surplus display** (`league.html`, `queries.py`) — Draft board shows adjusted surplus (risk-weighted) with tooltip showing ceiling value (best-case undiscounted). Detail panel shows both. Ceiling always ≥ adjusted.
+
+- **Realization-aware profile pills** (`league.html`) — Profile labels (Safe Star, Projection, Boom/Bust, etc.) now factor in tool realization (comp/pot ratio). Raw prospects get "Projection" or "Boom/Bust" instead of "Safe Star" regardless of outcome probabilities.
+
+- **Realization-scaled outcome variance** (`prospect_value.py`) — Spread parameter in `_p_above()` narrows from 0.40 (raw prospect) to 0.20 (fully realized) based on comp/pot ratio. Near-MLB players get tighter, more confident outcome distributions.
+
+---
+
 ## Session 65 (2026-07-11)
 
 ### Bug Fixes
