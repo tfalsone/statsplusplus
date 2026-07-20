@@ -299,6 +299,48 @@ class TestBatchPipelineBasic:
         # composite_score may differ due to stat blending
         assert row["ceiling_score"] >= row["composite_score"]
 
+    def test_mlb_pitcher_stat_blending(self):
+        """MLB pitcher with qualifying stats gets stat-blended composite.
+
+        Regression test: the pitcher query must include ERA in the SELECT clause
+        for stat blending to activate. Without it, _compute_stat_signal() skips
+        every pitcher season and composite_score == tool_only_score always.
+        """
+        conn = _create_db()
+        _seed_team(conn)
+        _seed_pitcher(conn, player_id=401, level="1", age=28)
+        # Add qualifying pitching stats — strong ERA should pull composite UP
+        _insert(conn, "pitching_stats",
+                player_id=401, year=2033, team_id=1, split_id=1,
+                ip=180.0, era=2.80, gs=28, w=14, l=5, sv=0,
+                k=190, bb=45, hra=12, hp=5, war=4.5, ra9war=4.2,
+                g=30, cg=2, sho=1, qs=20, hld=0, bs=0,
+                ha=130, r=60, er=56, bf=700, outs=540)
+        conn.commit()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            league_dir = _create_league_dir_with_averages(tmpdir)
+            from ratings import init_ratings_scale
+            init_ratings_scale("1-100")
+
+            run(league_dir=league_dir, conn=conn)
+
+        row = conn.execute(
+            "SELECT composite_score, ceiling_score, tool_only_score "
+            "FROM ratings WHERE player_id = 401"
+        ).fetchone()
+
+        assert row is not None
+        assert 20 <= row["composite_score"] <= 80
+        assert 20 <= row["tool_only_score"] <= 80
+        # Key assertion: with a 2.80 ERA vs 4.10 league average,
+        # stat blending MUST produce a different composite than tool-only.
+        # If composite == tool_only, the stat blending is broken.
+        assert row["composite_score"] != row["tool_only_score"], (
+            "Pitcher stat blending not working: composite_score == tool_only_score. "
+            "Check that ERA is included in _load_qualifying_stat_seasons() SELECT."
+        )
+
     def test_player_with_no_tools_skipped(self):
         """Player with no tool ratings gets no scores written."""
         conn = _create_db()

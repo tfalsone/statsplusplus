@@ -1188,6 +1188,51 @@ def get_farm_depth(team_id):
     }
 
 
+def _resolve_depth_score(row, is_pitcher=False):
+    """Resolve the best available score for WAR projection in depth chart code paths.
+
+    Priority: composite_score > ovr > tool-derived estimate > 0
+
+    This handles leagues without OVR ratings (e.g. PPL) by falling back to
+    composite_score (from the evaluation engine) or, as a last resort, estimating
+    from individual tool ratings.
+
+    Accepts both sqlite3.Row and dict objects.
+    """
+    keys = row.keys() if hasattr(row, "keys") else ()
+
+    def _val(col):
+        if col in keys:
+            return row[col]
+        return None
+
+    # 1. composite_score — evaluation engine output, most reliable
+    cs = _val("composite_score")
+    if cs is not None and cs > 0:
+        return cs
+
+    # 2. Game OVR — direct from StatsPlus API
+    ovr = _val("ovr")
+    if ovr is not None and ovr > 0:
+        return ovr
+
+    # 3. Estimate from individual tools (last resort)
+    # Use a simple weighted average that roughly approximates OVR on the 20-80 scale
+    tool_cols = ("stf", "mov", "ctrl") if is_pitcher else ("cntct", "gap", "pow", "eye")
+    tools = []
+    for col in tool_cols:
+        val = _val(col)
+        if val is not None and val > 0:
+            tools.append(val)
+    if tools:
+        from ratings import norm_continuous
+        # Average the tools and normalize to 20-80 scale
+        avg = sum(tools) / len(tools)
+        normed = norm_continuous(int(avg))
+        return normed if normed else 0
+    return 0
+
+
 def _league_pos_rankings(conn, year):
     """Rank all 34 MLB teams by WAR at each position. Returns {pos: [(team_id, war), ...]}."""
     from projections import project_war
@@ -1198,7 +1243,10 @@ def _league_pos_rankings(conn, year):
     # Position players — primary position = most fielding games
     seen = set()
     for r in conn.execute("""
-        SELECT f.player_id, f.team_id, f.position, f.g, r.ovr, r.pot, p.age
+        SELECT f.player_id, f.team_id, f.position, f.g,
+               r.ovr, r.pot, r.composite_score,
+               r.cntct, r.gap, r.pow, r.eye,
+               p.age
         FROM fielding_stats f
         JOIN players p ON f.player_id = p.player_id
         JOIN latest_ratings r ON f.player_id = r.player_id
@@ -1210,12 +1258,17 @@ def _league_pos_rankings(conn, year):
         seen.add(r['player_id'])
         pos = pos_map().get(r['position'])
         if pos:
+            _ovr = _resolve_depth_score(r, is_pitcher=False)
+            _pot = r['pot'] or _ovr
             team_pos[r['team_id']][pos].append(
-                project_war(r['ovr'], r['pot'], r['age'], 'CF', 0))
+                project_war(_ovr, _pot, r['age'], 'CF', 0))
 
     # Pitchers
     for r in conn.execute("""
-        SELECT p.team_id, p.role, r.ovr, r.pot, p.age
+        SELECT p.team_id, p.role,
+               r.ovr, r.pot, r.composite_score,
+               r.stf, r.mov, r.ctrl,
+               p.age
         FROM pitching_stats ps
         JOIN players p ON ps.player_id = p.player_id
         JOIN latest_ratings r ON ps.player_id = r.player_id
@@ -1223,8 +1276,10 @@ def _league_pos_rankings(conn, year):
         GROUP BY ps.player_id
     """, (year,)).fetchall():
         bucket = 'SP' if r['role'] == 11 else 'RP'
+        _ovr = _resolve_depth_score(r, is_pitcher=True)
+        _pot = r['pot'] or _ovr
         team_pos[r['team_id']][bucket].append(
-            project_war(r['ovr'], r['pot'], r['age'], bucket, 0))
+            project_war(_ovr, _pot, r['age'], bucket, 0))
 
     TOP_N = {'C':1,'1B':1,'2B':1,'3B':1,'SS':1,'LF':1,'CF':1,'RF':1,'DH':1,'SP':5,'RP':5}
     rankings = {}
@@ -1325,53 +1380,6 @@ def get_draft_org_depth(team_id):
         ratio = total / avg if avg > 0 else (2.0 if total > 0 else 0.0)
         out[pos] = {"mlb": mlb, "farm": farm, "total": total, "ratio": round(ratio, 2)}
     return out
-    """Rank all 34 MLB teams by WAR at each position. Returns {pos: [(team_id, war), ...]}."""
-    from projections import project_war
-    from collections import defaultdict
-
-    team_pos = defaultdict(lambda: defaultdict(list))
-
-    # Position players — primary position = most fielding games
-    seen = set()
-    for r in conn.execute("""
-        SELECT f.player_id, f.team_id, f.position, f.g, r.ovr, r.pot, p.age
-        FROM fielding_stats f
-        JOIN players p ON f.player_id = p.player_id
-        JOIN latest_ratings r ON f.player_id = r.player_id
-        WHERE p.level = 1 AND f.year = ? AND f.position != 1 AND r.league_id > 0
-        ORDER BY f.player_id, f.g DESC
-    """, (year,)).fetchall():
-        if r['player_id'] in seen:
-            continue
-        seen.add(r['player_id'])
-        pos = pos_map().get(r['position'])
-        if pos:
-            team_pos[r['team_id']][pos].append(
-                project_war(r['ovr'], r['pot'], r['age'], 'CF', 0))
-
-    # Pitchers
-    for r in conn.execute("""
-        SELECT p.team_id, p.role, r.ovr, r.pot, p.age
-        FROM pitching_stats ps
-        JOIN players p ON ps.player_id = p.player_id
-        JOIN latest_ratings r ON ps.player_id = r.player_id
-        WHERE p.level = 1 AND ps.year = ? AND ps.split_id = 1 AND r.league_id > 0
-        GROUP BY ps.player_id
-    """, (year,)).fetchall():
-        bucket = 'SP' if r['role'] == 11 else 'RP'
-        team_pos[r['team_id']][bucket].append(
-            project_war(r['ovr'], r['pot'], r['age'], bucket, 0))
-
-    TOP_N = {'C':1,'1B':1,'2B':1,'3B':1,'SS':1,'LF':1,'CF':1,'RF':1,'DH':1,'SP':5,'RP':5}
-    rankings = {}
-    for pos in ['C','1B','2B','3B','SS','LF','CF','RF','SP','RP']:
-        tw = []
-        for tid, pdict in team_pos.items():
-            wars = sorted(pdict.get(pos, []), reverse=True)[:TOP_N[pos]]
-            tw.append((tid, round(sum(wars), 1)))
-        tw.sort(key=lambda x: -x[1])
-        rankings[pos] = tw
-    return rankings
 
 
 def get_depth_chart(team_id):
@@ -1410,6 +1418,7 @@ def get_depth_chart(team_id):
         SELECT p.player_id, p.name, p.age, p.role,
                r.ovr, r.pot, r.composite_score,
                r.cntct, r.gap, r.pow, r.eye,
+               r.stf, r.mov, r.ctrl,
                r.cntct_l, r.cntct_r, r.gap_l, r.gap_r,
                r.pow_l, r.pow_r, r.eye_l, r.eye_r,
                r.pot_cntct, r.pot_gap, r.pot_pow, r.pot_eye,
@@ -1446,7 +1455,7 @@ def get_depth_chart(team_id):
         pid, role = row["player_id"], row["role"]
         bucket = "SP" if role == 11 else ("RP" if role in (12, 13) else "CF")
         sw = stat_peak_war(pid, bucket, bat_hist, pit_hist, two_way=two_way)
-        _ovr = row["composite_score"] if row["composite_score"] is not None else (row["ovr"] or 0)
+        _ovr = _resolve_depth_score(row, is_pitcher=(role != 0))
         _pot = row["pot"] or _ovr
         war = project_war(_ovr, _pot, row["age"], bucket, 0, sw)
 
@@ -1530,8 +1539,9 @@ def get_depth_chart(team_id):
     # ── Query org prospects ─────────────────────────────────────────────
     prospect_rows = conn.execute('''
         SELECT pf.player_id, p.name, p.age, p.role, pf.fv, pf.level, pf.bucket,
-               r.ovr, r.pot,
+               r.ovr, r.pot, r.composite_score,
                r.cntct, r.gap, r.pow, r.eye,
+               r.stf, r.mov, r.ctrl,
                r.cntct_l, r.cntct_r, r.gap_l, r.gap_r,
                r.pow_l, r.pow_r, r.eye_l, r.eye_r,
                r.pot_cntct, r.pot_gap, r.pot_pow, r.pot_eye,
@@ -1564,7 +1574,9 @@ def get_depth_chart(team_id):
     for row in prospect_rows:
         bucket = row["bucket"]
         role = 11 if bucket == "SP" else (12 if bucket == "RP" else 0)
-        war = project_war(row["ovr"], row["pot"], row["age"],
+        _ovr = _resolve_depth_score(row, is_pitcher=(bucket in ("SP", "RP")))
+        _pot = row["pot"] or _ovr
+        war = project_war(_ovr, _pot, row["age"],
                           bucket if bucket in ("SP", "RP") else "CF", 0)
         if role == 0:
             ovr_ops = project_ops_plus(row["cntct"], row["gap"], row["pow"], row["eye"])
@@ -1574,7 +1586,7 @@ def get_depth_chart(team_id):
 
         all_players.append({
             "player_id": row["player_id"], "name": row["name"], "age": row["age"],
-            "level": row["level"], "ovr": row["ovr"], "pot": row["pot"],
+            "level": row["level"], "ovr": _ovr, "pot": _pot,
             "bucket": bucket, "war_proj": war, "role": role, "fv": row["fv"],
             "ovr_ops_plus": ovr_ops, "split_ops_plus": split_ops,
             "ops_vs_l": vl, "ops_vs_r": vr,

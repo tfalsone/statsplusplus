@@ -2603,7 +2603,7 @@ def _load_qualifying_stat_seasons(
     """
     if is_pitcher:
         rows = conn.execute("""
-            SELECT year, ip, k, bb, hra, hp, gs
+            SELECT year, era, ip, k, bb, hra, hp, gs
             FROM pitching_stats
             WHERE player_id = ? AND split_id = 1
               AND ((gs > 3 AND ip >= 40) OR (gs <= 3 AND ip >= 20))
@@ -2629,7 +2629,7 @@ def _compute_stat_signal(
     """Convert qualifying stat seasons to 20-80 scale values.
 
     Hitters: OPS+ = 100 × (OBP/lgOBP + SLG/lgSLG - 1) → stat_to_2080()
-    Pitchers: FIP → inverted to FIP- equivalent → stat_to_2080()
+    Pitchers: ERA- = ERA / lgERA × 100, inverted (200 - ERA-) → pitcher_stat_to_2080()
 
     Returns list of 20-80 values, most recent first.
     """

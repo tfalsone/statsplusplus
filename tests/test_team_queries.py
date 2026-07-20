@@ -262,6 +262,68 @@ def test_get_depth_chart_by_year_shape():
         assert "sp" in yr_data
         assert "rp" in yr_data
 
+
+# ── _resolve_depth_score (fallback behavior) ─────────────────────────────────
+
+class TestResolveDepthScore:
+    """Regression tests for depth chart score resolution fallback.
+
+    Ensures leagues without OVR ratings (e.g. PPL) get meaningful WAR
+    projections by falling through: composite_score > ovr > tool estimate.
+    """
+
+    def test_composite_score_preferred_over_ovr(self):
+        """When composite_score is available, it takes priority over ovr."""
+        row = {"composite_score": 60, "ovr": 45, "cntct": 70, "gap": 60, "pow": 65, "eye": 55}
+        assert team_queries._resolve_depth_score(row) == 60
+
+    def test_ovr_used_when_composite_null(self):
+        """When composite_score is NULL, fall back to ovr."""
+        row = {"composite_score": None, "ovr": 50, "cntct": 70, "gap": 60, "pow": 65, "eye": 55}
+        assert team_queries._resolve_depth_score(row) == 50
+
+    def test_tool_estimate_when_both_null_hitter(self):
+        """When composite_score AND ovr are both NULL, estimate from hitting tools."""
+        row = {"composite_score": None, "ovr": None, "cntct": 60, "gap": 50, "pow": 55, "eye": 50}
+        result = team_queries._resolve_depth_score(row, is_pitcher=False)
+        # Should produce a reasonable 20-80 scale score (not 0)
+        assert result > 20, f"Expected meaningful score, got {result}"
+        assert result < 80
+
+    def test_tool_estimate_when_both_null_pitcher(self):
+        """When composite_score AND ovr are both NULL, estimate from pitching tools."""
+        row = {"composite_score": None, "ovr": None, "stf": 70, "mov": 60, "ctrl": 55}
+        result = team_queries._resolve_depth_score(row, is_pitcher=True)
+        assert result > 20, f"Expected meaningful score, got {result}"
+        assert result < 80
+
+    def test_returns_zero_when_nothing_available(self):
+        """When all data is NULL, returns 0 (graceful degradation)."""
+        row = {"composite_score": None, "ovr": None, "cntct": None, "gap": None, "pow": None, "eye": None}
+        assert team_queries._resolve_depth_score(row, is_pitcher=False) == 0
+
+    def test_composite_score_zero_falls_through(self):
+        """composite_score=0 is treated as missing (falls through to ovr)."""
+        row = {"composite_score": 0, "ovr": 50, "cntct": 60, "gap": 50, "pow": 55, "eye": 50}
+        assert team_queries._resolve_depth_score(row) == 50
+
+    def test_ovr_zero_falls_through_to_tools(self):
+        """ovr=0 is treated as missing (falls through to tool estimate)."""
+        row = {"composite_score": None, "ovr": 0, "cntct": 60, "gap": 50, "pow": 55, "eye": 50}
+        result = team_queries._resolve_depth_score(row, is_pitcher=False)
+        assert result > 20
+
+    def test_pitcher_ignores_hitting_tools(self):
+        """Pitcher resolution uses stf/mov/ctrl, not cntct/gap/pow/eye."""
+        row = {"composite_score": None, "ovr": None,
+               "cntct": 80, "gap": 80, "pow": 80, "eye": 80,  # high hitting tools
+               "stf": 40, "mov": 35, "ctrl": 35}  # low pitching tools
+        result_pitcher = team_queries._resolve_depth_score(row, is_pitcher=True)
+        result_hitter = team_queries._resolve_depth_score(row, is_pitcher=False)
+        # Pitcher score should be lower since it uses the weak pitching tools
+        assert result_pitcher < result_hitter
+
+
 # ── get_draft_org_depth ───────────────────────────────────────────────────────
 
 def test_get_draft_org_depth_returns_dict():
