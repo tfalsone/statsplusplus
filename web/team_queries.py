@@ -390,12 +390,14 @@ def get_roster_hitters(team_id=None):
     twp_pids = {p["player_id"] for p in twp}
     players = list(players) + list(twp)
 
-    # Load all 3 splits
+    # Load all 3 splits — scoped to this team_id so a mid-season trade doesn't
+    # let the other team's stint silently clobber this one (players keep a
+    # separate stats row per team_id they played for in a given year).
     bat = {}  # pid -> {split_id -> dict}
     for r in conn.execute("""
         SELECT player_id, split_id, ab, h, d, t, hr, r, rbi, sb, bb, k, pa, war, g, cs, hbp, sf
-        FROM batting_stats WHERE year=? AND split_id IN (1,2,3)
-    """, (year,)):
+        FROM batting_stats WHERE year=? AND split_id IN (1,2,3) AND team_id=?
+    """, (year, tid)):
         bat.setdefault(r["player_id"], {})[r["split_id"]] = dict(r)
 
     # For two-way players: primary non-pitcher fielding position
@@ -481,12 +483,15 @@ def get_roster_pitchers(team_id=None):
         WHERE p.team_id=? AND p.level='1' AND p.role IN (11,12,13)
     """, (ed, tid)).fetchall()
 
+    # Scoped to this team_id so a mid-season trade doesn't let the other
+    # team's stint silently clobber this one (players keep a separate stats
+    # row per team_id they played for in a given year).
     pit = {}  # pid -> {split_id -> dict}
     for r in conn.execute("""
         SELECT player_id, split_id, ip, g, gs, w, l, sv, era, k, bb, ha, war,
                hra, bf, hld, bs, qs, er, r AS runs, cg, sho, ir, irs
-        FROM pitching_stats WHERE year=? AND split_id IN (1,2,3)
-    """, (year,)):
+        FROM pitching_stats WHERE year=? AND split_id IN (1,2,3) AND team_id=?
+    """, (year, tid)):
         pit.setdefault(r["player_id"], {})[r["split_id"]] = dict(r)
 
     # Detect two-way pitchers
