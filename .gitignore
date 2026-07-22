@@ -28,3 +28,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# MCP server config (machine-specific paths)
+.kiro/settings/mcp.json
