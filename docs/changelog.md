@@ -4,6 +4,28 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 67 (2026-07-22)
+
+### Bug Fixes
+
+- **Pitcher stat-blending completely broken** (`evaluation_engine.py`) — MLB pitchers never got stat-blended composite scores. The SQL query in `_load_qualifying_stat_seasons()` was missing `era` in the SELECT clause, causing `_compute_stat_signal()` to skip every pitcher season. All pitchers showed tool-only composites with no performance adjustment. One-line fix: added `era` to the SELECT.
+
+- **Depth chart rankings broken for leagues without OVR** (`team_queries.py`) — Leagues like PPL where the API doesn't provide OVR ratings got meaningless depth charts (all players at ~0 WAR). Added `_resolve_depth_score()` helper with a 3-tier fallback: composite_score → OVR → tool-derived estimate. Applied consistently across MLB players, prospects, and league-wide position rankings. Also removed orphaned dead code block.
+
+- **Depth chart position colors always blue for SP/RP** (`team.html`) — Color system used absolute WAR thresholds (≥5 = elite) which are trivially exceeded when summing 5+ pitchers. Replaced with `rankColorClass()` that colors based on league-wide position rank percentile: top 25% = blue, 25-50% = green, 50-75% = neutral, bottom 25% = red. Now works correctly for all positions.
+
+### Tests
+
+- **Pitcher stat-blending regression test** (`test_evaluation_pipeline.py`) — Seeds an MLB pitcher with strong ERA, verifies composite ≠ tool_only after engine runs. Would have caught the missing-ERA bug.
+
+- **Depth chart fallback tests** (`test_team_queries.py`) — 8-test `TestResolveDepthScore` class covering the full fallback chain for both hitters and pitchers, including all-NULL graceful degradation.
+
+### Backlog
+
+- Added comprehensive regression testing item to task_list.md covering systematic gaps in test coverage (pitcher evaluation, depth chart edge cases, cross-league scenarios).
+
+---
+
 ## Session 66 (2026-07-12)
 
 ### Bug Fixes
