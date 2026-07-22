@@ -379,6 +379,17 @@
       '<span class="dc-name"><a class="player-link" href="/player/' + p.pid + '">' + short + '</a>' + lvl + '</span>' + main + pt + '</div>';
   }
 
+  function rankColorClass(rank) {
+    // Color based on league-wide percentile rank (not absolute WAR thresholds).
+    // Top 25% = elite (blue), top 50% = good (green), bottom 25% = weak (red).
+    if (!rank || !NUM_TEAMS) return '';
+    var pct = rank / NUM_TEAMS;  // 0.03 = best, 1.0 = worst
+    if (pct <= 0.25) return ' dc-war-elite';
+    if (pct <= 0.50) return ' dc-war-good';
+    if (pct > 0.75) return ' dc-war-weak';
+    return '';
+  }
+
   function render() {
     var yr = YEARS[idx];
     var d = DC[yr];
@@ -440,7 +451,7 @@
       var rank = (idx === 0) ? POS_RANK[pos] : null;
       warBadge.textContent = pwar.toFixed(1) + (rank ? '  #' + rank : '');
       var hdr = card.querySelector('.dc-pos-header');
-      hdr.className = 'dc-pos-header' + (pwar >= 5 ? ' dc-war-elite' : pwar >= 3 ? ' dc-war-good' : pwar < 1.5 ? ' dc-war-weak' : '');
+      hdr.className = 'dc-pos-header' + rankColorClass(rank);
       var players = d.positions[pos] || [];
       var html = '';
       var cum = 0;
@@ -454,7 +465,7 @@
     // DH
     var dhPw = pw['DH'] || 0;
     var dhHdr = document.getElementById('dc-dh-war').parentNode;
-    dhHdr.className = 'dc-section-header' + (dhPw >= 5 ? ' dc-war-elite' : dhPw >= 3 ? ' dc-war-good' : dhPw < 1.5 ? ' dc-war-weak' : '');
+    dhHdr.className = 'dc-section-header' + rankColorClass((idx === 0) ? POS_RANK['DH'] : null);
     document.getElementById('dc-dh-war').textContent = dhPw.toFixed(1);
     var dhPlayers = d.positions['DH'] || [];
     var dhHtml = '', dhCum = 0;
@@ -466,7 +477,7 @@
     // SP
     var spPw = pw['SP'] || 0;
     var spHdr = document.getElementById('dc-sp-war').parentNode;
-    spHdr.className = 'dc-section-header' + (spPw >= 5 ? ' dc-war-elite' : spPw >= 3 ? ' dc-war-good' : spPw < 1.5 ? ' dc-war-weak' : '');
+    spHdr.className = 'dc-section-header' + rankColorClass((idx === 0) ? POS_RANK['SP'] : null);
     document.getElementById('dc-sp-war').textContent = spPw.toFixed(1) + (idx === 0 && POS_RANK['SP'] ? '  #' + POS_RANK['SP'] : '');
     var spAll = d.sp || [];
     var spHtml = '';
@@ -479,7 +490,7 @@
     // RP
     var rpPw = pw['RP'] || 0;
     var rpHdr = document.getElementById('dc-rp-war').parentNode;
-    rpHdr.className = 'dc-section-header' + (rpPw >= 5 ? ' dc-war-elite' : rpPw >= 3 ? ' dc-war-good' : rpPw < 1.5 ? ' dc-war-weak' : '');
+    rpHdr.className = 'dc-section-header' + rankColorClass((idx === 0) ? POS_RANK['RP'] : null);
     document.getElementById('dc-rp-war').textContent = rpPw.toFixed(1) + (idx === 0 && POS_RANK['RP'] ? '  #' + POS_RANK['RP'] : '');
     var rpAll = d.rp || [];
     var rpHtml = '';
