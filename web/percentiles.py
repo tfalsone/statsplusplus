@@ -471,7 +471,7 @@ def get_pitcher_percentiles(pid, split_id=1, year=None):
                 thresh = _tag_threshold(r_pctile)
                 tag = "hot" if gap >= thresh else ("cold" if gap <= -thresh else None)
 
-        fmt = "d" if key == "era_plus" else (".1f" if key in ("k9", "bb9", "hr9") else ".2f" if key in ("era", "fip", "siera") else ".3f")
+        fmt = "d" if key == "era_plus" else (".1f" if key in ("k9", "bb9", "hr9", "war") else ".2f" if key in ("era", "fip", "siera") else ".3f")
         result.append({"label": label, "value": val, "pctile": pctile, "tag": tag,
                        "qualified": qualified, "expected": expected,
                        "expected_range": _expected_range(expected, player_ip, rp_min_ip if is_rp else min_ip),
