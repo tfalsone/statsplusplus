@@ -22,7 +22,7 @@ from statsplusplus.evaluation.surplus import calc_pap
 from statsplusplus.config.league_config import dollars_per_war as _dpw_pkg
 from statsplusplus.utils.positions import ROLE_MAP
 from percentiles import get_hitter_percentiles, get_pitcher_percentiles, get_fielding_percentiles, available_pctile_years, available_pctile_levels, get_percentile_history, get_percentile_history_all_levels, get_fielding_percentile_history
-from web_league_context import get_db, get_cfg, team_abbr_map, team_names_map, level_map, pos_map
+from web_league_context import get_db, get_cfg, team_abbr_map, team_names_map, level_map, pos_map, milb_league_map
 
 def _norm(val):
     return _norm_raw(val, get_cfg().ratings_scale)
@@ -1770,14 +1770,8 @@ def get_player(pid):
     milb_pit_stats = []
     try:
         _milb_conn = get_db()
-        # Build league_id → name/level mapping from league_settings.json
-        _lg_map = {}
-        _settings_path = get_cfg().league_dir / "config" / "league_settings.json"
-        if _settings_path.exists():
-            import json as _json_m
-            _ls = _json_m.loads(_settings_path.read_text())
-            for _ml in _ls.get("minor_leagues", []):
-                _lg_map[_ml["lid"]] = {"name": _ml["name"], "level": _ml["level"]}
+        # Cumulative league_id → name/level mapping (includes historical leagues).
+        _lg_map = milb_league_map()
 
         _milb_bat = _milb_conn.execute("""
             SELECT b.year, b.league_id, b.ab, b.h, b.hr, b.rbi, b.bb, b.k, b.sb,
@@ -1799,8 +1793,10 @@ def get_player(pid):
             sf = r["sf"] or 0
             _lid = r["league_id"]
             _lg_info = _lg_map.get(_lid, {})
-            _level_num = _lg_info.get("level", 0)
-            _level_label = level_map().get(str(_level_num), f"L{_level_num}")
+            _level_num = _lg_info.get("level") or 0
+            # Unknown/removed historical league → "MiLB" rather than a bogus
+            # "L0"/"Draft" label. Known levels map through level_map().
+            _level_label = level_map().get(str(_level_num), "MiLB") if _level_num else "MiLB"
             _team_name = r["team_name"] or ""
             avg = h / ab if ab else 0
             obp = (h + bb + hbp) / (ab + bb + hbp + sf) if (ab + bb + hbp + sf) else 0
@@ -1847,8 +1843,10 @@ def get_player(pid):
             fb = r["fb"] or 0
             _lid = r["league_id"]
             _lg_info = _lg_map.get(_lid, {})
-            _level_num = _lg_info.get("level", 0)
-            _level_label = level_map().get(str(_level_num), f"L{_level_num}")
+            _level_num = _lg_info.get("level") or 0
+            # Unknown/removed historical league → "MiLB" rather than a bogus
+            # "L0"/"Draft" label. Known levels map through level_map().
+            _level_label = level_map().get(str(_level_num), "MiLB") if _level_num else "MiLB"
             _team_name = r["team_name"] or ""
             k_pct = k / bf * 100 if bf else 0
             bb_pct = bb / bf * 100 if bf else 0
