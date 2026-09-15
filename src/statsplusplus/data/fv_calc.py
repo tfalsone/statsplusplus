@@ -27,7 +27,7 @@ LEVEL_INT_LABEL = {0: "Draft", 1: "MLB", 2: "AAA", 3: "AA", 4: "A", 5: "A-Short"
 
 RATINGS_SQL = """
     SELECT r.player_id AS ID,
-           p.name AS Name, p.age AS Age, p.team_id, p.parent_team_id, p.level, p.pos, p.role,
+           p.name AS Name, p.age AS Age, p.team_id, p.parent_team_id, p.organization_id, p.level, p.pos, p.role,
            r.ovr AS Ovr, r.pot AS Pot,
            r.composite_score, r.ceiling_score, r.secondary_composite,
            r.cntct AS Cntct, r.gap AS Gap, r.pow AS Pow, r.eye AS Eye, r.ks AS Ks,
@@ -153,6 +153,7 @@ def run(league_dir: Path | None = None) -> None:
     if _our_tids:
         rows = [r for r in rows if r["team_id"] in _our_tids
                 or r["parent_team_id"] in _our_tids
+                or r["organization_id"] in _our_tids
                 or r["team_id"] == 0
                 or (r["parent_team_id"] == 0 and str(r["level"] or "") != "1")]
 

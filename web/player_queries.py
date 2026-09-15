@@ -409,14 +409,14 @@ def get_player(pid):
     year = get_cfg().year
 
     # Bio
-    p = conn.execute("SELECT player_id, name, age, team_id, parent_team_id, level, pos, role, free_agent FROM players WHERE player_id=?", (pid,)).fetchone()
+    p = conn.execute("SELECT player_id, name, age, team_id, parent_team_id, organization_id, level, pos, role, free_agent FROM players WHERE player_id=?", (pid,)).fetchone()
     if not p:
         return None
 
     player_id, name, age, team_id, parent_team_id, level, pos, role = p["player_id"], p["name"], p["age"], p["team_id"], p["parent_team_id"], p["level"], p["pos"], p["role"]
     is_free_agent = bool(p["free_agent"]) and team_id == 0
     is_pitcher = role in (11, 12, 13)
-    org_id = team_id if parent_team_id == 0 else parent_team_id
+    org_id = p["organization_id"] or parent_team_id or team_id
     level_str = level_map().get(str(level), str(level))
 
     # Injury/status info
@@ -2129,14 +2129,14 @@ def get_player_popup(pid):
     year = get_cfg().year
 
     p = conn.execute(
-        "SELECT name, age, team_id, parent_team_id, level, pos, role FROM players WHERE player_id=?",
+        "SELECT name, age, team_id, parent_team_id, organization_id, level, pos, role FROM players WHERE player_id=?",
         (pid,)
     ).fetchone()
     if not p:
         return None
 
     is_pitcher = p["role"] in (11, 12, 13)
-    org_id = p["team_id"] if p["parent_team_id"] == 0 else p["parent_team_id"]
+    org_id = p["organization_id"] or p["parent_team_id"] or p["team_id"]
 
     r = conn.execute(
         "SELECT ovr, pot, height, bats, throws, "
