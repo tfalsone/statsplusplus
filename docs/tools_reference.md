@@ -305,6 +305,12 @@ python3 -m statsplusplus.data.refresh state <game_date> [year]  # Manual state o
 spp-refresh [year]                                              # (after pip install -e .)
 ```
 
+Flags (any order, before the optional year): `--force` bypasses the `/date` gate
+(re-pull even if the game date is unchanged); `--full` forces a full player pull
+including retired players (the first refresh of a league is full automatically;
+steady-state refreshes pull `?retired=0` for speed, and `--full` also implies
+`--force`); `--no-fv` skips the FV/surplus computation.
+
 **Do not run during article writing.** Only run when the game date has advanced.
 
 ### `scripts/benchmark.py`
@@ -594,6 +600,19 @@ Import with `sys.path.insert(0, 'web')`. All are read-only against the DB.
 | `get_org_players(team_id)` | Full org roster (MLB + farm) with Ovr/Pot/FV/surplus/WAR for trade tab |
 | `get_trade_value(player_id, retention_pct)` | Single-player valuation — contract breakdown or prospect surplus + career outcomes |
 
+### Offseason (`offseason_queries.py`)
+
+Data for the phase-aware `/offseason` page. `panels_for_phase(phase)` gates which
+panels show; all reuse existing valuation data.
+
+| Function | Returns |
+|---|---|
+| `get_arbitration(team_id)` | Arb-eligible own players — projected salary + tender/non-tender rec |
+| `get_market_board(team_id)` | Unsigned + league-played free agents with Proj WAR / recommended contract |
+| `get_extension_candidates(team_id)` | High-surplus own players 1–2 years from free agency |
+| `get_option_decisions(team_id)` | Team/player/vesting option decisions (exercise/decline rec) |
+| `get_rule5(team_id)` | `{protect, targets, available}` — your Rule 5-eligible prospects (add-to-40-man) + other orgs' exposed MLB-viable players. Built on `years_protected_from_rule_5 == 0`. |
+
 ---
 
 ## Data Files (Read-Only Context)
@@ -634,19 +653,21 @@ All accessed via the query functions above. Direct SQL is rarely needed.
 
 ## Known Data Limitations
 
-- **Minor league stats available but not yet integrated** — The StatsPlus API now supports
-  batting/pitching/fielding stats for all minor league levels via the `lid` parameter on
-  `/playerbatstatsv2` etc. Includes WAR. Until Phase 2 of the API Integration Roadmap is
-  complete, farm analysis still relies on ratings + age/level context only.
-  *(Tracked: API Roadmap Phase 2)*
+- **Minor league stats** — Stored (Session 74). Batting/pitching/fielding for all
+  minor league levels via the `lid` parameter, with `league_id` set on the rows;
+  integrated into the evaluation/FV pipeline. Historical MiLB seasons in
+  reorganized/removed leagues resolve level via the cumulative `milb_league_map`.
 - **No play-by-play or box scores** — game results include final score and pitchers only.
-- **Injury data available but not yet stored** — The `/players` endpoint now exposes
-  `injury_is_injured`, `injury_dl_left`, `injury_left` (added April 2026). Until Phase 1a
-  integration is complete, injury status is not in the DB.
-  *(Tracked: API Roadmap Phase 1a)*
-- **Roster status flags available but not yet stored** — The `/players` endpoint now exposes
-  `designated_for_assignment`, `is_on_waivers`, `was_traded`, `free_agent` flags. Until
-  Phase 1c integration, recent transactions are not reflected in the DB.
-  *(Tracked: API Roadmap Phase 1c)*
+- **Injury data** — Stored (Session 69): `injury_is_injured`, `injury_dl_left`,
+  `injury_left`, `is_on_dl`, `is_on_dl60`, `dl_days_this_year`. Surfaced as roster
+  badges and trade-target annotations.
+- **Roster status flags** — Stored (Session 69): `designated_for_assignment`,
+  `is_on_waivers`, `was_traded`, `free_agent`, etc. Note: only current *state* is
+  stored, not transaction *history* — moves between refreshes aren't captured.
+- **Org attribution** — uses `Organization ID` (Session 87) via `db.ORG_ID_SQL`
+  (Organization ID → Parent Team ID → Team ID), more reliable than parent-team alone.
+- **Retired players** — captured on the first (full) refresh of a league; steady-state
+  refreshes pull active players only (`?retired=0`), so a freshly-onboarded league has
+  full history but ongoing refreshes don't re-pull the retired universe.
 - **Ratings are scouted** — accuracy varies by scout quality. `Acc` field indicates
   reliability (VH/H/A/L). Only mention low accuracy when `Acc = L`.

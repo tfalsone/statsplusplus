@@ -24,32 +24,37 @@ Cookie stored in `data/app_config.json`. Expires periodically — refresh from b
 
 ## Roster & Teams
 
-### `get_players() -> list[dict]`
-All players across all orgs and levels. Supports `?retired=0` filter.
+### `get_players(retired=None) -> list[dict]`
+All players across all orgs and levels. Pass `retired=0` to exclude retired
+players (documented July 2026). Refresh does a **full pull on the first refresh
+of a league** (captures retired players once) then `retired=0` on subsequent
+refreshes for speed; `--full` forces a full re-pull.
 
-**Core fields (currently stored):**
+**Core fields:**
 `ID`, `First Name`, `Last Name`, `Team ID`, `Parent Team ID`, `Level`, `Pos`, `Role`, `Age`, `Retired`
 
-**Extended fields (available, not yet stored — added April/July 2026):**
+**Extended fields (added April/July 2026).** Most are stored on the `players`
+table (see the DB-column notes below); a few are available but intentionally not
+stored (marked *not stored*).
 
 | Field | Type | Description |
 |---|---|---|
-| `Organization ID` | int | Reliable org assignment (sometimes `Parent Team ID` is unset for MLB teams) |
-| `League ID` | int | Negative for international complex players |
+| `Organization ID` | int | Reliable org assignment (sometimes `Parent Team ID` is unset for MLB teams). **Stored as `organization_id`; canonical org key via `db.ORG_ID_SQL` (Organization ID → Parent Team ID → Team ID).** |
+| `League ID` | int | Negative for international-complex players. **Stored as `player_league_id`; drives the level=8 intl reclassification.** |
 | `date_of_birth` | str | Player DOB |
-| `height` | int | Player height |
+| `height` | int | Player height (*not stored on players — sourced from ratings*) |
 | `weight` | int | Player weight |
-| `bats` | int | Batting hand |
-| `throws` | int | Throwing hand |
+| `bats` | int | Batting hand, numeric 1=R/2=L/3=S (*not stored — handedness sourced from ratings*) |
+| `throws` | int | Throwing hand (*not stored — sourced from ratings*) |
 | `draft_year` | int | Year drafted |
 | `draft_round` | int | Round drafted |
-| `draft_supplemental` | int | Supplemental pick flag |
+| `draft_supplemental` | int | Supplemental pick flag (*not stored*) |
 | `draft_pick` | int | Pick within round |
 | `draft_overall_pick` | int | Overall pick number |
 | `draft_team_id` | int | Team that drafted the player |
-| `draft_league_id` | int | League ID at time of draft |
-| `hall_of_fame` | int | HOF flag |
-| `inducted` | int | HOF induction year |
+| `draft_league_id` | int | League ID at time of draft (*not stored*) |
+| `hall_of_fame` | int | HOF flag (*not stored*) |
+| `inducted` | int | HOF induction year (*not stored*) |
 | `uniform_number` | int | Jersey number |
 | `is_active` | int | Active roster flag |
 | `is_on_secondary` | int | On secondary (e.g., taxi squad) |
@@ -63,18 +68,18 @@ All players across all orgs and levels. Supports `?retired=0` filter.
 | `mlb_service_days_this_year` | int | MLB service days accrued this season |
 | `pro_service_years` | int | Professional service — completed full years |
 | `pro_service_days` | int | Professional service — cumulative total days |
-| `pro_service_days_this_year` | int | Pro service days this season |
-| `secondary_service_years` | int | Secondary (MiLB) service — completed full years |
-| `secondary_service_days` | int | Secondary service — cumulative total days |
-| `secondary_service_days_this_year` | int | Secondary service days this season |
+| `pro_service_days_this_year` | int | Pro service days this season (*not stored*) |
+| `secondary_service_years` | int | Secondary (MiLB) service — completed full years (*not stored*) |
+| `secondary_service_days` | int | Secondary service — cumulative total days (*not stored*) |
+| `secondary_service_days_this_year` | int | Secondary service days this season (*not stored*) |
 | `days_on_waivers` | int | Days spent on waivers |
 | `days_on_waivers_left` | int | Days remaining on waivers |
 | `has_received_arbitration` | int | Has been offered arbitration |
 | `was_traded` | int | Traded this season flag |
 | `free_agent` | int | Free agent flag |
 | `nation_id` | int | Nationality ID |
-| `last_team_id` | int | Previous team (before trade/FA) |
-| `years_protected_from_rule_5` | int | Years before must-protect / Rule 5 exposure. **0 = eligible this offseason** (confirmed vs vMLB data); 4/5 = young signees still shielded |
+| `last_team_id` | int | Previous team (before trade/FA) (*not stored*) |
+| `years_protected_from_rule_5` | int | Years before must-protect / Rule 5 exposure. **0 = eligible this offseason** (confirmed vs vMLB data); 4/5 = young signees still shielded. Consumed by the offseason Rule 5 panel (`get_rule5`). |
 | `draft_eligible` | int | Amateur-draft eligibility flag (confirmed — dormant outside the pre-draft window; NOT a Rule 5 signal) |
 | `injury_is_injured` | int | **Currently injured** |
 | `injury_dl_left` | int | Days left on DL |
@@ -212,7 +217,7 @@ All current active contracts across the league, including farm players.
 `salary0`–`salary14`, `years`, `current_year`, `no_trade`,
 `last_year_team_option`, `last_year_player_option`
 
-**Additional fields available (not yet stored):**
+**Additional fields (stored since Session 70 — option/vesting + incentives):**
 
 | Field | Description |
 |---|---|
