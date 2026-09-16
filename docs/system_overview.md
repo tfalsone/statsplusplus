@@ -157,6 +157,7 @@ All other analysis scripts are read-only against the DB.
 | `fielding_stats` | `refresh.py` | Player fielding stats by position (G, IP, TC, E, ZR, framing, arm). `league_id` column for MiLB. |
 | `prospect_fv` | `fv_calc.py` | FV grades for prospects and rookie-eligible MLB players (<130 AB, <50 IP, age ≤ 24). Includes `fv_continuous` (pre-rounding FV for interpolated surplus). Cleared and rewritten each run. |
 | `player_surplus` | `fv_calc.py` | Surplus value for all MLB players. Cleared and rewritten each run. |
+| `dev_speed` | `fv_calc.py` | Development-speed metric per player — how fast the developmentally-relevant component (offensive grade for hitters, composite for pitchers) is moving vs same-group/age/league peers, from longitudinal `ratings_history`, as a z-score + POT-gap context + confidence tier. A **separate axis, not blended into FV/surplus** (avoids double-counting). Pure logic in `evaluation/dev_speed.py`; spec at `.kiro/specs/development-speed-metric/design.md`. Cleared and rewritten each run. |
 | `trade_block` | `refresh.py` | Player IDs on the trade block (from `/tradeblock` endpoint). Cleared and repopulated each refresh. |
 | `standings` | `refresh.py` | Real W-L-GB-PCT-streak-magic# for all teams (from `/lgdata`). Used by seller classification and `standings.py` display. |
 

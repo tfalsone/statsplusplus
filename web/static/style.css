@@ -288,6 +288,13 @@ th.sort-desc::after { content: " ▼"; font-size: 9px; }
 .scouting-text { line-height: 1.7; color: var(--text); font-size: 12px; }
 .pos { color: var(--green); }
 .neg { color: var(--red); }
+
+/* Development-speed cell icons (prospect lists) */
+.dev-rising { color: var(--green); }
+.dev-onpace { color: var(--text-dim); }
+.dev-watch { color: #ffc107; }
+.dev-stalled { color: var(--red); }
+.dev-regressing { color: #ff9800; }
 a.player-link, a.team-link { color: var(--text); text-decoration: none; }
 a.player-link:hover, a.team-link:hover { color: var(--green); text-decoration: underline; }
 a.ext-link { color: var(--text-dim); text-decoration: none; font-size: 12px; margin-left: 4px; }

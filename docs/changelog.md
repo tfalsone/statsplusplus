@@ -4,11 +4,40 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
-## Session 87 (2026-09-15)
+## Session 88 (2026-09-16)
 
-### Offseason page — Rule 5 panel
+### Development-speed metric — v1 (display)
 
-Built on the two `/players` Rule 5 fields (stored earlier this session). After a
+New per-player metric: how fast a prospect is developing vs same-group, same-age
+peers in this league, from longitudinal `ratings_history`. Spec + validation:
+`.kiro/specs/development-speed-metric/design.md`.
+
+- **Pure module** `evaluation/dev_speed.py` — component-split (offensive-grade
+  movement for hitters, composite for pitchers; defense excluded as
+  experience-inflated), per-(dev-group, age-band, league) longitudinal z, POT-gap
+  qualifier + ΔOVR/ΔPOT decomposition, confidence tier (High/Medium/Low), and a
+  history/reporting gate. Signals use **our composite/ceiling, never the game's
+  OVR/POT** (the latter are NULL in OVR-less leagues like PPL and inconsistent
+  with the rest of the app).
+- **dev-group grouping:** hitters are NOT sliced by fielding position — offensive
+  development rate is position-independent (validated across vMLB/eMLB). Groups
+  are SP / RP / C (catcher bats develop slower) / HIT. Canonical `assign_bucket`
+  for SP/RP classification; `(group, "ALL")` fallback for tiny leagues.
+- **Storage:** new `dev_speed` table, rebuilt each `fv_calc` run (a separate axis
+  — deliberately NOT blended into FV/surplus to avoid double-counting; displayed
+  adjacent). Auto-creates via `init_schema`; degrades gracefully when empty.
+- **Display (v1):** player-page summary badge next to FV/Risk; a "Development
+  Pace" detail panel on the Development tab (component readout, peer baseline,
+  ceiling trajectory, confidence, player-specific interpretation); sortable "Dev"
+  column on the league prospect lists (Top-100 + by-position + team) and the team
+  farm Top-15. Shared `dev_cell` helper in `web_league_context.py`.
+- **No model interaction** — FV/risk/surplus/outcomes compute unchanged. Risk
+  proxy-swap and outcomes integration are deferred, gated on accumulated
+  multi-season `ratings_history` for benchmarking (PPL is the target league).
+- POC (`scripts/dev_speed_poc.py`) retained as reference until superseded. Tests:
+  `tests/evaluation/test_dev_speed.py` (9). Full suite green.
+
+
 vMLB refresh populated real values, confirmed the semantics empirically:
 `years_protected_from_rule_5` is the **years remaining before a player must be
 added to the 40-man or is exposed to the Rule 5 draft** — `0` = eligible this

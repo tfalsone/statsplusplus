@@ -27,6 +27,25 @@ from web_league_context import get_db, get_cfg, team_abbr_map, team_names_map, l
 def _norm(val):
     return _norm_raw(val, get_cfg().ratings_scale)
 
+
+def _get_dev_speed(conn, pid):
+    """Fetch the stored development-speed metric for a player (latest eval_date),
+    or None if absent. Returns the dict the player template consumes."""
+    try:
+        cols = [c[1] for c in conn.execute("PRAGMA table_info(dev_speed)").fetchall()]
+        if not cols:
+            return None
+        row = conn.execute(
+            "SELECT * FROM dev_speed WHERE player_id=? ORDER BY eval_date DESC LIMIT 1",
+            (pid,)).fetchone()
+        if not row:
+            return None
+        d = dict(zip(cols, row))
+        d["available"] = bool(d.get("available"))
+        return d
+    except Exception:
+        return None
+
 def _norm_floor(val, floor=20):
     return _norm_floor_raw(val, get_cfg().ratings_scale, floor)
 
@@ -2070,6 +2089,9 @@ def get_player(pid):
         except Exception:
             pass
 
+    # Development-speed metric (adjacent second-opinion signal; see spec).
+    dev_speed = _get_dev_speed(conn, pid)
+
     return {
         "pid": pid, "player_id": pid, "name": name, "age": age, "pos": pos_str,
         "year": get_cfg().year,
@@ -2090,6 +2112,7 @@ def get_player(pid):
         "prospect_comps": prospect_comps, "comp_stats": comp_stats, "pap": pap,
         "snapshot_deltas": snapshot_deltas,
         "dev_history": dev_history,
+        "dev_speed": dev_speed,
         "composite_score": composite_score,
         "ceiling_score": ceiling_score,
         "true_ceiling": eval_data.get("true_ceiling"),

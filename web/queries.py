@@ -25,6 +25,9 @@ def _norm(val):
 def _norm_floor(val, floor=20):
     return _norm_floor_raw(val, get_cfg().ratings_scale, floor)
 
+
+from web_league_context import dev_cell as _dev_cell  # shared dev-speed cell builder
+
 # Legacy module-level aliases — used by app.py and re-export consumers.
 # These are properties that re-evaluate each access via get_cfg().
 class _DynMap:
@@ -107,10 +110,12 @@ def get_top_prospects(n=100):
                pf.fv, pf.fv_str, pf.bucket,
                pf.level, pf.prospect_surplus, p.pos, p.player_id,
                r.height, r.bats, r.throws, r.ovr, r.pot,
-               r.composite_score, r.ceiling_score, pf.risk
+               r.composite_score, r.ceiling_score, pf.risk,
+               ds.available, ds.css_class, ds.label, ds.confidence, ds.z
         FROM prospect_fv pf
         JOIN players p ON pf.player_id=p.player_id
         LEFT JOIN latest_ratings r ON pf.player_id=r.player_id
+        LEFT JOIN dev_speed ds ON pf.player_id=ds.player_id AND ds.eval_date=pf.eval_date
         WHERE pf.eval_date=?
     """, (ed,)).fetchall()
 
@@ -139,7 +144,8 @@ def get_top_prospects(n=100):
              "eta": _calc_eta(r[6], r[13], r[14]),
              "height": fmt_ht(r[10]),
              "bats": r[11] or "", "throws": r[12] or "",
-             "composite_score": r[15], "ceiling_score": r[16], "risk": r[17]}
+             "composite_score": r[15], "ceiling_score": r[16], "risk": r[17],
+             "dev": _dev_cell(r, 18)}
             for i, r in enumerate(rows)]
 
 
@@ -299,10 +305,12 @@ def get_all_prospects():
                pf.fv, pf.fv_str, pf.bucket,
                pf.level, pf.prospect_surplus, p.pos, p.player_id,
                r.height, r.bats, r.throws, r.ovr, r.pot,
-               r.composite_score, r.ceiling_score, pf.risk
+               r.composite_score, r.ceiling_score, pf.risk,
+               ds.available, ds.css_class, ds.label, ds.confidence, ds.z
         FROM prospect_fv pf
         JOIN players p ON pf.player_id=p.player_id
         LEFT JOIN latest_ratings r ON pf.player_id=r.player_id
+        LEFT JOIN dev_speed ds ON pf.player_id=ds.player_id AND ds.eval_date=pf.eval_date
         WHERE pf.eval_date=? AND pf.fv >= 40
     """, (ed,)).fetchall()
 
@@ -331,7 +339,8 @@ def get_all_prospects():
              "eta": _calc_eta(r[6], r[13], r[14]),
              "height": fmt_ht(r[10]),
              "bats": r[11] or "", "throws": r[12] or "",
-             "composite_score": r[15], "ceiling_score": r[16], "risk": r[17]}
+             "composite_score": r[15], "ceiling_score": r[16], "risk": r[17],
+             "dev": _dev_cell(r, 18)}
             for r in rows]
 
 

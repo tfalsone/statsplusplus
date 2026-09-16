@@ -860,7 +860,7 @@
         <thead>
           <tr>
             <th data-sort="num">#</th><th data-sort="pos">Pos</th><th data-sort="str" class="left">Name</th><th data-sort="num" data-sort-best="low">Age</th>
-            <th data-sort="str" data-sort-best="high" class="left">FV</th><th data-sort="str" class="left">Level</th><th data-sort="num">Surplus</th>
+            <th data-sort="str" data-sort-best="high" class="left">FV</th><th data-sort="num" title="Development pace vs same-position/age peers (⚡ rising · ⚠ stalled · ↗ on pace). Dimmed = low confidence.">Dev</th><th data-sort="str" class="left">Level</th><th data-sort="num">Surplus</th>
           </tr>
         </thead>
         <tbody>
@@ -871,6 +871,7 @@
             <td><a class="player-link" href="/player/{{ p.pid }}">{{ p.name }}</a></td>
             <td>{{ p.age }}</td>
             <td class="left">{{ p.fv_str }}{% if p.risk %} <span style="font-size:10px;color:{% if p.risk == 'Low' %}#4caf50{% elif p.risk == 'Medium' %}#ffc107{% elif p.risk == 'High' %}#ff9800{% else %}#f44336{% endif %}">{{ p.risk[0] }}</span>{% endif %}</td>
+            <td{% if p.dev %} data-sort-value="{{ p.dev.z }}"{% endif %}>{% if p.dev %}<span class="dev-{{ p.dev.css_class }}"{% if p.dev.dim %} style="opacity:0.5"{% endif %} title="{{ p.dev.label }} ({{ p.dev.z }} SD · {{ p.dev.confidence }} conf)">{{ p.dev.icon }}</span>{% endif %}</td>
             <td class="left">{{ p.level }}</td>
             <td>${{ p.surplus }}M</td>
           </tr>

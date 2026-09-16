@@ -17,7 +17,8 @@ from statsplusplus.evaluation.constants import DEFAULT_MINIMUM_SALARY
 from statsplusplus.data.db import ORG_ID_SQL
 from web_league_context import (get_db, get_cfg, team_abbr_map, team_names_map,
                                  level_map, pos_map, pos_order, pyth_exp, my_team_id,
-                                 mlb_team_ids, league_averages as _load_la)
+                                 mlb_team_ids, league_averages as _load_la,
+                                 dev_cell as _dev_cell)
 
 # Local wrappers using request-scoped league_dir
 def _dollars_per_war():
@@ -658,10 +659,12 @@ def get_farm(team_id=None):
 
     rows = conn.execute(f"""
         SELECT p.name, p.age, p.level, pf.fv, pf.fv_str, pf.bucket, pf.prospect_surplus, p.player_id, p.pos,
-               r.composite_score, r.ceiling_score, pf.risk
+               r.composite_score, r.ceiling_score, pf.risk,
+               ds.available, ds.css_class, ds.label, ds.confidence, ds.z
         FROM prospect_fv pf
         JOIN players p ON pf.player_id=p.player_id
         LEFT JOIN latest_ratings r ON pf.player_id=r.player_id
+        LEFT JOIN dev_speed ds ON pf.player_id=ds.player_id AND ds.eval_date=pf.eval_date
         WHERE pf.eval_date=? AND {ORG_ID_SQL}=?
         ORDER BY pf.fv DESC, p.age ASC
     """, (ed, tid)).fetchall()
@@ -679,7 +682,7 @@ def get_farm(team_id=None):
              "surplus": round(r[6] / 1e6, 1) if r[6] else 0,
              "pid": r[7],
              "composite_score": r[9], "ceiling_score": r[10],
-             "risk": r[11]}
+             "risk": r[11], "dev": _dev_cell(r, 12)}
             for i, r in enumerate(rows)]
 
 

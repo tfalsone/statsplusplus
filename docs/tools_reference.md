@@ -589,7 +589,7 @@ Import with `sys.path.insert(0, 'web')`. All are read-only against the DB.
 
 | Function | Returns |
 |---|---|
-| `get_player(pid)` | Full player detail — bio, ratings, stats, contract, surplus, splits, percentiles, evaluation panel data (composite/ceiling with MLB context) |
+| `get_player(pid)` | Full player detail — bio, ratings, stats, contract, surplus, splits, percentiles, evaluation panel data (composite/ceiling with MLB context), development-speed metric (`dev_speed` — pace vs peers) |
 | `get_player_popup(pid)` | Lightweight popup data — bio, key ratings, current stats, surplus |
 | `_mlb_context(conn, bucket, composite, ceiling)` | MLB percentile + tier label for composite and ceiling vs all MLB players at the position |
 
@@ -648,6 +648,7 @@ All accessed via the query functions above. Direct SQL is rarely needed.
 | `games` | Game results — scores, WP/LP/SV, dates |
 | `prospect_fv` | FV grades for all non-MLB prospects |
 | `player_surplus` | Surplus value for all MLB players |
+| `dev_speed` | Development-speed metric per player (pace vs peers; separate axis, not blended into FV/surplus) |
 
 ---
 

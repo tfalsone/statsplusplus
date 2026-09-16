@@ -18,6 +18,7 @@ statsplusplus/
 │   │   ├── fv.py                       # FV grades, risk labels, PAC, positional access
 │   │   ├── player_value.py            # Player surplus model (stat_confidence gradient)
 │   │   ├── outcomes.py                # Career outcome probability distributions
+│   │   ├── dev_speed.py               # Development-speed metric (pure; longitudinal z)
 │   │   ├── war.py                      # WAR projection, aging curves, stat history
 │   │   ├── surplus.py                  # Prospect/contract surplus helpers, scarcity
 │   │   ├── arb.py                      # Arb salary, service time, team control
@@ -169,6 +170,7 @@ Or legacy: `python3 scripts/standings.py --actual`
 | `player_evaluation` | fv_calc | Unified player value (surplus, WAR projection, FV) |
 | `prospect_fv` | fv_calc | View on player_evaluation (prospects only) |
 | `player_surplus` | fv_calc | View on player_evaluation (MLB only) |
+| `dev_speed` | fv_calc | Development-speed metric per player (separate axis; not blended into FV/surplus) |
 
 | View | Description |
 |---|---|

@@ -114,6 +114,25 @@ def mlb_team_ids():
 def level_map():
     return get_cfg().level_map
 
+# Development-speed display helper (shared by queries.py + team_queries.py).
+_DEV_ICON = {"rising": "\u26a1", "onpace": "\u2197", "watch": "\u26a0",
+             "stalled": "\u26a0", "regressing": "\u2198"}
+
+
+def dev_cell(row, i):
+    """Build a compact dev-speed cell from a row slice starting at index i:
+    (available, css_class, label, confidence, z). Returns None when unavailable
+    so list templates render an empty cell."""
+    try:
+        available, css, label, conf, z = row[i], row[i + 1], row[i + 2], row[i + 3], row[i + 4]
+    except (IndexError, TypeError):
+        return None
+    if not available:
+        return None
+    return {"icon": _DEV_ICON.get(css, ""), "css_class": css, "label": label,
+            "confidence": conf, "z": z, "dim": conf == "Low"}
+
+
 def milb_league_map():
     """Return the cumulative {league_id(int): {"name", "level"}} map.
 

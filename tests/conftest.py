@@ -179,6 +179,14 @@ CREATE TABLE IF NOT EXISTS prospect_fv (
     fv_continuous REAL,
     PRIMARY KEY (player_id, eval_date)
 );
+CREATE TABLE IF NOT EXISTS dev_speed (
+    player_id INTEGER, eval_date TEXT, available INTEGER, z REAL, signal TEXT,
+    label TEXT, css_class TEXT, note TEXT, gap INTEGER, d_ovr INTEGER, d_pot INTEGER,
+    confidence TEXT, annual_move REAL, peer_mean REAL, peer_sd REAL, peer_n INTEGER,
+    comp_first INTEGER, comp_last INTEGER, off_first INTEGER, off_last INTEGER,
+    def_first INTEGER, def_last INTEGER, window_years REAL, n_snaps INTEGER,
+    PRIMARY KEY (player_id, eval_date)
+);
 CREATE TABLE IF NOT EXISTS player_surplus (
     player_id INTEGER, eval_date TEXT, name TEXT, bucket TEXT,
     age INTEGER, ovr INTEGER, fv INTEGER, fv_str TEXT,

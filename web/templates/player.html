@@ -585,6 +585,14 @@
     <span class="value">{{ p.valuation.fv_str }}{% if p.valuation.risk %} <span style="font-size:11px; font-weight:400; color:{% if p.valuation.risk == 'Low' %}#4caf50{% elif p.valuation.risk == 'Medium' %}#ffc107{% elif p.valuation.risk == 'High' %}#ff9800{% else %}#f44336{% endif %}">{{ p.valuation.risk }}</span>{% endif %}</span>
   </div>
   {% endif %}
+  {% if p.dev_speed and p.dev_speed.available %}
+  {% set _dc = {'rising':'#4caf50','onpace':'var(--text-dim)','watch':'#ffc107','stalled':'#f44336','regressing':'#ff9800'} %}
+  {% set _di = {'rising':'⚡','onpace':'↗','watch':'⚠','stalled':'⚠','regressing':'↘'} %}
+  <div class="summary-item" title="Development pace — how fast this player's {{ 'bat' if p.dev_speed.signal == 'off' else 'overall profile' }} is developing vs same-position, same-age peers in this league ({{ p.dev_speed.z }} SD). {{ p.dev_speed.note }}. Based on {{ p.dev_speed.window_years }}yr / {{ p.dev_speed.n_snaps }} snapshots — {{ p.dev_speed.confidence }} confidence. A pace flag, not a verdict — see the Development tab.">
+    <span class="label">Dev</span>
+    <span class="value" style="font-size:13px; color:{{ _dc.get(p.dev_speed.css_class, 'var(--text-dim)') }}">{{ _di.get(p.dev_speed.css_class, '') }} {{ p.dev_speed.label }} <span style="font-size:10px; font-weight:400; color:var(--text-dim)">({{ p.dev_speed.confidence }})</span></span>
+  </div>
+  {% endif %}
   <div class="summary-item" title="Projected on-field value minus salary cost over remaining team control. Positive = player worth more than they cost.">
     <span class="label">Surplus</span>
     <span class="value {% if p.valuation.surplus > 0 %}pos{% elif p.valuation.surplus < 0 %}neg{% endif %}">${{ p.valuation.surplus }}M</span>
@@ -1190,6 +1198,69 @@ document.querySelectorAll('.dev-chart-dot').forEach(function(dot) {
 {% if p.dev_history and p.dev_history.snapshots|length >= 2 %}
 {# ══ Development tab (MLB) ══ #}
 <div class="tab-content" id="tab-development">
+  {% if p.dev_speed %}
+  {% set d = p.dev_speed %}
+  {% set _dc = {'rising':'#4caf50','onpace':'var(--text-dim)','watch':'#ffc107','stalled':'#f44336','regressing':'#ff9800','none':'var(--text-dim)'} %}
+  {% set _di = {'rising':'⚡','onpace':'↗','watch':'⚠','stalled':'⚠','regressing':'↘','none':''} %}
+  <div class="panel" style="margin-bottom:16px">
+    <h2>Development Pace <span class="info-tip" title="How fast this player is developing relative to same-position, same-age peers in this league — measured from rating-history movement, not stats. A pace flag to investigate, not a verdict. Orthogonal to FV (ceiling quality) and Risk (development probability prior).">ⓘ</span></h2>
+    {% if d.available %}
+    <div style="font-size:20px; font-weight:600; color:{{ _dc.get(d.css_class, 'var(--text-dim)') }}; margin-bottom:8px">
+      {{ _di.get(d.css_class, '') }} {{ d.label }}
+      <span style="font-size:13px; font-weight:400; color:var(--text-dim)">· {{ d.z }} SD vs peers · {{ d.confidence }} confidence</span>
+    </div>
+    <table class="grade-table" style="max-width:560px">
+      <tr>
+        <td style="color:var(--text-dim)">{{ 'Offensive grade (bat)' if d.signal == 'off' else 'Composite' }}</td>
+        <td>{% if d.signal == 'off' %}{{ d.off_first }} → {{ d.off_last }}{% else %}{{ d.comp_first }} → {{ d.comp_last }}{% endif %}
+            <span class="{% if d.annual_move > 0 %}pos{% elif d.annual_move < 0 %}neg{% endif %}">({{ "%+.1f"|format(d.annual_move) }}/yr)</span></td>
+      </tr>
+      <tr>
+        <td style="color:var(--text-dim)">Peer baseline<span style="font-size:11px"> — {{ d.signal == 'off' and 'bat' or 'composite' }} movement, {{ p.bucket }} age {{ p.age - (p.age % 2) }}-{{ p.age - (p.age % 2) + 1 }}, n={{ d.peer_n }}</span></td>
+        <td>{{ "%+.1f"|format(d.peer_mean) }}/yr → this player {{ "%+.1f"|format(d.annual_move) }}/yr = <strong>{{ d.z }} SD</strong></td>
+      </tr>
+      {% if d.signal == 'off' and d.def_first is not none %}
+      <tr>
+        <td style="color:var(--text-dim)">Defense <span style="font-size:10px">(excluded — experience-inflated)</span></td>
+        <td style="color:var(--text-dim)">{{ d.def_first }} → {{ d.def_last }}</td>
+      </tr>
+      {% endif %}
+      <tr>
+        <td style="color:var(--text-dim)">Ceiling trajectory</td>
+        <td>Composite {{ "%+d"|format(d.d_ovr) }} / Ceiling {{ "%+d"|format(d.d_pot) }}
+            {% if d.d_pot < -1 and d.d_ovr <= 1 %}<span class="neg">— ceiling eroding, not progress</span>
+            {% elif d.d_ovr > 1 %}<span class="pos">— developing toward the ceiling</span>{% endif %}
+            · current gap {{ d.gap }}</td>
+      </tr>
+      <tr>
+        <td style="color:var(--text-dim)">Basis</td>
+        <td style="color:var(--text-dim)">{{ d.window_years }}yr · {{ d.n_snaps }} snapshots → {{ d.confidence }} confidence</td>
+      </tr>
+    </table>
+    <p style="color:var(--text-dim); font-size:12px; margin-top:8px">
+      {%- set css = d.css_class -%}
+      {%- if css == 'rising' and d.d_pot < -1 -%}
+        Developing quickly, but scouts have trimmed the ceiling ({{ "%+d"|format(d.d_pot) }} POT) — the surge is real, the ultimate upside less than it once looked.
+      {%- elif css == 'rising' -%}
+        Developing faster than peers with ceiling room left — a candidate to reach the majors ahead of schedule.
+      {%- elif css == 'stalled' and d.d_pot <= -2 -%}
+        Not tracking a wide ceiling gap, and scouts are already cooling on the ceiling ({{ "%+d"|format(d.d_pot) }} POT) — the strongest version of a stall signal. Worth a hard look before counting on the upside.
+      {%- elif css == 'stalled' -%}
+        The tools still imply more, but development hasn't followed over this window. Check for a cause: is he mis-leveled (too comfortable / overmatched), hurt, or genuinely plateauing?
+      {%- elif css == 'watch' -%}
+        Developing a bit slower than peers relative to a wide ceiling gap — not alarming yet, but one to monitor as more history accumulates.
+      {%- elif css == 'regressing' -%}
+        Flat or declining and near his current level — likely close to what he is, with little further development expected.
+      {%- else -%}
+        Developing about as expected for his position and age.
+      {%- endif %}
+      {% if d.confidence == 'Low' %}<em>Low confidence — short history or thin playing time; treat as tentative.</em>{% endif %}
+    </p>
+    {% else %}
+    <p class="empty">Not enough rating history yet to assess development pace (needs ~6 months and a reliable, played sample). This fills in as more snapshots accumulate.</p>
+    {% endif %}
+  </div>
+  {% endif %}
   {{ dev_charts_panel() }}
   {{ dev_tracking_panel() }}
 </div>

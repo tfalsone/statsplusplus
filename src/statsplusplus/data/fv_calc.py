@@ -490,6 +490,7 @@ def _compute_and_store_player_values(
     conn.execute("DELETE FROM player_evaluation")
 
     eval_rows: list[tuple] = []
+    _dev_bucket: dict[int, tuple] = {}   # pid -> (bucket, age) for the dev-speed pass
     errors = 0
 
     for rat in rows:
@@ -640,6 +641,7 @@ def _compute_and_store_player_values(
             result["surplus"], result["surplus_yr1"],
             years_ctrl, ctrl_type,
         ))
+        _dev_bucket[pid] = (bucket, age)
 
     if eval_rows:
         conn.executemany(
@@ -649,6 +651,118 @@ def _compute_and_store_player_values(
         )
 
     logger.info(f"unified eval: {len(eval_rows)} players written, {errors} errors")
+
+    try:
+        _compute_dev_speed_pass(conn, game_date, _dev_bucket)
+    except Exception as e:
+        logger.warning(f"dev-speed pass failed (non-fatal): {e}")
+
+    conn.commit()
+
+
+def _compute_dev_speed_pass(conn, game_date: str, bucket_map: dict) -> None:
+    """Compute + store the development-speed metric for all players.
+
+    Loads longitudinal ratings_history, builds a per (bucket, age-band) baseline
+    from the full population, computes each player's trailing-window dev-speed,
+    and writes the `dev_speed` table. Buckets come from bucket_map (canonical
+    assign_bucket, computed in the main loop). See dev_speed.py + the spec.
+    """
+    from collections import defaultdict
+    from statsplusplus.evaluation import dev_speed as ds
+
+    # trailing-window cutoff (string compare on YYYY-MM-DD)
+    latest = conn.execute(
+        "SELECT MAX(snapshot_date) FROM ratings_history WHERE composite_score IS NOT NULL"
+    ).fetchone()[0]
+    if not latest:
+        logger.info("dev-speed: no ratings_history — skipped")
+        return
+    ly, lm, _ = map(int, latest.split("-"))
+    sy, sm = ly - (ds.WINDOW_MONTHS // 12), lm - (ds.WINDOW_MONTHS % 12)
+    if sm <= 0:
+        sm += 12; sy -= 1
+    cutoff = f"{sy:04d}-{sm:02d}-01"
+
+    rows = conn.execute("""
+        SELECT h.player_id, h.snapshot_date, h.composite_score, h.ceiling_score,
+               h.ovr, h.pot, h.offensive_grade, h.defensive_value, p.age
+        FROM ratings_history h JOIN players p ON p.player_id = h.player_id
+        WHERE h.composite_score IS NOT NULL AND h.composite_score > 0
+        ORDER BY h.player_id, h.snapshot_date
+    """).fetchall()
+    by_player: dict[int, list] = defaultdict(list)
+    age_of: dict[int, int] = {}
+    for r in rows:
+        d = {"snapshot_date": r["snapshot_date"], "composite_score": r["composite_score"],
+             "ceiling_score": r["ceiling_score"],
+             "ovr": r["ovr"], "pot": r["pot"],
+             "offensive_grade": r["offensive_grade"], "defensive_value": r["defensive_value"]}
+        by_player[r["player_id"]].append(d)
+        age_of[r["player_id"]] = r["age"]
+
+    # acc + recent playing time (last 2 game-years)
+    acc_of = dict(conn.execute("SELECT player_id, acc FROM latest_ratings").fetchall())
+    yr = conn.execute("SELECT MAX(year) FROM batting_stats").fetchone()[0] or 0
+    pa_of = dict(conn.execute(
+        "SELECT player_id, SUM(pa) FROM batting_stats WHERE split_id=1 AND year>=? GROUP BY player_id",
+        (yr - 1,)).fetchall())
+    ip_of = dict(conn.execute(
+        "SELECT player_id, SUM(outs)/3.0 FROM pitching_stats WHERE split_id=1 AND year>=? GROUP BY player_id",
+        (yr - 1,)).fetchall())
+
+    # Build the window per player + records for the baseline.
+    windows: dict[int, list] = {}
+    records = []
+    for pid, snaps in by_player.items():
+        win = [s for s in snaps if s["snapshot_date"] >= cutoff]
+        if len(win) < ds.MIN_SNAPSHOTS:
+            win = snaps
+        if len(win) < ds.MIN_SNAPSHOTS:
+            continue
+        bucket = bucket_map.get(pid, (None,))[0]
+        if bucket is None:
+            continue
+        age = age_of[pid]
+        windows[pid] = win
+        first, last = win[0], win[-1]
+        yrs = ds._years_between(first["snapshot_date"], last["snapshot_date"])
+        if yrs * 365.25 < ds.MIN_WINDOW_DAYS:
+            continue
+        d_comp = (last["composite_score"] - first["composite_score"]) / yrs
+        d_off, _, _ = ds.component_delta(win, "offensive_grade")
+        records.append({"age": age, "bucket": bucket, "band": ds.age_band(age),
+                        "annual_comp": d_comp, "annual_off": d_off})
+
+    baseline = ds.build_baseline(records)
+
+    out_rows = []
+    for pid, win in windows.items():
+        bucket, age = bucket_map[pid]
+        is_pit = bucket in ("SP", "RP")
+        pt = (ip_of.get(pid, 0) if is_pit else pa_of.get(pid, 0)) or 0
+        res = ds.compute_dev_speed(
+            bucket=bucket, age=age, window=win, baseline=baseline,
+            acc=acc_of.get(pid), playing_time=pt)
+        if res is None:
+            continue
+        out_rows.append((
+            pid, game_date, 1 if res["available"] else 0, res["z"], res["signal"],
+            res["label"], res["css_class"], res["note"], res["gap"], res["d_ovr"],
+            res["d_pot"], res["confidence"], res["annual_move"], res["peer_mean"],
+            res["peer_sd"], res["peer_n"], res["comp_first"], res["comp_last"],
+            res["off_first"], res["off_last"], res["def_first"], res["def_last"],
+            res["window_years"], res["n_snaps"],
+        ))
+
+    conn.execute("DELETE FROM dev_speed")
+    if out_rows:
+        conn.executemany(
+            "INSERT OR REPLACE INTO dev_speed VALUES "
+            "(" + ",".join("?" * 24) + ")", out_rows)
+    n_avail = sum(1 for r in out_rows if r[2] == 1)
+    logger.info(f"dev-speed: {len(out_rows)} computed, {n_avail} reportable, "
+                f"{sum(len(v) for v in baseline.values())} baseline cells")
 
 
 def main() -> None:

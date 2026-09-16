@@ -294,6 +294,34 @@ CREATE TABLE IF NOT EXISTS standings (
     fetched_date TEXT
 );
 
+-- Development-speed metric (see .kiro/specs/development-speed-metric/design.md).
+-- A separate axis from FV/surplus by design — displayed adjacent, not blended.
+-- Rebuilt each fv_calc run. `available=0` = below the history/reporting gate.
+CREATE TABLE IF NOT EXISTS dev_speed (
+    player_id   INTEGER,
+    eval_date   TEXT,
+    available   INTEGER,
+    z           REAL,
+    signal      TEXT,      -- 'off' (bat, hitters) | 'comp' (pitchers)
+    label       TEXT,
+    css_class   TEXT,      -- rising|onpace|watch|stalled|regressing|none
+    note        TEXT,
+    gap         INTEGER,
+    d_ovr       INTEGER,
+    d_pot       INTEGER,
+    confidence  TEXT,      -- High|Medium|Low
+    annual_move REAL,
+    peer_mean   REAL,
+    peer_sd     REAL,
+    peer_n      INTEGER,
+    comp_first  INTEGER, comp_last INTEGER,
+    off_first   INTEGER, off_last INTEGER,
+    def_first   INTEGER, def_last INTEGER,
+    window_years REAL,
+    n_snaps     INTEGER,
+    PRIMARY KEY (player_id, eval_date)
+);
+
 -- prospect_fv and player_surplus are views on player_evaluation.
 -- They provide backward compatibility with existing queries.
 CREATE VIEW IF NOT EXISTS prospect_fv AS
