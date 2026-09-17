@@ -6,6 +6,38 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ## Session 89 (2026-09-17)
 
+### Bug fix — refresh: ratings-export resilience + proactive rate-limit pacing
+
+A user's PPL (deep 1955 retro league) refresh completed with **zero ratings**,
+leaving everything except standings blank (draft/prospects/rosters all read from
+the empty `player_evaluation`/`prospect_fv` tables; standings comes straight from
+`/lgdata`). Root cause from the log: the 15-year historical team-stats backfill
+hit HTTP 429 on nearly every call (team-stats render limit is **1/min/caller**)
+and the flat 35s retry (< the 60s window) 429'd again — turning the refresh into
+a ~40-min 429-storm. By the time ratings were collected, the export request ID
+had expired server-side (`"The request ID is no longer valid"`), and the client
+treated that as valid-but-empty CSV → 0 ratings → 0 prospects evaluated.
+
+- **Proactive render pacing** (`client/statsplus.py`) — the client now paces the
+  render-limited endpoints (`/teambatstats`, `/teampitchstats`, `/gamehistory`)
+  to the known ~1/min cadence: it sleeps out the remainder of the window *before*
+  firing, instead of firing early and eating a 429 + wasted retry. Render 429s
+  with no useful `Retry-After` now wait a full window (not 35s) and reset the
+  pacing clock. Cuts the first-pull time and stops burning failed requests.
+- **Ratings-export re-request on expiry** — `get_ratings` detects the expired-
+  request-ID response and re-requests a fresh export once (raising loudly on a
+  second expiry) rather than silently returning 0 rows and wiping downstream
+  evaluation.
+- Confirmed the historical backfill already **skips already-fetched years**, so
+  the 40-min cost is a one-time first-pull penalty (subsequent refreshes re-render
+  only current + prior year). Logged a follow-up task to explore deferring/
+  backgrounding the deep historical backfill for an even faster first refresh.
+- Tests: `tests/test_ratings_reexport.py` (expiry re-request + render pacing).
+
+**User remediation for the reported incident:** re-run with `--force`
+(`spp-refresh --force`) — the `/date` gate otherwise skips it since the game date
+is unchanged. The re-run now completes with ratings intact.
+
 ### Offseason page — Season in Review tab
 
 Replaced the placeholder "Playoffs" offseason phase with a "wrapped"-style

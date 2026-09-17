@@ -136,6 +136,14 @@ one check. Recommended over adding more string matches.
 - **Note the inconsistency:** `/ratings` refusals are HTTP-200 plaintext; team
   stats refusals are HTTP-429. Our `_fetch` handles both today (200-body regex +
   429 retry), but this should be validated against the content-type guard above.
+- **Proactive pacing (Session 89):** `_fetch` now paces the render-limited
+  endpoints (`/teambatstats`, `/teampitchstats`, `/gamehistory`) to the ~1/min
+  render cadence — it sleeps out the remaining window *before* firing rather than
+  firing early and eating a 429 + retry. This was a real problem on deep retro
+  leagues: a 15-year first-refresh backfill 429-stormed for ~40 min (the flat 35s
+  retry is shorter than the 60s window, so it re-429'd), which let the ratings
+  export request ID expire. `get_ratings` also now re-requests a fresh export on
+  an expired request ID instead of returning 0 rows.
 
 ---
 
