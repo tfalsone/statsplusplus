@@ -405,6 +405,7 @@ def offseason():
     extensions = osq.get_extension_candidates(tid)
     options = osq.get_option_decisions(tid)
     rule5 = osq.get_rule5(tid)
+    season_review = osq.get_season_review(tid)
     ln = cfg.settings.get("league", "League")
     # Current manual sub-phase (empty = show all panels)
     phase = ""
@@ -416,7 +417,7 @@ def offseason():
         phase = ""
     # Chronological phases + display labels + which panels each surfaces.
     phases = [
-        {"key": "playoffs", "label": "Playoffs", "icon": "🏆"},
+        {"key": "season_review", "label": "Season Review", "icon": "🎞️"},
         {"key": "arbitration", "label": "Arbitration", "icon": "⚖️"},
         {"key": "options", "label": "Options", "icon": "📄"},
         {"key": "free_agency", "label": "Free Agency", "icon": "✍️"},
@@ -425,6 +426,10 @@ def offseason():
     ]
     # Panel gating (pure helper — see offseason_queries.panels_for_phase).
     # Trades is always shown separately in the template.
+    # Guard against a stale/renamed saved phase (e.g. an old "playoffs") that no
+    # longer exists — fall back to "show all" rather than crash the stepper.
+    if phase and phase not in {p["key"] for p in phases}:
+        phase = ""
     show = osq.panels_for_phase(phase)
     # Finance panel — budget pools + derived available-to-spend (Component 3).
     from api_routes import finance_payload
@@ -438,6 +443,7 @@ def offseason():
         market=market, extensions=extensions,
         options=options,
         rule5=rule5,
+        season_review=season_review,
         phases=phases, current_phase=phase, show=show,
         finance=finance,
     )

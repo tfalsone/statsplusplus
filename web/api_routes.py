@@ -63,7 +63,7 @@ def toggle_offseason():
 
 # Offseason phases (chronological) — drives which panels the /offseason page
 # surfaces. Manual selection for now (auto-detection is future work).
-OFFSEASON_PHASES = ["playoffs", "arbitration", "options", "free_agency",
+OFFSEASON_PHASES = ["season_review", "arbitration", "options", "free_agency",
                     "rule5", "spring"]
 
 

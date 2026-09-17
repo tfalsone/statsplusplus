@@ -4,6 +4,52 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 89 (2026-09-17)
+
+### Offseason page — Season in Review tab
+
+Replaced the placeholder "Playoffs" offseason phase with a "wrapped"-style
+**Season in Review** — a data-driven recap that opens the offseason and hands
+off into the rest of the panels. All from existing data (season team/player
+stats, standings, farm FV + dev-speed); no new models; degrades to
+`has_season=False` before a season is played.
+
+- **`get_season_review(team_id)`** (`web/offseason_queries.py`) assembles: hero
+  record + pyth-vs-actual verdict + division/league finish; **What went well /
+  What to improve** (team stat categories ranked vs the league — only genuinely
+  top/bottom-third categories surface, up to 5 each, never forced); **Players of
+  the Season** (top actual-WAR performers); **Farm — Top Prospects** (FV 45+,
+  with each prospect's season *by level and affiliate*, WAR per stint);
+  **Knocking on the Door** (near-MLB contributors with a role-scaled expected
+  WAR); and a terse **Where to focus** handoff.
+- **Role-scaled contributor projections** — `peak_war` is a full-season *rate*;
+  showing it raw overstates a part-time player's actual contribution. The panel
+  now derives a projected **role** and scales expected WAR by that role's
+  realistic playing time. Pitchers route through stamina (`_pitcher_role`:
+  bullpen/swing/back-end/mid-rotation — stamina, not WAR magnitude, drives the
+  starter/reliever call, consistent with the ~stm-40 SP/RP boundary). Hitters
+  with a clear multi-tool L/R split (`_platoon_lean`, reading real split
+  ratings) are capped at a platoon role (reduced reps) — catches the
+  better-vs-RHP profile the FV model's contact-only platoon check misses.
+- **Cross-level performance line** — each top prospect's season is broken into
+  one stint per affiliate, labeled by game level + **affiliate team name** (with
+  league abbr when available), disambiguating multiple same-level stints (OOTP
+  classifies all full-season A leagues as one level). Refresh now stores each
+  minor league's `abbr` in `milb_league_map` (API-provided; takes effect next
+  refresh).
+- **Color scaling** — WAR values / player cards, FV badges, and expected-WAR
+  figures use a 5-tier red→green scale so quality reads at a glance (an FV 55
+  looks different from a 50).
+- **Removed the standalone Offseason Budget panel** from the page; the FA-budget
+  editor moved inline into the Free Agency targets cart (where the draw-down
+  actually happens). Pruned the dead `.fin-*` CSS.
+- Phase key `playoffs` → `season_review` (`app.py`, `api_routes.py`,
+  `offseason_queries.PHASE_KEYS`); route guards against a stale/renamed saved
+  phase. Tests: `tests/test_offseason.py` (+4 role/scaling unit tests, +2
+  season-review shape/empty). Full suite 935 pass.
+
+---
+
 ## Session 88 (2026-09-16)
 
 ### Development-speed metric — v1 (display)

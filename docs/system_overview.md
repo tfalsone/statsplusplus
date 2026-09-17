@@ -69,11 +69,17 @@ fv_calc.py ───────────────────────
 **Dynamic pages:** `/offseason` is a phase-aware page (behind a manual toggle in
 Settings → Dynamic Pages, stored as `offseason_mode` in `state.json`). A sub-phase
 stepper (`offseason_phase` in `state.json`) gates which panels show via
-`offseason_queries.panels_for_phase`. Panels — Arbitration (tender decisions,
-perpetual-arb-aware, `$/WAR`-scaled thresholds), Free Agency market board
-(unsigned + league-played FAs, need-flag via `get_draft_org_depth`, Proj WAR via
-the shared `compute_player_value`), Extension candidates, and always-on Trades —
-all reuse existing valuation data. Query module: `web/offseason_queries.py`.
+`offseason_queries.panels_for_phase`. Panels — **Season in Review** (a
+"wrapped"-style season recap: record + pyth verdict, league-ranked
+strengths/weaknesses, top WAR performers, farm top-prospects with per-level/
+affiliate season lines + WAR, and near-MLB "Knocking on the Door" contributors
+with role-scaled expected WAR via `get_season_review`), Arbitration (tender
+decisions, perpetual-arb-aware, `$/WAR`-scaled thresholds), Free Agency market
+board (unsigned + league-played FAs, need-flag via `get_draft_org_depth`, Proj
+WAR via the shared `compute_player_value`), Extension candidates, and always-on
+Trades — all reuse existing valuation data. The chronological phase keys are
+`season_review, arbitration, options, free_agency, rule5, spring` (the route
+guards against a stale saved phase). Query module: `web/offseason_queries.py`.
 Endpoints: `/api/toggle-offseason`, `/api/set-offseason-phase`. A **Contract
 Options** panel (`get_option_decisions`) surfaces own-team option decisions:
 team options get an Exercise/Decline rec (breakeven `proj_value > option_salary
@@ -86,14 +92,14 @@ to `prospect_fv`, ranked by FV/surplus) and a **draft-targets** side (other orgs
 eligible + MLB-viable FV ≥ 45 players). `draft_eligible` is amateur-draft
 eligibility, not a Rule 5 signal.
 
-**Offseason budget (finance settings):** the `/offseason` page has an Offseason
-Budget panel driven by per-league finance settings
+**Offseason budget (finance settings):** driven by per-league finance settings
 (`statsplusplus.config.finance_settings`, stored as
 `config/finance_settings.json`). Rather than reconstruct OOTP's cash-flow-based
 budget math (which isn't fully recoverable from stored data), the user enters the
-two figures the game already shows on the contract-offer screen — "money for free
-agents" (`fa_budget`) and "money for extensions" (`ext_budget`). These are
-authoritative; the FA cart draws down from `fa_budget`
+free-agent figure the game already shows on the contract-offer screen — "money
+for free agents" (`fa_budget`). The standalone budget panel was removed (Session
+89); the editor is now inline in the Free Agency **targets cart**, where the
+draw-down happens. The FA cart draws down from `fa_budget`
 (`finance_settings.available_for_fa`, pure). Each FA row carries a
 **recommended contract** (`finance_settings.recommended_contract` — value-based
 `aav = max(proj_war × $/WAR, min_salary)`, age-curve length; a cost *estimate*,

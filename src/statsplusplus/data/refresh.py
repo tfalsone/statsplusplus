@@ -890,23 +890,26 @@ def refresh_league(year, game_date=None, full=False):
         settings_path = league_dir / "config" / "league_settings.json"
         if settings_path.exists():
             s = json.loads(settings_path.read_text())
-            s["minor_leagues"] = [{"lid": lg["league_id"], "name": lg["name"], "level": lg["level"]}
+            s["minor_leagues"] = [{"lid": lg["league_id"], "name": lg["name"],
+                                   "level": lg["level"], "abbr": lg.get("abbr")}
                                   for lg in lgdata.get("leagues", [])
                                   if lg["league_id"] in milb_lids]
             s["primary_league_id"] = primary_lid
 
-            # Cumulative league_id → {name, level} map. Leagues get reorganized
-            # over the years (renamed, promoted, removed), but historical stat
-            # rows keep referencing the league_id they were played in. We merge
-            # each refresh's current minor leagues into this persistent map so
-            # historical league_ids retain a level/name mapping even after they
-            # disappear from the current /lgdata structure. Current data wins on
-            # conflict (a league's present level/name is authoritative).
+            # Cumulative league_id → {name, level, abbr} map. Leagues get
+            # reorganized over the years (renamed, promoted, removed), but
+            # historical stat rows keep referencing the league_id they were
+            # played in. We merge each refresh's current minor leagues into this
+            # persistent map so historical league_ids retain a level/name/abbr
+            # mapping even after they disappear from the current /lgdata
+            # structure. Current data wins on conflict (a league's present
+            # level/name is authoritative).
             league_map = s.get("milb_league_map", {})
             for lg in lgdata.get("leagues", []):
                 if lg["league_id"] in milb_lids:
                     league_map[str(lg["league_id"])] = {
                         "name": lg["name"], "level": lg["level"],
+                        "abbr": lg.get("abbr"),
                     }
             s["milb_league_map"] = league_map
 

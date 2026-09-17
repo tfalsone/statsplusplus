@@ -193,15 +193,108 @@ def test_market_board_carries_recommended_contract(q):
 
 
 # ---------------------------------------------------------------------------
+# Season in Review
+# ---------------------------------------------------------------------------
+
+def test_season_review_shape(q, monkeypatch):
+    """get_season_review returns a coherent payload against the fixture league
+    (which has team stats), including strengths/fixes ranking and a focus list."""
+    # team_queries.get_standings() (used by the review) needs the same wiring.
+    import team_queries as tq
+    from statsplusplus.config.league_config import LeagueConfig
+    from statsplusplus.config.league_context import get_league_dir
+    from statsplusplus.data.db import get_connection
+    ld = get_league_dir(_SLUG)
+    conn = get_connection(ld)
+    monkeypatch.setattr(tq, "get_db", lambda: conn)
+    monkeypatch.setattr(tq, "get_cfg", lambda: LeagueConfig(base_dir=ld))
+    monkeypatch.setattr(tq, "my_team_id", lambda: TEAM_ID)
+    monkeypatch.setattr(tq, "_get_state", lambda: json.loads(
+        (ld / "config" / "state.json").read_text()))
+
+    sr = q.get_season_review(TEAM_ID)
+    assert sr["has_season"] is True
+    assert sr["year"] == YEAR
+    # ranking lists are always present (may be empty in a 2-team fixture)
+    assert isinstance(sr["wins"], list) and isinstance(sr["fixes"], list)
+    assert isinstance(sr["players"]["hitters"], list)
+    assert isinstance(sr["farm"]["top_prospects"], list)
+    assert isinstance(sr["farm"]["risers"], list)
+    assert isinstance(sr["farm"]["contributors"], list)
+    assert isinstance(sr["focus"], list) and len(sr["focus"]) >= 1
+    conn.close()
+
+
+def test_season_review_no_season(q, monkeypatch):
+    """With no team stats, the review degrades gracefully to has_season=False."""
+    conn = q.get_db()
+    conn.execute("DELETE FROM team_batting_stats")
+    conn.commit()
+    sr = q.get_season_review(TEAM_ID)
+    assert sr == {"has_season": False}
+
+
+# ---------------------------------------------------------------------------
+# Contributor role / playing-time scaling (pure helpers)
+# ---------------------------------------------------------------------------
+
+def test_contributor_role_hitter_tiers():
+    import offseason_queries as osq
+    # Star rate → full reps; regular → 0.75; low rate → platoon/bench 0.5.
+    assert osq._contributor_role(3.8, False)[2] == 1.0
+    assert osq._contributor_role(2.0, False)[0] == "regular"
+    assert osq._contributor_role(2.0, False)[2] == 0.75
+    label, _, frac = osq._contributor_role(1.0, False)
+    assert label == "platoon / bench bat" and frac == 0.50
+
+
+def test_pitcher_role_stamina_drives_rotation_vs_pen():
+    import offseason_queries as osq
+    # Low stamina (<40) → bullpen regardless of a starter-ish rate.
+    label, _, frac = osq._contributor_role(1.7, True, fv=45, stamina=38, bucket="SP")
+    assert "reliever" in label or "bullpen" in label
+    assert frac <= 0.55
+    # Fringe stamina (<48) → swing / long reliever.
+    label2, _, _ = osq._contributor_role(1.7, True, fv=45, stamina=40, bucket="SP")
+    assert "swing" in label2 or "long" in label2
+    # Real starter build → rotation label, higher playing-time fraction.
+    label3, _, frac3 = osq._contributor_role(2.2, True, fv=50, stamina=65, bucket="SP")
+    assert "starter" in label3 and frac3 >= 0.70
+
+
+def test_platoon_lean_detects_multi_tool_split():
+    import offseason_queries as osq
+    # LHH better vs RHP across power/gap/eye (Coronado-style) → platoon lean.
+    row = {"cntct_l": 45, "cntct_r": 45, "pow_l": 45, "pow_r": 55,
+           "gap_l": 50, "gap_r": 60, "eye_l": 40, "eye_r": 55}
+    assert osq._platoon_lean(row) is True
+    # Balanced bat → no lean.
+    even = {"cntct_l": 50, "cntct_r": 50, "pow_l": 50, "pow_r": 50,
+            "gap_l": 50, "gap_r": 50, "eye_l": 50, "eye_r": 50}
+    assert osq._platoon_lean(even) is False
+    assert osq._platoon_lean(None) is False
+
+
+def test_war_range_formatting():
+    import offseason_queries as osq
+    assert osq._war_range(None, 1.0) is None
+    # rate 2.0 × 0.75 = 1.5 → "1.3–1.7"
+    assert osq._war_range(2.0, 0.75) == "1.3–1.7"
+    # negative floor clamps at 0
+    assert osq._war_range(0.1, 0.5).startswith("0.0")
+
+
+# ---------------------------------------------------------------------------
 # Phase gating
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("phase,expect", [
-    ("", {"arbitration": True, "options": True, "free_agency": True, "extensions": True, "rule5": True}),
-    ("arbitration", {"arbitration": True, "options": False, "free_agency": False, "extensions": False, "rule5": False}),
-    ("options", {"arbitration": False, "options": True, "free_agency": False, "extensions": True, "rule5": False}),
-    ("free_agency", {"arbitration": False, "options": False, "free_agency": True, "extensions": True, "rule5": False}),
-    ("rule5", {"arbitration": False, "options": False, "free_agency": False, "extensions": False, "rule5": True}),
+    ("", {"season_review": True, "arbitration": True, "options": True, "free_agency": True, "extensions": True, "rule5": True}),
+    ("season_review", {"season_review": True, "arbitration": False, "options": False, "free_agency": False, "extensions": False, "rule5": False}),
+    ("arbitration", {"season_review": False, "arbitration": True, "options": False, "free_agency": False, "extensions": False, "rule5": False}),
+    ("options", {"season_review": False, "arbitration": False, "options": True, "free_agency": False, "extensions": True, "rule5": False}),
+    ("free_agency", {"season_review": False, "arbitration": False, "options": False, "free_agency": True, "extensions": True, "rule5": False}),
+    ("rule5", {"season_review": False, "arbitration": False, "options": False, "free_agency": False, "extensions": False, "rule5": True}),
 ])
 def test_phase_panel_gating(phase, expect):
     """panels_for_phase surfaces only the panels relevant to the phase."""

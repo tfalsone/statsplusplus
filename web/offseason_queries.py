@@ -29,7 +29,7 @@ def _eval_date(conn):
 # Chronological offseason phases (keys) — must match the OFFSEASON_PHASES list
 # in api_routes. Kept here too so the panel-gating logic is a pure, testable
 # function independent of the request layer.
-PHASE_KEYS = ["playoffs", "arbitration", "options", "free_agency", "rule5", "spring"]
+PHASE_KEYS = ["season_review", "arbitration", "options", "free_agency", "rule5", "spring"]
 
 
 def panels_for_phase(phase):
@@ -39,11 +39,487 @@ def panels_for_phase(phase):
     """
     show_all = not phase
     return {
+        "season_review": show_all or phase == "season_review",
         "arbitration": show_all or phase == "arbitration",
         "options": show_all or phase == "options",
         "free_agency": show_all or phase == "free_agency",
         "extensions": show_all or phase in ("free_agency", "options"),
         "rule5": show_all or phase == "rule5",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Season in Review — a "wrapped"-style recap that opens the offseason: where the
+# team stood, what went well / what to fix, standout players, farm development,
+# and a focus handoff into the rest of the offseason panels.
+#
+# All from data already in the DB (season team/player stats, standings, farm
+# FV + dev-speed). No new models. Degrades gracefully when a season hasn't been
+# played yet (preseason / brand-new league).
+# ---------------------------------------------------------------------------
+
+# Offensive categories where HIGHER is better; pitching where LOWER is better.
+# (col, label, direction, decimal places). Kept to meaningful, non-redundant
+# facets — power, discipline, contact, run production — so multiple can surface.
+_OFF_CATS = [("ops", "OPS", "hi", 3), ("woba", "wOBA", "hi", 3),
+             ("r", "Runs", "hi", 0), ("hr", "Home Runs", "hi", 0),
+             ("iso", "ISO (power)", "hi", 3), ("obp", "OBP", "hi", 3),
+             ("bb_pct", "Walk rate", "hi", 1), ("k_pct", "Strikeout rate", "lo", 1),
+             ("avg", "Batting avg", "hi", 3)]
+_PIT_CATS = [("era", "ERA", "lo", 2), ("fip", "FIP", "lo", 2),
+             ("k_pct", "K rate", "hi", 1), ("bb_pct", "Walk rate", "lo", 1),
+             ("hra", "HR allowed", "lo", 0), ("avg", "Opp. AVG", "lo", 3)]
+
+
+def _rank_categories(conn, tid, year, table, cats):
+    """For each (col,label,dir) category, compute the team's value and its rank
+    among all teams that played (1 = best). Returns a list of dicts.
+    """
+    cols = ",".join(c for c, _, _, _ in cats)
+    rows = conn.execute(
+        f"SELECT team_id, {cols} FROM {table} WHERE year=? AND split_id=1", (year,)
+    ).fetchall()
+    if not rows:
+        return []
+    out = []
+    n = len(rows)
+    for i, (col, label, direction, dp) in enumerate(cats):
+        vals = [(r[0], r[col]) for r in rows if r[col] is not None]
+        if not vals:
+            continue
+        # rank: best first. hi = descending, lo = ascending.
+        vals.sort(key=lambda x: x[1], reverse=(direction == "hi"))
+        rank = next((idx + 1 for idx, (t, _) in enumerate(vals) if t == tid), None)
+        team_val = next((v for t, v in vals if t == tid), None)
+        if rank is None or team_val is None:
+            continue
+        lg_avg = sum(v for _, v in vals) / len(vals)
+        out.append({
+            "label": label, "value": team_val, "dp": dp,
+            "rank": rank, "n": len(vals),
+            "lg_avg": lg_avg,
+            "pctile": round(100 * (len(vals) - rank) / (len(vals) - 1)) if len(vals) > 1 else 50,
+            "good": rank <= max(2, len(vals) // 3),
+            "bad": rank > len(vals) - max(2, len(vals) // 3),
+        })
+    return out
+
+
+def _season_players(conn, tid, year):
+    """Top WAR performers (one hitter list, one pitcher list) from actual season
+    stats, plus the biggest positive/negative surprise vs projection.
+    """
+    ed = _eval_date(conn)
+    hitters = conn.execute("""
+        SELECT b.player_id, p.name, b.war, b.hr, b.rbi, b.avg,
+               (COALESCE(b.obp,0) + COALESCE(b.slg,0)) AS ops, b.pa
+        FROM mlb_batting_stats b JOIN players p ON p.player_id = b.player_id
+        WHERE b.year=? AND b.split_id=1 AND b.team_id=? AND b.pa >= 200
+        ORDER BY b.war DESC LIMIT 3
+    """, (year, tid)).fetchall()
+    pitchers = conn.execute("""
+        SELECT pt.player_id, p.name,
+               (pt.war + COALESCE(pt.ra9war, pt.war)) / 2.0 AS war,
+               pt.w, pt.l, pt.era, pt.k, pt.outs
+        FROM mlb_pitching_stats pt JOIN players p ON p.player_id = pt.player_id
+        WHERE pt.year=? AND pt.split_id=1 AND pt.team_id=? AND pt.outs >= 300
+        ORDER BY war DESC LIMIT 3
+    """, (year, tid)).fetchall()
+
+    def _hit(r):
+        return {"pid": r[0], "name": r[1], "war": round(r[2] or 0, 1),
+                "line": f"{r[3]} HR, {r[4]} RBI, {r[6]:.3f} OPS" if r[6] is not None else f"{r[3]} HR"}
+
+    def _pit(r):
+        ip = (r[7] or 0) / 3.0
+        return {"pid": r[0], "name": r[1], "war": round(r[2] or 0, 1),
+                "line": f"{r[3]}-{r[4]}, {r[5]:.2f} ERA, {r[6]} K"}
+
+    return {
+        "hitters": [_hit(r) for r in hitters],
+        "pitchers": [_pit(r) for r in pitchers],
+    }
+
+
+def _milb_level_map(cfg):
+    """league_id -> {level:int, abbr:str} from the cumulative milb_league_map."""
+    m = {}
+    for lid, v in (cfg.settings.get("milb_league_map") or {}).items():
+        try:
+            m[int(lid)] = {"level": int(v.get("level")), "abbr": v.get("abbr")}
+        except (TypeError, ValueError):
+            continue
+    return m
+
+
+def _prospect_season_line(conn, pid, is_pitcher, year, level_map, team_names):
+    """This season's performance, one stint per affiliate the player appeared
+    at, ordered lowest level of play to highest (shows a climb). Each stint is
+    labeled with the game level (AAA/AA/A/…) plus the affiliate team name — the
+    concrete detail that disambiguates multiple stints at the same level (e.g.
+    two Single-A stops the game both calls level 4). League abbr is included
+    when available. Returns a list of {level, label, where, line} dicts.
+    """
+    from statsplusplus.utils.positions import LEVEL_DISPLAY_MAP, LEVEL_ORDER
+
+    def _where(team_id, lid):
+        """Affiliate label: team name, with league abbr as a hint when known."""
+        tname = team_names.get(team_id)
+        abbr = (level_map.get(lid) or {}).get("abbr") if lid is not None else None
+        if tname and abbr:
+            return f"{tname} ({abbr})"
+        return tname or (abbr or "")
+
+    stints = []
+    if is_pitcher:
+        rows = conn.execute("""
+            SELECT team_id, league_id, outs, era, k, war, ra9war FROM pitching_stats
+            WHERE player_id=? AND split_id=1 AND year=? AND ip > 0
+        """, (pid, year)).fetchall()
+        for r in rows:
+            lvl = 1 if r[1] is None else (level_map.get(r[1]) or {}).get("level")
+            if lvl is None:
+                continue
+            ip = (r[2] or 0) / 3.0
+            if ip < 5:
+                continue
+            # Blended WAR to match how the app reports pitcher WAR elsewhere.
+            war = ((r[5] or 0) + (r[6] if r[6] is not None else (r[5] or 0))) / 2.0
+            stints.append((lvl, {
+                "level": lvl, "label": LEVEL_DISPLAY_MAP.get(lvl, "?"),
+                "where": _where(r[0], r[1]), "war": round(war, 1),
+                "line": f"{ip:.0f} IP, {r[3]:.2f} ERA, {r[4]} K" if r[3] is not None
+                        else f"{ip:.0f} IP"}))
+    else:
+        rows = conn.execute("""
+            SELECT team_id, league_id, pa, hr, avg, obp, slg, war FROM batting_stats
+            WHERE player_id=? AND split_id=1 AND year=? AND pa > 0
+        """, (pid, year)).fetchall()
+        for r in rows:
+            lvl = 1 if r[1] is None else (level_map.get(r[1]) or {}).get("level")
+            if lvl is None or (r[2] or 0) < 25:  # skip trivial cups of coffee
+                continue
+            stints.append((lvl, {
+                "level": lvl, "label": LEVEL_DISPLAY_MAP.get(lvl, "?"),
+                "where": _where(r[0], r[1]), "war": round(r[7] or 0, 1),
+                "line": f"{r[2]} PA, {r[4]:.3f}/{r[5]:.3f}/{r[6]:.3f}, {r[3]} HR"
+                        if r[4] is not None else f"{r[2]} PA"}))
+    # order lowest level of play → highest (climb order = reverse of LEVEL_ORDER rank)
+    order = {lvl: i for i, lvl in enumerate(LEVEL_ORDER)}
+    stints.sort(key=lambda s: -order.get(s[0], 99))
+    return [d for _, d in stints]
+
+
+# Only prospects worth following — FV floor for the top-prospects summary and
+# the risers list. 45+ is a real prospect; 35/40 org filler is intentionally out.
+_FARM_MIN_FV = 45
+
+# ETA (years to MLB) at or under this counts as a near-term contributor — i.e.
+# realistically in the mix next season. AAA = 0.5, upper level pushes to 1.5.
+_CONTRIB_MAX_ETA = 1.5
+
+
+def _platoon_lean(row):
+    """Detect a clear platoon lean from a hitter's L/R split ratings. The FV
+    model's platoon penalty only fires on a severe *contact* split (weak side
+    <= 25); that misses the common profile of an otherwise-average bat who is
+    clearly better vs one hand across power/gap/eye (e.g. a LHH mashing RHP but
+    exposed vs LHP). Such a player is a platoon/bench piece, not a regular, and
+    won't get a full season of reps.
+
+    Returns True when at least two offensive tools lean >= 10 points to the
+    same side (i.e. a consistent, meaningful platoon split). Reads split columns
+    off a latest_ratings row (may be None). Conservative: only flags a clear,
+    same-direction lean.
+    """
+    if row is None:
+        return False
+    pairs = [(row["cntct_l"], row["cntct_r"]), (row["pow_l"], row["pow_r"]),
+             (row["gap_l"], row["gap_r"]), (row["eye_l"], row["eye_r"])]
+    lean_r = lean_l = 0
+    for l, r in pairs:
+        if l is None or r is None:
+            continue
+        if r - l >= 10:
+            lean_r += 1
+        elif l - r >= 10:
+            lean_l += 1
+    return lean_r >= 2 or lean_l >= 2
+
+
+def _pitcher_role(peak_war, fv, stamina, bucket):
+    """Project a pitcher's MLB role from stamina + quality, not WAR magnitude
+    alone. Stamina is the honest starter/reliever discriminator (the SP/RP
+    boundary sits ~stm 40; the composite already penalizes stm<40 and
+    assign_bucket reroutes low-stamina "SP" to RP). A high-WAR-rate arm with a
+    starter's build is a rotation piece; the same rate on a low-stamina arm is a
+    bullpen/swing profile that won't hold a rotation spot.
+
+    Returns (label, css_class, pt_fraction). Relievers/swing arms throw far
+    fewer innings, so their fraction is lower regardless of rate.
+    """
+    st = stamina or 0
+    # True relief prospect (bucket says RP, or stamina below the SP boundary).
+    if bucket == "RP" or st < 40:
+        if peak_war is not None and peak_war >= 1.5 and st >= 30:
+            return "high-leverage reliever", "good", 0.55
+        return "bullpen arm", "ok", 0.40
+    # Fringe starter build (low-end stamina): more likely swing/long-man than
+    # a rotation regular even if the rate looks starter-ish.
+    if st < 48:
+        return "swing / long reliever", "ok", 0.50
+    # Real starter build.
+    if peak_war is not None and peak_war >= 2.5:
+        return "mid-rotation starter", "good", 0.85
+    if peak_war is not None and peak_war >= 1.5:
+        return "back-end starter", "good", 0.70
+    return "depth starter", "ok", 0.50
+
+
+def _contributor_role(peak_war, is_pitcher, fv=None, stamina=None, bucket=None):
+    """Map a full-season peak-WAR *rate* to a projected role and the share of a
+    full season's playing time that role realistically gets. The role — not the
+    raw rate — is what a GM plans around: an "everyday contributor" gets ~full
+    reps, a "role player" (platoon bat / swing arm / bench) gets far fewer, so
+    his *accumulated* next-season WAR is well below his full-season rate.
+
+    Pitchers route through _pitcher_role (stamina-aware). Hitters use WAR tier.
+    Returns (label, css_class, pt_fraction).
+    """
+    if is_pitcher:
+        return _pitcher_role(peak_war, fv, stamina, bucket)
+    if peak_war is None:
+        return "depth", "ok", 0.35
+    if peak_war >= 3.5:
+        return "impact talent", "good", 1.0     # everyday star — full reps
+    if peak_war >= 2.5:
+        return "everyday contributor", "good", 0.90
+    if peak_war >= 1.5:
+        return "regular", "good", 0.75
+    if peak_war >= 0.8:
+        return "platoon / bench bat", "ok", 0.50
+    return "depth", "ok", 0.35
+
+
+def _war_range(rate, frac):
+    """Expected next-season WAR from a full-season rate and a role playing-time
+    fraction, expressed as a small range to avoid false precision. Returns a
+    display string like "0.8–1.1" (or "1.0" when the band is tight)."""
+    if rate is None:
+        return None
+    mid = rate * frac
+    lo = max(0.0, mid - 0.2)
+    hi = mid + 0.2
+    if round(lo, 1) == round(hi, 1):
+        return f"{mid:.1f}"
+    return f"{lo:.1f}–{hi:.1f}"
+
+
+def _farm_contributors(conn, tid, ed):
+    """Prospects realistically knocking on the MLB door — FV 45+, near-term ETA
+    (AAA/upper level) — with a projected ROLE and a role-scaled expected WAR
+    contribution for next season. This is the concrete answer to "what internal
+    help is coming."
+
+    Note on WAR: `peak_war` is a full-season *rate* (the calibrated tables are
+    fit on regular-playing-time players). Showing it raw overstates a part-time
+    player's actual contribution (a platoon bat won't get 600 PA). We surface
+    the role's realistic playing-time-scaled expectation as the headline, with
+    the full-season rate as secondary context.
+
+    Sorted by ETA (soonest first) then full-season rate.
+    """
+    from statsplusplus.utils.positions import YEARS_TO_MLB
+    rows = conn.execute(f"""
+        SELECT p.player_id AS pid, p.name AS name, p.age AS age, p.role AS grole,
+               pe.fv AS fv, pe.fv_str AS fv_str, pe.bucket AS bucket, pe.level AS level,
+               pe.peak_war AS peak_war, pe.risk AS risk, lr.stm AS stm,
+               lr.cntct_l, lr.cntct_r, lr.pow_l, lr.pow_r,
+               lr.gap_l, lr.gap_r, lr.eye_l, lr.eye_r
+        FROM player_evaluation pe JOIN players p ON pe.player_id = p.player_id
+        LEFT JOIN latest_ratings lr ON lr.player_id = pe.player_id
+        WHERE pe.eval_date=? AND {ORG_ID_SQL}=? AND pe.fv >= ?
+          AND pe.level IN ('AAA', 'AA')
+        ORDER BY pe.peak_war DESC
+    """, (ed, tid, _FARM_MIN_FV)).fetchall()
+    out = []
+    for r in rows:
+        lvlkey = (r["level"] or "").lower()
+        eta = YEARS_TO_MLB.get(lvlkey)
+        if eta is None or eta > _CONTRIB_MAX_ETA:
+            continue
+        is_pitcher = r["grole"] in (11, 12, 13)
+        rate = r["peak_war"]
+        role, role_class, frac = _contributor_role(
+            rate, is_pitcher, fv=r["fv"], stamina=r["stm"], bucket=r["bucket"])
+        # A clear platoon lean caps the bat at a platoon role (reduced reps),
+        # even if his full-season rate reads like a regular's. Only demotes.
+        if not is_pitcher and _platoon_lean(r) and frac > 0.50:
+            role, role_class, frac = "platoon bat", "ok", 0.50
+        out.append({
+            "pid": r["pid"], "name": r["name"], "age": r["age"],
+            "pos": _display_pos(r["bucket"]) if r["bucket"] else "?",
+            "fv_str": r["fv_str"] or "", "level": r["level"] or "",
+            "full_war": round(rate, 1) if rate is not None else None,
+            "exp_war": _war_range(rate, frac),
+            "exp_mid": round(rate * frac, 1) if rate is not None else None,
+            "eta": "next season" if eta <= 0.5 else "1–2 years",
+            "eta_sort": eta,
+            "risk": r["risk"] or "",
+            "role": role, "role_class": role_class,
+        })
+    out.sort(key=lambda x: (x["eta_sort"], -(x["full_war"] or 0)))
+    return out[:8]
+
+
+def _farm_development(conn, tid, year, cfg):
+    """Development story for the org this season:
+      - top_prospects : the system's best by FV (regardless of dev signal), each
+                        with a cross-level performance line for the season.
+      - risers        : dev-speed Rising, quality-gated to FV >= _FARM_MIN_FV,
+                        sorted by FV then dev-speed z. (Empty pre-refresh.)
+    """
+    ed = _eval_date(conn)
+    if ed is None:
+        return {"top_prospects": [], "risers": [], "contributors": []}
+    level_map = _milb_level_map(cfg)
+    team_names = dict(conn.execute("SELECT team_id, name FROM teams").fetchall())
+
+    top_prospects = []
+    for r in conn.execute(f"""
+        SELECT p.player_id AS pid, p.name AS name, p.age AS age, p.role AS role,
+               pf.fv AS fv, pf.fv_str AS fv_str, pf.bucket AS bucket,
+               pf.risk AS risk, pf.level AS level
+        FROM prospect_fv pf JOIN players p ON pf.player_id = p.player_id
+        WHERE pf.eval_date=? AND {ORG_ID_SQL}=? AND pf.fv >= ?
+        ORDER BY pf.fv DESC, pf.prospect_surplus DESC, p.age ASC
+        LIMIT 8
+    """, (ed, tid, _FARM_MIN_FV)).fetchall():
+        is_pitcher = r["role"] in (11, 12, 13)
+        top_prospects.append({
+            "pid": r["pid"], "name": r["name"], "age": r["age"],
+            "pos": _display_pos(r["bucket"]) if r["bucket"] else "?",
+            "fv": r["fv"] or 0, "fv_str": r["fv_str"] or str(r["fv"] or 0),
+            "risk": r["risk"] or "", "level": r["level"] or "",
+            "stints": _prospect_season_line(conn, r["pid"], is_pitcher, year,
+                                            level_map, team_names),
+        })
+
+    # Risers: dev-speed Rising, quality-gated by FV, sorted by FV then z.
+    risers = []
+    has_dev = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dev_speed'").fetchone()
+    if has_dev:
+        for r in conn.execute(f"""
+            SELECT p.player_id AS pid, p.name AS name, ds.z AS z, ds.label AS label,
+                   pf.fv AS fv, pf.fv_str AS fv_str, pf.bucket AS bucket, pf.level AS level
+            FROM dev_speed ds
+            JOIN players p ON p.player_id = ds.player_id
+            JOIN prospect_fv pf ON pf.player_id = ds.player_id AND pf.eval_date=?
+            WHERE {ORG_ID_SQL}=? AND ds.available=1 AND ds.css_class='rising'
+              AND pf.fv >= ?
+            ORDER BY pf.fv DESC, ds.z DESC
+            LIMIT 6
+        """, (ed, tid, _FARM_MIN_FV)).fetchall():
+            risers.append({
+                "pid": r["pid"], "name": r["name"],
+                "z": round(r["z"], 1) if r["z"] is not None else None,
+                "label": r["label"] or "Rising",
+                "fv": r["fv"] or 0, "fv_str": r["fv_str"] or str(r["fv"] or 0),
+                "pos": _display_pos(r["bucket"]) if r["bucket"] else "?",
+                "level": r["level"] or "",
+            })
+    return {"top_prospects": top_prospects, "risers": risers,
+            "contributors": _farm_contributors(conn, tid, ed)}
+
+
+def get_season_review(team_id):
+    """Assemble the Season in Review payload. See section comment above."""
+    conn = get_db()
+    cfg = get_cfg()
+    import team_queries
+
+    # Season year = latest year with team stats (handles offseason where the
+    # just-completed season is the prior calendar year in some setups).
+    yr = conn.execute(
+        "SELECT MAX(year) FROM team_batting_stats WHERE split_id=1").fetchone()[0]
+    if yr is None:
+        return {"has_season": False}
+
+    # Standings row for our team (record, pyth, run diff).
+    standings = team_queries.get_standings()
+    me = next((r for r in standings if r["tid"] == team_id), None)
+    div = None
+    if me:
+        # division finish
+        my_div = me.get("div")
+        div_rows = [r for r in standings if r.get("div") == my_div]
+        div_rows.sort(key=lambda x: -x["pct"])
+        div = {"rank": next((i + 1 for i, r in enumerate(div_rows)
+                             if r["tid"] == team_id), None),
+               "n": len(div_rows), "name": my_div}
+
+    # Pyth-vs-actual verdict.
+    verdict = None
+    if me and me.get("has_actual"):
+        delta = round(me["w"] - me["pyth_w"])
+        if delta >= 3:
+            verdict = {"delta": delta, "text": f"Won {delta} more than run differential suggests — "
+                       "outperformed the underlying numbers (regression risk, or a strong bullpen/clutch year).",
+                       "tone": "warn"}
+        elif delta <= -3:
+            verdict = {"delta": delta, "text": f"Won {abs(delta)} fewer than run differential suggests — "
+                       "the underlying performance was better than the record (bullpen or luck drag).",
+                       "tone": "good"}
+        else:
+            verdict = {"delta": delta, "text": "Record closely matched the run differential — "
+                       "the season played to its true talent.", "tone": "neutral"}
+
+    strengths_off = _rank_categories(conn, team_id, yr, "team_batting_stats", _OFF_CATS)
+    strengths_pit = _rank_categories(conn, team_id, yr, "team_pitching_stats", _PIT_CATS)
+    all_cats = strengths_off + strengths_pit
+    # Show every genuinely-good / genuinely-bad category (capped for layout),
+    # never forcing a metric that isn't actually a strength or weakness.
+    wins = sorted([c for c in all_cats if c["good"]], key=lambda x: x["rank"])[:5]
+    fixes = sorted([c for c in all_cats if c["bad"]], key=lambda x: -x["rank"])[:5]
+
+    players = _season_players(conn, team_id, yr)
+    farm = _farm_development(conn, team_id, yr, cfg)
+
+    # Focus handoff: short, directive takeaways — the weakest area to address
+    # and whether the farm covers it, without restating the panels above.
+    focus = []
+    if fixes:
+        labels = ", ".join(c["label"] for c in fixes[:2])
+        focus.append(f"Address {labels} — {'this is' if len(fixes[:2]) == 1 else 'these are'} "
+                     "your weakest area vs the league.")
+    contributors = farm["contributors"]
+    soon = [c for c in contributors if c["eta"] == "next season"]
+    # Positions the near-term contributors can cover (dedup, keep order).
+    covered = []
+    for c in soon:
+        if c["pos"] not in covered:
+            covered.append(c["pos"])
+    if soon:
+        focus.append(f"Internal help is close: {len(soon)} MLB-ready prospect"
+                     f"{'s' if len(soon) != 1 else ''} ({', '.join(covered[:4])}) — "
+                     "don't overpay outside for what's already coming.")
+    elif contributors:
+        focus.append("Farm help is a year or two out — free agency and trades cover the short term.")
+    else:
+        focus.append("No near-term farm help — the roster must be built through free agency and trades.")
+
+    return {
+        "has_season": True,
+        "year": yr,
+        "team": me,
+        "division": div,
+        "verdict": verdict,
+        "wins": wins,
+        "fixes": fixes,
+        "players": players,
+        "farm": farm,
+        "focus": focus,
     }
 
 
