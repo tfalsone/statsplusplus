@@ -6,6 +6,24 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ## Session 90 (2026-09-18)
 
+### Bug fix — draft board: stale pool from a prior draft
+
+The auto-draft list (and the page board) could show a *previous* draft's
+players. `draft_pool.json` persists on disk, and the `uploaded` state
+unconditionally won whenever that file existed — but once a draft completes, its
+pool players get drafted and move off the amateur levels (0/10/11) into org
+systems. A leftover pool from a past draft was still treated as current.
+
+- **Staleness guard** — a `draft_pool.json` is now validated against the DB: if
+  fewer than half its players are still on amateur (draft-eligible) levels, it's
+  a prior draft's pool. `get_draft_pool` discards it and falls through to the
+  live-API (`active`) or DB-approximation (`pre_draft`) pool (per draft-page spec
+  State 3). `draft_board.load_board` raises `StalePoolError`; the auto-draft-list
+  and sim endpoints surface it as a clear "upload the current pool" message (409)
+  instead of generating a bad list.
+- Tests: `tests/test_draft_league_context.py` (+ stale/fresh/foreign/empty pool
+  cases).
+
 ### Bug fix — draft board: auto-draft list built from the wrong league
 
 A user's auto-draft list showed names that didn't match the players their links

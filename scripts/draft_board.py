@@ -74,6 +74,33 @@ def _load_pool_ids(league_dir=None):
     return json.loads(pool_path.read_text())["player_ids"]
 
 
+class StalePoolError(Exception):
+    """The uploaded draft pool is from a prior draft (players already drafted)."""
+
+
+# Amateur (draft-eligible) DB levels. A fresh pool is predominantly these; a
+# prior draft's pool has mostly moved into org levels.
+_AMATEUR_LEVELS = {"0", "10", "11"}
+_POOL_FRESH_MIN_AMATEUR_FRAC = 0.5
+
+
+def _pool_is_stale(conn, pool_ids):
+    """True if the uploaded pool looks like a *prior* draft's pool — most of its
+    players are no longer on amateur levels (they've been drafted). Conservative:
+    empty pool → not stale; only flags when clearly so.
+    """
+    if not pool_ids:
+        return False
+    sample = pool_ids if len(pool_ids) <= 300 else pool_ids[:300]
+    ph = ",".join("?" * len(sample))
+    rows = conn.execute(
+        f"SELECT level FROM players WHERE player_id IN ({ph})", sample).fetchall()
+    if not rows:
+        return True  # none resolve in this DB — stale/foreign
+    amateur = sum(1 for r in rows if str(r[0]) in _AMATEUR_LEVELS)
+    return (amateur / len(rows)) < _POOL_FRESH_MIN_AMATEUR_FRAC
+
+
 def _query_board(conn, pids):
     ph = ",".join("?" * len(pids))
     sql = _BOARD_SQL.format(placeholders=ph)
@@ -109,6 +136,11 @@ def load_board(league_dir=None):
     """
     conn = _connect(league_dir)
     pids = _load_pool_ids(league_dir)
+    if _pool_is_stale(conn, pids):
+        raise StalePoolError(
+            "The uploaded draft pool is from a previous draft (its players have "
+            "already been drafted). Upload the current draft-eligible export via "
+            "'Upload Pool' to generate an accurate list.")
     rows = _query_board(conn, pids)
     num_teams = _get_num_teams(league_dir)
     adp = compute_adp(rows, num_teams)
