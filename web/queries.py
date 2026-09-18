@@ -937,6 +937,18 @@ def get_draft_pool():
     conn = get_db()
     amateur_levels = _detect_amateur_levels(conn)
 
+    # Draft year — used by the web UI to namespace per-draft pick storage so a
+    # newly uploaded pool never inherits a prior draft's picks (localStorage).
+    draft_year = None
+    try:
+        from statsplusplus.config.league_context import get_league_dir as _gld
+        import json as _sj
+        _state_path = _gld() / "config" / "state.json"
+        if _state_path.exists():
+            draft_year = _sj.loads(_state_path.read_text()).get("year")
+    except Exception:
+        draft_year = None
+
     from statsplusplus.data.fv_calc import RATINGS_SQL
     from statsplusplus.utils.positions import assign_bucket, LEVEL_NORM_AGE; from statsplusplus.evaluation.fv import calc_fv_from_dict as calc_fv; from statsplusplus.config.ratings import norm
 
@@ -1158,13 +1170,13 @@ def get_draft_pool():
         _annotate_adp(results)
         for i, r in enumerate(results):
             r['rank'] = i + 1
-        return {"state": state, "players": results, "picks": []}
+        return {"state": state, "players": results, "picks": [], "year": draft_year}
 
     elif state == "active":
         # Use draft API player IDs as the definitive pool
         pick_pids = [p["pid"] for p in picks]
         if not pick_pids:
-            return {"state": state, "players": [], "picks": picks}
+            return {"state": state, "players": [], "picks": picks, "year": draft_year}
         placeholders = ",".join("?" * len(pick_pids))
         sql = _DRAFT_SQL + f" AND r.player_id IN ({placeholders})"
         rows = conn.execute(sql, pick_pids).fetchall()
@@ -1176,7 +1188,7 @@ def get_draft_pool():
         _annotate_adp(results)
         for i, r in enumerate(results):
             r['rank'] = i + 1
-        return {"state": state, "players": results, "picks": picks}
+        return {"state": state, "players": results, "picks": picks, "year": draft_year}
 
     elif state == "pre_draft" and amateur_levels:
         # Scouting approximation: top 800 amateurs by Pot. Discard API picks — stale from prior draft.
@@ -1192,9 +1204,9 @@ def get_draft_pool():
         _annotate_adp(results)
         for i, r in enumerate(results):
             r['rank'] = i + 1
-        return {"state": state, "players": results, "picks": []}
+        return {"state": state, "players": results, "picks": [], "year": draft_year}
 
-    return {"state": "no_data", "players": [], "picks": []}
+    return {"state": "no_data", "players": [], "picks": [], "year": draft_year}
 
 
 

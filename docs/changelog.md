@@ -4,6 +4,29 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 90 (2026-09-18)
+
+### Bug fix — draft board: phantom picks carried across drafts
+
+Draft picks were persisted in `localStorage` under a league-slug-only key
+(`draft_picks_<slug>`), so a *new* draft in the same league inherited the prior
+draft's picks — players showed as already "picked" in a fresh draft.
+
+- **Namespace pick storage per-draft** (`slug + game year`,
+  `draft_picks_<slug>_<year>`) so successive drafts start clean. `get_draft_pool`
+  now returns the game `year` (from `state.json`) alongside state/players/picks;
+  the league template emits it as `DRAFT_YEAR` and keys pick storage on it.
+- **Self-heal:** the legacy un-namespaced key is purged on every load (safe —
+  the server is authoritative for picks via `DRAFT_PICKS_INIT`, re-syncable via
+  "Update Picks"; local storage is only a convenience overlay). When the year is
+  unavailable the key falls back to a stable `_x` suffix, never the legacy key,
+  so the legacy key can always be discarded.
+- **Fresh upload clears picks** — uploading a new draft pool now clears both the
+  namespaced and legacy pick keys, since a new pool defines a new draft.
+
+Cleanup: removed the throwaway `scripts/engine_diff.py` (OOTP 26→27 ratings-drift
+analysis tool) and its baseline tables. Full suite 939 pass.
+
 ## Session 89 (2026-09-17)
 
 ### Bug fix — refresh: ratings-export resilience + proactive rate-limit pacing

@@ -1249,7 +1249,19 @@ var DRAFT_PICKS_INIT = {{ draft_pool.picks|tojson if draft_pool else '[]' }};
 
 // Restore picks from localStorage, then overlay server-provided picks
 var LEAGUE_SLUG = {{ active_league_slug|tojson }};
-var DRAFT_PICKS_KEY = 'draft_picks_' + LEAGUE_SLUG;
+var DRAFT_YEAR = {{ draft_pool.year|tojson if draft_pool and draft_pool.year else 'null' }};
+// Namespace pick storage per-draft (slug + game year) so a newly uploaded
+// draft pool never inherits a prior draft's picks. When the year is
+// unavailable we fall back to a stable namespaced key ('_x') rather than the
+// legacy un-namespaced key, so the legacy key can always be safely purged.
+var DRAFT_PICKS_KEY = 'draft_picks_' + LEAGUE_SLUG + '_' + (DRAFT_YEAR || 'x');
+var DRAFT_PICKS_LEGACY_KEY = 'draft_picks_' + LEAGUE_SLUG;
+// One-time cleanup (rollout self-heal): always drop the legacy un-namespaced
+// key. It was the source of stale cross-draft picks (phantom "picked"
+// players). The server is authoritative for picks via DRAFT_PICKS_INIT, and
+// current picks re-sync via "Update Picks", so discarding it is safe and
+// requires no user action.
+try { localStorage.removeItem(DRAFT_PICKS_LEGACY_KEY); } catch(e) {}
 try {
   var stored = JSON.parse(localStorage.getItem(DRAFT_PICKS_KEY) || '[]');
   stored.forEach(function(p) { draftPicks[p.pid] = p; });
@@ -1353,7 +1365,15 @@ function uploadDraftPool(input) {
   fetch('/api/draft-pool-upload', {method: 'POST', body: fd})
     .then(function(r) { return r.json(); }).then(function(d) {
       input.value = '';
-      if (d.ok) { alert('Uploaded ' + d.total + ' players. Reloading…'); location.reload(); }
+      if (d.ok) {
+        // A freshly uploaded pool defines a new draft — clear any stored picks
+        // (namespaced and legacy) so nothing carries over from a prior draft.
+        try {
+          if (typeof DRAFT_PICKS_KEY !== 'undefined') localStorage.removeItem(DRAFT_PICKS_KEY);
+          if (typeof DRAFT_PICKS_LEGACY_KEY !== 'undefined') localStorage.removeItem(DRAFT_PICKS_LEGACY_KEY);
+        } catch(e) {}
+        alert('Uploaded ' + d.total + ' players. Reloading…'); location.reload();
+      }
       else { alert('Upload failed: ' + d.error); }
     }).catch(function() { alert('Upload failed'); });
 }
