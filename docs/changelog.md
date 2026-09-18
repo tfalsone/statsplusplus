@@ -6,6 +6,29 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ## Session 90 (2026-09-18)
 
+### Bug fix — draft board: auto-draft list built from the wrong league
+
+A user's auto-draft list showed names that didn't match the players their links
+resolved to (e.g. list said "Aurélien Jolivet" but the player page showed "Jimmy
+Pappas"). Root cause: the web draft endpoints (`/api/draft-upload-list`,
+`/api/draft-sim`, pool upload, draft/finance settings) resolved their league via
+the **process-global** active league (`app_config.json`) through bare
+`get_league_dir()` / `LeagueConfig()` in `draft_board`, while the page itself
+(and its `/player/<pid>` links) uses the **session** league set by the nav's
+switch-league dropdown. When those differed, the board was built from one
+league's DB and the links resolved against another — cross-league name/ID leak.
+
+- **`draft_board` data helpers now accept an explicit `league_dir`** (`_connect`,
+  `_load_pool_ids`, `_get_num_teams`, `load_board`, `compute_org_needs`),
+  falling back to the global active league only when none is passed (CLI path,
+  unchanged).
+- **All draft/finance API endpoints pass the request-scoped league**
+  (`_get_cfg().league_dir`, session-aware) into `draft_board` and the settings
+  loaders/savers — fixing the same latent cross-league bug for pool upload,
+  draft settings, and finance settings too.
+- Tests: `tests/test_draft_league_context.py` (helpers honor the passed
+  `league_dir` over the global active league; CLI fallback preserved).
+
 ### Bug fix — draft board: phantom picks carried across drafts
 
 Draft picks were persisted in `localStorage` under a league-slug-only key

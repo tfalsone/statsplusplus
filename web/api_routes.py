@@ -14,7 +14,6 @@ from flask import Blueprint, g, jsonify, request, session
 
 from statsplusplus.config.league_context import (
     APP_CONFIG_PATH,
-    get_league_dir,
     get_statsplus_cookie,
     set_statsplus_cookie,
     get_statsplus_token,
@@ -96,7 +95,7 @@ def finance_payload(team_id):
     cart commitments — 0 until the FA cart exists).
     """
     from statsplusplus.config import finance_settings as fin
-    settings = fin.load_settings(get_league_dir())
+    settings = fin.load_settings(_get_cfg().league_dir)
     return {
         "settings": settings,
         "available": fin.available_for_fa(settings),
@@ -126,7 +125,7 @@ def api_finance_settings_post():
     try:
         import queries
         from statsplusplus.config import finance_settings as fin
-        fin.save_settings(get_league_dir(), settings)
+        fin.save_settings(_get_cfg().league_dir, settings)
         return jsonify({"ok": True, **finance_payload(queries.get_my_team_id())})
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -513,7 +512,7 @@ def api_draft_pool_upload():
                 pids.append(int(val))
         if not pids:
             return jsonify({"ok": False, "error": "No valid player IDs found in file"}), 400
-        pool_path = get_league_dir() / "config" / "draft_pool.json"
+        pool_path = _get_cfg().league_dir / "config" / "draft_pool.json"
         pool_path.write_text(json.dumps({"player_ids": pids}, indent=2))
         return jsonify({"ok": True, "total": len(pids)})
     except Exception as e:
@@ -528,8 +527,9 @@ def api_draft_sim():
         from draft_board import load_board, simulate_draft
         from draft_settings import load_settings
 
-        league_dir = get_league_dir()
-        rows, adp, needs, num_teams, conn = load_board()
+        # Session-aware league (see api_draft_upload_list note).
+        league_dir = _get_cfg().league_dir
+        rows, adp, needs, num_teams, conn = load_board(league_dir)
         pick_pos = data.get("pick", 30)
         num_rounds = data.get("rounds", 7)
         seed = data.get("seed")
@@ -565,8 +565,11 @@ def api_draft_upload_list():
         from draft_board import load_board, build_pick_list
         from draft_settings import load_settings
 
-        league_dir = get_league_dir()
-        rows, adp, needs, num_teams, conn = load_board()
+        # Use the REQUEST's league (session-aware), not the process-global active
+        # league — they can differ when the user switched leagues in the nav, and
+        # a mismatch builds the board from the wrong league (cross-league leak).
+        league_dir = _get_cfg().league_dir
+        rows, adp, needs, num_teams, conn = load_board(league_dir)
 
         if exclude_pids:
             rows = [r for r in rows if r["player_id"] not in exclude_pids]
@@ -596,7 +599,7 @@ def api_draft_settings_get():
     """Return current draft board settings for the active league."""
     try:
         from draft_settings import load_settings, PRESETS
-        settings = load_settings(get_league_dir())
+        settings = load_settings(_get_cfg().league_dir)
         return jsonify({"ok": True, "settings": settings, "presets": PRESETS})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -611,7 +614,7 @@ def api_draft_settings_post():
         return jsonify({"ok": False, "error": "Missing 'settings' in request body"}), 400
     try:
         from draft_settings import save_settings
-        save_settings(get_league_dir(), settings)
+        save_settings(_get_cfg().league_dir, settings)
         return jsonify({"ok": True})
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -634,7 +637,7 @@ def api_draft_settings_copy():
         if not source_dir.exists():
             return jsonify({"ok": False, "error": f"League '{from_league}' not found"}), 404
 
-        copied = copy_settings(source_dir, get_league_dir())
+        copied = copy_settings(source_dir, _get_cfg().league_dir)
         return jsonify({"ok": True, "settings": copied})
     except FileNotFoundError as e:
         return jsonify({"ok": False, "error": str(e)}), 404
