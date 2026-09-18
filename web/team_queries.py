@@ -283,11 +283,19 @@ def get_standings():
 
     bat = {r[0]: (r[1], r[2]) for r in conn.execute(
         "SELECT team_id, name, r FROM team_batting_stats WHERE year=? AND split_id=1", (year,)).fetchall()}
-    # Fall back to prior year if current year has no stats (preseason)
+    # Fall back when the target year has no TEAM stats (preseason, or a year gap
+    # where player stats exist but team-stat renders didn't land). Use the most
+    # recent year that actually has team stats at or before the target, rather
+    # than blindly stepping back one year (which could skip past the real last
+    # completed season to an older one).
     if not bat:
-        year = year - 1
-        bat = {r[0]: (r[1], r[2]) for r in conn.execute(
-            "SELECT team_id, name, r FROM team_batting_stats WHERE year=? AND split_id=1", (year,)).fetchall()}
+        row = conn.execute(
+            "SELECT MAX(year) FROM team_batting_stats WHERE split_id=1 AND year <= ?",
+            (year,)).fetchone()
+        if row and row[0]:
+            year = row[0]
+            bat = {r[0]: (r[1], r[2]) for r in conn.execute(
+                "SELECT team_id, name, r FROM team_batting_stats WHERE year=? AND split_id=1", (year,)).fetchall()}
     pit = {r[0]: (r[1], r[2]) for r in conn.execute(
         "SELECT team_id, r, ip FROM team_pitching_stats WHERE year=? AND split_id=1", (year,)).fetchall()}
 

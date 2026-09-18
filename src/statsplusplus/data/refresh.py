@@ -867,6 +867,20 @@ def refresh_league(year, game_date=None, full=False):
 
     log.info("── team stats")
     _upsert_team_stats(conn, year)
+    # Also ensure the PRIOR year's team stats exist — that's the last completed
+    # season, which standings/averages fall back to before the current season has
+    # played games (spring training). The historical loop only covers years
+    # BEFORE prior_year, and the current-year pull returns nothing in preseason,
+    # so without this the prior year is a gap and standings fall back a further
+    # year (e.g. showing 1953 when 1954 is the completed season). Skip the render
+    # if we already have it (an already-rendered fetch is free, but a re-render
+    # burns the 1/min limit).
+    have_prior_team = conn.execute(
+        "SELECT 1 FROM team_batting_stats WHERE year=? AND split_id=1 LIMIT 1",
+        (prior_year,)).fetchone() is not None
+    if not have_prior_team:
+        log.info(f"── prior-year team stats (year={prior_year})")
+        _upsert_team_stats(conn, prior_year)
 
     log.info("── game history")
     games = client.get_game_history(year=year)

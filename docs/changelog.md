@@ -6,6 +6,25 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ## Session 90 (2026-09-18)
 
+### Bug fix — standings show an outdated season (preseason / retro leagues)
+
+A fresh PPL install (game year 1955, spring training — no 1955 games yet)
+displayed **1953** standings. Two compounding causes:
+
+- **Refresh never pulled the prior year's TEAM stats.** The historical loop
+  covers years *before* prior_year, and the current-year team-stats pull returns
+  nothing in preseason — so the last completed season (1954) was a gap in
+  `team_batting_stats` even though player stats for 1954 were present. Refresh now
+  fetches prior-year team stats when missing (skips the render if already stored,
+  respecting the 1/min render limit).
+- **Standings fell back only one year.** `get_standings` used `stats_year`
+  (derived from *player* stats = 1954) then, finding no 1954 *team* stats, stepped
+  back exactly one year to 1953. It now falls back to the most recent year that
+  actually has team stats (`MAX(year) <= target`), so a gap degrades to the true
+  last completed season rather than skipping past it.
+
+Tests: `test_team_queries.py` (year-gap fallback). Full suite 947 pass.
+
 ### Bug fix — draft board: stale pool from a prior draft
 
 The auto-draft list (and the page board) could show a *previous* draft's
