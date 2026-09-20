@@ -86,7 +86,26 @@ dev_speed to value without violating the separation.
   facet spine (already done for the ceiling composite — expose the facet split).
 - **Per-facet peak ages + curves:** `AGING_*` peaks define the dev→aging pivot;
   need per-facet DEVELOPMENT (up-slope) curves — literature priors (bat latest,
-  speed earliest), shrink-adjust per league only where data supports.
+  speed earliest).
+
+### Aging/development curve provenance (IMPORTANT — accurate as-built)
+The facet aging AND development curves (`AGING_*`, `DEV_*`) are **hardcoded
+literature-based prior SHAPES**, identical across all leagues — NOT fit from
+per-league observed data. Only the facet RUN MAGNITUDES they multiply are
+per-league-calibrated (via the run-space facet calibration), so a high-steal
+league gives baserunning more runs to age, but the aging RATE/shape is universal.
+
+**Survivorship-bias handling = we deliberately do NOT fit from the biased data.**
+Attempted per-league longitudinal fitting (Session 92) failed on two counts:
+(1) too thin — same-player YoY facet transitions n=10-19/age band; (2) the
+cross-section is survivorship-biased in the classic way — observed UBR *rose* at
+33+ (only good baserunners still get 300+ PA at that age), which would wrongly
+imply baserunning improves with age. So we use survivorship-corrected literature
+prior shapes instead of a naive per-league fit on ~15 biased points. A proper
+per-league fit needs the delta/matched-pairs method with survivor+dropout
+weighting AND multi-season depth we don't yet have (~7 ratings_history snapshots
+over ~1yr). **Future enhancement, gated on accumulated history.** The planned
+"shrink-adjust per league" is NOT implemented — pure priors today.
 - **dev_pace:** the dev_speed z-score (already computed, in the `dev_speed`
   table / `compute_dev_speed`). Needs a defined mapping z → growth-rate
   multiplier (e.g. clamp to [0.5x, 1.5x] so it's a modifier, not a driver).
