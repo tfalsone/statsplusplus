@@ -6,6 +6,44 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ## Session 92 (2026-09-20)
 
+### Run-space model follow-up fixes (v1.12.1)
+
+Four bugs in the v1.12.0 run-space hitter model, all surfaced by spot-checking
+real, recognizable players (the abstract metrics — R², distributions — looked
+fine while these existed):
+
+- **Fielding curves centered on qualified starters, not the position population.**
+  The grade→ZR curve was centered on the mean grade of high-IP starters (≥250 IP)
+  but applied to the whole positional population, shifting everyone negative — an
+  average corner OF got ~−5 fielding runs, elite-name defenders showed −17 to −24.
+  Now centered on the population-mean grade so a league-average fielder ≈ 0 runs.
+- **Fielding used the positional-model ESTIMATE instead of the actual range rating.**
+  `_primary_def_grade` preferred an OLS estimate of a player's rating at a bucket
+  over his real range tool; since the curves are calibrated on the real tool, this
+  mismatched and underrated true defenders (an elite CF with OFR 70 was estimated
+  at 58 → −3 fielding runs instead of +12). Now uses the position-appropriate range
+  rating (OFR/IFR/CArm) first.
+- **Ceiling computed in grade-space while composite moved to run-space.** A fully
+  developed player (potential == current) showed a ceiling well above his composite
+  (phantom upside) because the two used different scales, plus a grade-space
+  peak-tool bonus. `compute_ceiling`/`compute_true_ceiling` now run potential tools
+  through the run-space spine (no peak-tool bonus), so a maxed player's ceiling ≈
+  composite and prospects retain real ceiling > composite. Also wired run-space
+  through the two-way branch (good-hitting position players were mis-flagged
+  two-way and bypassed the run-space path).
+- **Ceiling could fall below composite (780 eMLB players).** The run-space ceiling
+  uses potential tools without the observed-stat blend, while the composite includes
+  it, so an over-performer's blended composite could exceed his ceiling; PAC could
+  also drop a prospect's ceiling below composite. Now floored at the final composite
+  in both the engine and fv_calc (post-PAC). Regression tests in
+  `test_ceiling_runspace.py`.
+
+All three leagues (eMLB/vMLB/PPL) re-evaluated; downstream consumers verified
+(surplus/WAR, depth chart, stat projections all sensible; cross-league invariants
+clean). Full suite 968 passed. Known bounded follow-up: `dev_speed` windows that
+straddle the grade-space→run-space migration measure the model change as
+development (~1.7% of rows; self-heals as post-migration snapshots accumulate).
+
 ### Run-space facet evaluation model (hitters) — core evaluation redesign
 
 Replaced the hitter composite's grade-space, share-weighted blend with a
