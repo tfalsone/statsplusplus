@@ -181,6 +181,23 @@ set and behave exactly as before.
 
 ## Key Design Decisions
 
+**Run-space facet hitter model (Session 92)** — Hitter value is built additively in
+**runs** rather than the old grade-space share-weighted blend: `bat (wRAA) +
+baserunning (UBR-runs) + fielding (ZR-runs) + positional adjustment → WAR
+(OOTP-anchored) → 20-80 composite`. Pure math in `evaluation/facet_runs.py`;
+per-league params (`run_space` in `tool_weights.json`) derived by
+`calibrate._calibrate_run_space` (wOBA scale, br/def curves per position, OOTP-WAR
+anchor, runs→composite map, tool→wOBA fit, wOBA weights). Offensive tools regress
+against per-player **wOBA** (`evaluation/woba.py`), not total WAR, fixing the
+positional confound (power now correctly dominant over gap). MLB hitters blend
+observed career wRAA/UBR/ZR per facet by stabilization confidence (bat slow,
+baserunning fast, fielding slowest), replacing the OPS+ `compute_composite_mlb`
+blend so composite and WAR share one run total; prospects blend level-relative
+MiLB wRAA/UBR (defense tool-only). `compute_composite_hitter` falls back to the
+grade-space blend when `run_space` is absent (backward compatible). Pitchers
+unchanged (out of scope v1). Per-facet aging into the projection is deferred.
+
+
 **Active league — single source of truth per context** — Two league selectors exist by
 design, for two different contexts: the **process-global** default (`app_config.json`
 `active_league` / `STATSPP_LEAGUE` env, used by CLI and the initial browser load) and the

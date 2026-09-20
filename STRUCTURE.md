@@ -13,7 +13,9 @@ statsplusplus/
 ├── src/statsplusplus/          # Core package (all logic lives here)
 │   ├── models/                     # Typed dataclasses (contracts between layers)
 │   ├── evaluation/                 # Pure computation (no I/O, no global state)
-│   │   ├── composite.py               # Composite scores, tool transforms, defensive scoring
+│   │   ├── composite.py               # Composite scores, tool transforms, defensive scoring (run-space + grade-space fallback)
+│   │   ├── facet_runs.py               # Run-space facet spine (bat wRAA + br + fielding + pos → WAR → 20-80)
+│   │   ├── woba.py                     # Per-player wOBA + per-league/year run-env weight derivation
 │   │   ├── ceiling.py                  # Ceiling computation
 │   │   ├── fv.py                       # FV grades, risk labels, PAC, positional access
 │   │   ├── player_value.py            # Player surplus model (stat_confidence gradient)

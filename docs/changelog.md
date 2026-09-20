@@ -4,7 +4,61 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
-## Session 91 (2026-09-19)
+## Session 92 (2026-09-20)
+
+### Run-space facet evaluation model (hitters) — core evaluation redesign
+
+Replaced the hitter composite's grade-space, share-weighted blend with a
+**run-additive facet model**. Hitter value is now built in **runs** —
+`bat (wRAA) + baserunning (UBR-runs) + fielding (ZR-runs) + positional adjustment`
+— then converted to WAR (OOTP-anchored) and mapped to a 20-80 composite. This
+fixes a structural flaw: a "70" grade meant different run values in different
+facets, and the old shares that combined them (hardcoded defense shares, 0.06
+baserunning) were reverse-engineered against total WAR and became orphaned once
+each facet was calibrated on its own proper target.
+
+- **New pure module `evaluation/facet_runs.py`** — facet run functions, OOTP-WAR
+  anchor, runs→20-80 mapping, per-facet aging curves + stabilization confidence.
+- **Per-league calibration** (`calibrate.py` `_calibrate_run_space`, persisted to
+  `tool_weights.json` under `run_space`): wOBA scale (canonical × run-env factor),
+  baserunning speed→UBR curve, per-position fielding range→ZR curves (centered +
+  clamped to observed ZR range), OOTP-WAR anchor (runs-per-win + replacement
+  solved to match OOTP's WAR distribution), runs→composite affine map, tool→wOBA
+  fit, and wOBA weights.
+- **Offense target → wOBA** (Phase 0): offensive tools (contact/gap/power/eye)
+  now regress against per-player **wOBA** instead of total WAR, fixing the
+  backwards gap-dominant ordering (power now correctly dominant). Per-league/year
+  run-environment-derived wOBA weights with canonical FanGraphs fallback and
+  sample guards. New `evaluation/woba.py` + 8 tests.
+- **Per-facet stat blend (composite↔projection convergence):** MLB hitters blend
+  observed **career** wRAA/UBR/ZR into each facet by a facet-specific stabilization
+  confidence (bat slow ~600 PA, baserunning fast ~250 PA, fielding slowest
+  ~900 IP), replacing the OPS+ `compute_composite_mlb` blend so the composite and
+  the WAR projection derive from one shared run total. Prospects blend
+  level-relative, level-discounted **MiLB** wRAA + UBR into bat/baserunning
+  (defense stays tool-only — MiLB fielding is unavailable from the API); the
+  Step-2 MiLB OPS+ blend is guarded off for run-space hitters to avoid double-count.
+- **Threaded through** `compute_composite_hitter` (with a graceful grade-space
+  fallback when `run_space` calibration is absent — single-league/older DBs and
+  pre-recalibration are unaffected), the batch evaluation engine, and `fv_calc`
+  → FV/surplus/rankings.
+- **WAR fidelity:** new tool-WAR ~ OOTP WAR R² **0.70-0.84** across PPL/eMLB/vMLB
+  (vs ~0.10 for the old composite→WAR path). Validated: full suite 965 passed,
+  1 skipped; prospect FV distribution healthy; rosters re-rank sensibly —
+  up-the-middle defenders and catchers rise, defensively-limited corner bats fall.
+- **Scope:** hitters only. Pitchers stay on the composite→WAR path (out of scope
+  v1). Migration is graceful — a league picks up the run-space model on its next
+  calibrate + fv_calc (or refresh); code degrades to the grade-space blend until then.
+
+**Deferred follow-ups** (logged in `task_list.md` / spec): per-facet aging wired
+into the WAR projection (curves defined, not yet in `compute_player_value` —
+highest blast radius, needs a surplus-validation gate); reliability penalties
+re-expressed as run penalties; dev_speed recalibration against the new composite;
+scratch-harness cleanup; pitcher run-space model.
+
+Design: `.kiro/specs/run-space-facet-model/` (design + requirements + tasks).
+
+---
 
 ### Bug fix — cross-league (NPB) contamination in the evaluation engine
 
