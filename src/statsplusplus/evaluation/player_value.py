@@ -164,6 +164,7 @@ def compute_player_value(
     # Evaluation modifiers
     def_rating: Optional[int] = None,
     scarcity_table: Optional[dict[int, float]] = None,
+    facet_runs: Optional[dict[str, float]] = None,
 ) -> dict[str, Any]:
     """Compute unified surplus for any player.
 
@@ -330,7 +331,21 @@ def compute_player_value(
         else:
             year_war = peak_war
 
-        war = year_war * effective_ramp * aging_mult(player_age, bucket, weights)
+        # Aging: per-facet when the run-space facet split is available (hitters),
+        # else the whole-player bucket curve (pitchers / fallback). Per-facet
+        # ages baserunning/defense faster than the bat (spec: per-facet-aging).
+        if facet_runs and bucket not in ("SP", "RP"):
+            from statsplusplus.evaluation.facet_runs import facet_aging_mult
+            _age_mult = facet_aging_mult(
+                player_age,
+                facet_runs.get("bat_runs", 0.0),
+                facet_runs.get("baserunning_runs", 0.0),
+                facet_runs.get("fielding_runs", 0.0),
+            )
+        else:
+            _age_mult = aging_mult(player_age, bucket, weights)
+
+        war = year_war * effective_ramp * _age_mult
         war = max(0.0, war)
 
         # Market value (time-discounted)

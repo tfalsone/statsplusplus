@@ -87,6 +87,33 @@ def _aging_mult(age: float, curve: dict[int, float]) -> float:
     return 1.0
 
 
+def facet_aging_mult(age: float, bat_runs: float, br_runs: float, fld_runs: float) -> float:
+    """Per-facet blended aging multiplier on peak WAR (P1 of the projection spec).
+
+    Instead of one whole-player aging curve, age each facet by its own curve
+    (baserunning earliest/steepest, bat latest, defense moderate) and recombine
+    weighted by each facet's share of the player's POSITIVE run contribution.
+    Positional adjustment is age-invariant and excluded from the weighting.
+
+    Returns a single multiplier equivalent to the run-weighted average of the
+    three facet aging multipliers — so it slots in where ``aging_mult`` is used
+    without changing the surplus math shape. Falls back to the bat curve when
+    the player has no meaningful positive facet runs.
+    """
+    m_bat = _aging_mult(age, AGING_BAT)
+    m_br = _aging_mult(age, AGING_BASERUNNING)
+    m_fld = _aging_mult(age, AGING_DEFENSE)
+    # Weight by positive run contribution (a facet that costs runs doesn't get
+    # "aged" as a value source — clamp negatives to 0 for weighting only).
+    w_bat = max(0.0, bat_runs)
+    w_br = max(0.0, br_runs)
+    w_fld = max(0.0, fld_runs)
+    total = w_bat + w_br + w_fld
+    if total <= 0:
+        return m_bat
+    return (m_bat * w_bat + m_br * w_br + m_fld * w_fld) / total
+
+
 def facet_stat_confidence(facet: str, pa_or_ip: float) -> float:
     """Per-facet stabilization ramp (spec §3.1a).
 

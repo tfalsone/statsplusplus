@@ -617,6 +617,22 @@ def _compute_and_store_player_values(
                 if len(sals) >= years_ctrl:
                     salaries = sals[:years_ctrl]
 
+        # Per-facet aging weights (spec: per-facet-aging-projection, P1). Derive
+        # approximate facet run-shares from the stored grade-space components
+        # (offensive_grade / baserunning_value / defensive_value, 20-80). Exact
+        # run values aren't needed — only relative shares to weight the three
+        # facet aging curves. Grade 50 ≈ league-average ≈ 0 marginal runs; the
+        # spread above/below scales the contribution. Hitters only.
+        _facet_runs = None
+        if bucket not in ("SP", "RP"):
+            _og = p.get("offensive_grade"); _bv = p.get("baserunning_value"); _dv = p.get("defensive_value")
+            if _og is not None:
+                _facet_runs = {
+                    "bat_runs": (float(_og) - 50.0) * 1.5,
+                    "baserunning_runs": ((float(_bv) - 50.0) * 0.3) if _bv is not None else 0.0,
+                    "fielding_runs": ((float(_dv) - 50.0) * 0.6) if _dv is not None else 0.0,
+                }
+
         try:
             result = compute_player_value(
                 fv_continuous=fv_continuous,
@@ -634,6 +650,7 @@ def _compute_and_store_player_values(
                 min_sal=min_sal,
                 perpetual_arb=perpetual_arb,
                 weights=weights,
+                facet_runs=_facet_runs,
             )
         except Exception:
             errors += 1
