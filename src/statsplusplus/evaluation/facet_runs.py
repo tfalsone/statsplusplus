@@ -341,14 +341,21 @@ def calibrate_grade_runs_curve(
     slope *= shrink
     sample_mean = sum(grades) / len(grades)
     center = center_grade if center_grade is not None else sample_mean
+    # Clamp to ROBUST percentiles of observed runs (5th/95th), not min/max — a
+    # single noisy extreme season otherwise sets the ceiling and lets the linear
+    # slope over-extrapolate at the high end (observed fielding runs plateau,
+    # e.g. corner-OF ZR tops out ~+6-7, but a steep slope reached +10.8).
+    sr = sorted(observed_runs)
+    lo_i = max(0, int(0.05 * (len(sr) - 1)))
+    hi_i = min(len(sr) - 1, int(round(0.95 * (len(sr) - 1))))
     return {
         "intercept": -slope * center,
         "slope": slope,
         "r": round(r, 3),
         "n": len(grades),
         "mean_grade": round(center, 1),
-        "clamp_lo": round(min(observed_runs) * clamp_pad, 1),
-        "clamp_hi": round(max(observed_runs) * clamp_pad, 1),
+        "clamp_lo": round(sr[lo_i], 1),
+        "clamp_hi": round(sr[hi_i], 1),
     }
 
 

@@ -514,8 +514,12 @@ def _calibrate_run_space(conn, game_year, role_map, woba_wts, off_norm, result_h
             WHERE p.pos IN {codes} AND p.role NOT IN (11,12,13) AND r.{tool} IS NOT NULL""").fetchall()
         pg = [norm(x["t"]) for x in prows if x["t"] is not None]
         pop_mean = (sum(pg) / len(pg)) if pg else None
+        # Fielding is the noisiest facet AND the tool->ZR relationship plateaus at
+        # high grades (a plus fielder tops out ~+5-7 ZR, not the +10+ a steep
+        # linear slope extrapolates). Strong shrinkage + the robust-percentile
+        # clamp keep plus-grade fielders at realistic run values.
         cur = _fr.calibrate_grade_runs_curve(fx, fy, _fr.FIELDING_PRIOR_SLOPE,
-                                             shrink=0.75, center_grade=pop_mean)
+                                             shrink=0.55, center_grade=pop_mean)
         if cur:
             def_curve[bk] = cur
 
