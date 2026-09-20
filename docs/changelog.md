@@ -6,6 +6,24 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ## Session 92 (2026-09-20)
 
+### Fielding runs right-sized at high grades (v1.12.2)
+
+Surfaced by spot-checking vMLB prospect Jimmy Gregory (a no-power, contact/
+defense corner OF grading too high). The fielding grade→ZR curve's linear slope
+over-extrapolated at the top end: observed corner-OF ZR plateaus around +5-7 at
+OFR 55-65, but the steep slope reached +10.8 at OFR 65, over-crediting
+good-but-not-elite corner defenders. Two fixes: (1) stronger fielding slope
+shrinkage (0.75→0.55) — defense is the noisiest facet and the tool→ZR
+relationship plateaus; (2) clamp the grade→runs curves to robust 5th/95th
+percentiles of observed runs instead of min/max×1.1, so a single noisy season no
+longer sets the ceiling. All leagues recalibrated; genuine elite defenders still
+credited (Barry Allen CF 69/69). Gregory now grades FV 50 (fine regular) instead
+of FV 55. Cross-divergence review (players where our model differs most from
+OOTP) confirmed the remaining large gaps are intended second-opinion behavior:
+positional adjustments verified FanGraphs-standard, so proper position value that
+OOTP's position-blind OVR omits (elite 1B docked, up-the-middle credited) is
+correct, not a bug. Full suite 968 passed.
+
 ### Run-space model follow-up fixes (v1.12.1)
 
 Four bugs in the v1.12.0 run-space hitter model, all surfaced by spot-checking
