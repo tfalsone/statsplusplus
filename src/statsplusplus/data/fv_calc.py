@@ -514,6 +514,14 @@ def _compute_and_store_player_values(
         if adjusted_ceilings and pid in adjusted_ceilings:
             ceiling = adjusted_ceilings[pid]
 
+        # Ceiling can never be below the composite — the composite reflects
+        # realized/current ability (incl. observed stat blend), which is always a
+        # valid floor for the peak. PAC and the tool-projected ceiling are both
+        # computed without the observed-stat blend, so an over-performer's blended
+        # composite can exceed them; floor here as the final guarantee.
+        if composite and ceiling and ceiling < composite:
+            ceiling = composite
+
         if not composite or not ceiling:
             continue
 

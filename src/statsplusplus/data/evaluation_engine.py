@@ -2649,8 +2649,13 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                             composite_score * (1.0 - milb_blend) + milb_signal * milb_blend
                         )))
 
-        # Ensure ceiling >= composite after stat blending
+        # Ensure ceiling >= composite after stat blending. Both ceiling_score
+        # (display) and true_ceiling (drives FV/surplus via fv_calc's Pot) must
+        # be floored at the FINAL composite — the observed stat blend (Step 1/2)
+        # can lift the composite above the pre-blend ceiling floor.
         ceiling_score = max(ceiling_score, composite_score)
+        if true_ceiling is not None:
+            true_ceiling = max(true_ceiling, composite_score)
 
         # -- Divergence detection with component context (Pass 1 — no positional context yet) --
         ovr = row_dict.get("ovr")
