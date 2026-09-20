@@ -1971,7 +1971,9 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
     from statsplusplus.utils.positions import assign_bucket as _assign_bucket
     from statsplusplus.evaluation.constants import DEFENSIVE_WEIGHTS
     from statsplusplus.config.league_config import LeagueConfig as _LC
-    _scale = _LC(base_dir=league_dir).ratings_scale
+    _lc = _LC(base_dir=league_dir)
+    _scale = _lc.ratings_scale
+    _primary_lid = _lc.primary_league_id  # None → single-top-league DB (no scoping)
     def _norm(val): return _norm_pkg(val, _scale)
     def _norm_display(val): return _norm_display_pkg(val, _scale)
 
@@ -2039,7 +2041,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
 
     # -- Query all players with their latest ratings --
     rows = conn.execute("""
-        SELECT r.*, p.age, p.pos, p.role, p.level, p.player_id as pid
+        SELECT r.*, p.age, p.pos, p.role, p.level, p.player_league_id, p.player_id as pid
         FROM ratings r
         JOIN players p ON r.player_id = p.player_id
         WHERE r.snapshot_date = (SELECT MAX(snapshot_date) FROM ratings)
@@ -2504,9 +2506,15 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
         }
         divergence = detect_divergence(tool_only_score, ovr, components=components_dict)
 
-        # Collect MLB hitter offensive grades for positional median computation
+        # Collect MLB hitter offensive grades for positional median computation.
+        # Scope to the PRIMARY league — a co-resident top-level league (e.g. NPB
+        # in PPL) is also level='1' and would skew the positional medians that
+        # every prospect's FV is graded against. Inclusive of NULL league id
+        # (backward compat; see db.primary_league_predicate).
+        _plid = row_dict.get("player_league_id")
+        is_primary = (_primary_lid is None or _plid is None or _plid == _primary_lid)
         is_hitter = not is_pitcher
-        if is_mlb and is_hitter and offensive_grade is not None:
+        if is_mlb and is_primary and is_hitter and offensive_grade is not None:
             mlb_offensive_grades.setdefault(bucket, []).append(offensive_grade)
 
         # Collect update tuples (positional_percentile and positional_median

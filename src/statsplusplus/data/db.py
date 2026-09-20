@@ -370,14 +370,52 @@ CREATE TABLE IF NOT EXISTS player_evaluation (
     PRIMARY KEY (player_id, eval_date)
 );
 
+CREATE TABLE IF NOT EXISTS league_meta (
+    id                INTEGER PRIMARY KEY CHECK (id = 1),
+    primary_league_id INTEGER
+);
+
+-- MLB stat views: top-level stats (league_id IS NULL) for the PRIMARY league
+-- only. When a co-resident top-level league exists (e.g. NPB in PPL, a separate
+-- non-primary level-1 league), its players' top-level stats also carry
+-- league_id NULL and would otherwise leak into "MLB". Scope to primary-league
+-- players via league_meta. Backward compatible: when no primary_league_id is
+-- set (single-top-league DBs), the NOT EXISTS branch makes this a no-op.
 CREATE VIEW IF NOT EXISTS mlb_batting_stats AS
-    SELECT * FROM batting_stats WHERE league_id IS NULL;
+    SELECT b.* FROM batting_stats b
+    WHERE b.league_id IS NULL
+      AND (
+        NOT EXISTS (SELECT 1 FROM league_meta WHERE primary_league_id IS NOT NULL)
+        OR b.player_id IN (
+            SELECT p.player_id FROM players p
+            WHERE p.player_league_id IS NULL
+               OR p.player_league_id = (SELECT primary_league_id FROM league_meta WHERE id = 1)
+        )
+      );
 
 CREATE VIEW IF NOT EXISTS mlb_pitching_stats AS
-    SELECT * FROM pitching_stats WHERE league_id IS NULL;
+    SELECT ps.* FROM pitching_stats ps
+    WHERE ps.league_id IS NULL
+      AND (
+        NOT EXISTS (SELECT 1 FROM league_meta WHERE primary_league_id IS NOT NULL)
+        OR ps.player_id IN (
+            SELECT p.player_id FROM players p
+            WHERE p.player_league_id IS NULL
+               OR p.player_league_id = (SELECT primary_league_id FROM league_meta WHERE id = 1)
+        )
+      );
 
 CREATE VIEW IF NOT EXISTS mlb_fielding_stats AS
-    SELECT * FROM fielding_stats WHERE league_id IS NULL;
+    SELECT fs.* FROM fielding_stats fs
+    WHERE fs.league_id IS NULL
+      AND (
+        NOT EXISTS (SELECT 1 FROM league_meta WHERE primary_league_id IS NOT NULL)
+        OR fs.player_id IN (
+            SELECT p.player_id FROM players p
+            WHERE p.player_league_id IS NULL
+               OR p.player_league_id = (SELECT primary_league_id FROM league_meta WHERE id = 1)
+        )
+      );
 """
 
 
@@ -393,6 +431,27 @@ CREATE VIEW IF NOT EXISTS mlb_fielding_stats AS
 #
 # `p` is the required table alias for the `players` row in the query.
 ORG_ID_SQL = "COALESCE(NULLIF(p.organization_id,0), NULLIF(p.parent_team_id,0), p.team_id)"
+
+
+def primary_league_predicate(primary_league_id, alias: str = "p"):
+    """SQL predicate restricting a `players` row (aliased ``alias``) to the
+    primary MLB league — excludes co-resident top-level leagues like NPB.
+
+    Returns ``(clause, params)`` for splicing into a WHERE (parameterized, no
+    string interpolation of the id).
+
+    - ``primary_league_id is None`` (single-top-league universe / older DB) →
+      ``("1=1", [])`` — an always-true no-op, so non-multi-league leagues
+      (eMLB/vMLB) are completely unaffected.
+    - Otherwise → keep players whose league id IS the primary OR IS NULL. The
+      NULL allowance preserves backward compat (older data / single-league DBs
+      where the field isn't populated). See task_list: revisit the NULL
+      allowance (a handful of level-1 players with NULL league id slip through).
+    """
+    if primary_league_id is None:
+        return "1=1", []
+    return (f"({alias}.player_league_id = ? OR {alias}.player_league_id IS NULL)",
+            [primary_league_id])
 
 
 # ---------------------------------------------------------------------------
@@ -519,6 +578,12 @@ def init_schema(league_dir: Optional[Path] = None) -> None:
         league_dir: League data directory. If None, uses active league.
     """
     conn = get_connection(league_dir)
+    # Recreate the mlb_* views every init: they're defined with primary-league
+    # scoping (via league_meta), and CREATE VIEW IF NOT EXISTS in SCHEMA would
+    # NOT update an existing DB's older (unscoped) view. Dropping first forces
+    # the current definition. Views are pure derivations — safe to drop/recreate.
+    for _v in ("mlb_batting_stats", "mlb_pitching_stats", "mlb_fielding_stats"):
+        conn.execute(f"DROP VIEW IF EXISTS {_v}")
     conn.executescript(SCHEMA)
     _migrate_players(conn)
     _migrate_stats_league_id(conn)

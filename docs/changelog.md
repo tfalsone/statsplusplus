@@ -6,6 +6,45 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ## Session 91 (2026-09-19)
 
+### Bug fix — cross-league (NPB) contamination in the evaluation engine
+
+A user's PPL universe contains **two co-resident top-level (`level=1`) leagues**:
+PPL MLB (`player_league_id=200`, the `primary=True` league per `/lgdata`) and
+**NPB** (`player_league_id=228`, a separate `primary=False` league). The codebase
+defined "MLB" as `players.level='1'` / `mlb_*` views (`stats.league_id IS NULL`),
+which conflated them — NPB players are also `level=1` and their top-level stats
+also carry `league_id NULL`. Result: **calibration, positional medians, league
+medians, org-needs, and arb/scarcity models were trained/computed on PPL+NPB
+mixed data** (NPB was ~6% of the WAR sample, lower-mean/wider — it dragged
+medians down, e.g. made a balanced roster look "above median everywhere").
+Discovered while investigating why draft org-needs returned empty. `/teams`
+provides no Level/League field; `/lgdata` is authoritative (`primary=True`).
+
+- **Single source of truth for "our MLB" = the primary league.** New
+  `LeagueConfig.primary_league_id` (from `/lgdata` via settings) and
+  `db.primary_league_predicate(primary_id, alias)` → `(clause, params)`, a no-op
+  when no primary is set (single-top-league DBs / older data). Mirrors the
+  `ORG_ID_SQL` pattern.
+- **`mlb_*` views scoped to the primary league** via a one-row `league_meta`
+  table (SQL views can't take a param). `init_schema` drops/recreates the views
+  each run so existing DBs pick up the scoped definition. **Backward compatible:**
+  when `league_meta` has no primary id, the views' `NOT EXISTS` branch is a no-op
+  — single-league leagues (eMLB/vMLB) are byte-for-byte unchanged. The NULL
+  `player_league_id` allowance is kept for older data (see task_list follow-up).
+- **Refresh** writes `primary_league_id` into `league_meta`; the fix activates on
+  a multi-league user's next refresh (which recalibrates on corrected data).
+- **Direct-read sites scoped** (those not going through the views): evaluation-
+  engine positional-median collection, draft `compute_org_needs`, and calibrate's
+  dev-curve age / arb-% / arb-salary / scarcity / positional-model reads. Most
+  WAR-regression reads join the `mlb_*` views and were fixed automatically.
+- **Migration safety:** only `DROP VIEW IF EXISTS` (a view is a saved query — no
+  data moved); no table is dropped. `league_meta` via `CREATE TABLE IF NOT
+  EXISTS`. `init_schema` runs on app boot (all leagues) + refresh, idempotently.
+- **Validated:** PPL hard refresh recalibrated on clean data (tool-weight sample
+  168→160 hitters / 104→95 pitchers — NPB removed); `mlb_batting_stats` NPB rows
+  417→0; model shifted modestly (refinement, not upheaval); eMLB/vMLB unchanged.
+  Tests: `tests/test_cross_league_scoping.py` (5). Full suite 957 pass.
+
 ### Bug fix — draft board `$Val` blank (swallowed NameError zeroed all surplus)
 
 Every draft-board prospect showed `—` for `$Val` (surplus). Root cause: the

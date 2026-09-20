@@ -154,6 +154,17 @@ class LeagueConfig:
             self._mlb_tids = db_tids & configured if configured else db_tids
         return self._mlb_tids
 
+    @property
+    def primary_league_id(self) -> int | None:
+        """The primary (top-level MLB) league id, from /lgdata via refresh.
+
+        Used to scope evaluation/calibration to *our* MLB and exclude co-resident
+        top-level leagues (e.g. NPB in PPL). None when the universe has a single
+        top-level league (older DBs / leagues that don't need scoping) — callers
+        treat None as "no scoping" (see db.primary_league_predicate).
+        """
+        return self._s.get("primary_league_id")
+
     def team_name(self, tid: int) -> str:
         return self.team_names_map.get(tid, "?")
 

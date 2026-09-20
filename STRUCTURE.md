@@ -171,12 +171,13 @@ Or legacy: `python3 scripts/standings.py --actual`
 | `prospect_fv` | fv_calc | View on player_evaluation (prospects only) |
 | `player_surplus` | fv_calc | View on player_evaluation (MLB only) |
 | `dev_speed` | fv_calc | Development-speed metric per player (separate axis; not blended into FV/surplus) |
+| `league_meta` | refresh | One row: `primary_league_id` (from `/lgdata`). Scopes `mlb_*` views to our MLB, excluding co-resident top-level leagues (e.g. NPB). Empty = no scoping. |
 
 | View | Description |
 |---|---|
 | `latest_ratings` | Most recent snapshot only |
 | `prospect_fv` | player_evaluation filtered to prospects (sc < 0.5, age ≤ 25) |
 | `player_surplus` | player_evaluation filtered to MLB level |
-| `mlb_batting_stats` | Batting filtered to MLB (league_id IS NULL) |
-| `mlb_pitching_stats` | Pitching filtered to MLB |
-| `mlb_fielding_stats` | Fielding filtered to MLB |
+| `mlb_batting_stats` | Batting filtered to MLB: `league_id IS NULL` AND (when set) primary-league players only — see `league_meta` |
+| `mlb_pitching_stats` | Pitching filtered to MLB (primary-league-scoped) |
+| `mlb_fielding_stats` | Fielding filtered to MLB (primary-league-scoped) |

@@ -375,17 +375,22 @@ def compute_org_needs(conn, league_dir=None):
         cfg = LeagueConfig(base_dir=league_dir) if league_dir else LeagueConfig()
         my_team = cfg.my_team_id
         is_perpetual = cfg.settings.get("perpetual_arb", False)
+        primary_lid = cfg.primary_league_id
     except Exception:
         return {}
 
     if is_perpetual:
-        return _compute_org_needs_weakness(conn, my_team)
+        return _compute_org_needs_weakness(conn, my_team, primary_lid)
     else:
-        return _compute_org_needs_departures(conn, my_team)
+        return _compute_org_needs_departures(conn, my_team, primary_lid)
 
 
-def _compute_org_needs_departures(conn, my_team):
-    """FA leagues: positions losing contributors with thin farm depth."""
+def _compute_org_needs_departures(conn, my_team, primary_lid=None):
+    """FA leagues: positions losing contributors with thin farm depth.
+
+    Queries are team/org-scoped (my_team), so no cross-league contamination is
+    possible here — primary_lid is accepted for dispatch symmetry.
+    """
     pos_map = {2: "C", 3: "1B", 4: "2B", 5: "3B", 6: "SS", 7: "COF", 8: "CF", 9: "COF"}
 
     rows = conn.execute("""
@@ -423,7 +428,7 @@ def _compute_org_needs_departures(conn, my_team):
     return needs
 
 
-def _compute_org_needs_weakness(conn, my_team):
+def _compute_org_needs_weakness(conn, my_team, primary_lid=None):
     """Perpetual arb leagues: positions where MLB starter is below league median
     AND farm has no FV 50+ prospect in that bucket.
 
@@ -439,12 +444,16 @@ def _compute_org_needs_weakness(conn, my_team):
     SP_SLOT = 3  # Compare 3rd-best SP (rotation depth indicator)
 
     # ── Gather all MLB player composites by team and bucket ──
-    all_rows = conn.execute("""
+    # Scope to the PRIMARY league — a co-resident top-level league (e.g. NPB in
+    # PPL) is also level='1' and would contaminate the league median.
+    from statsplusplus.data.db import primary_league_predicate
+    _pl_clause, _pl_params = primary_league_predicate(primary_lid)
+    all_rows = conn.execute(f"""
         SELECT p.pos, p.role, p.team_id, r.composite_score
         FROM players p
         JOIN latest_ratings r ON p.player_id = r.player_id
-        WHERE p.level = '1' AND r.composite_score IS NOT NULL
-    """).fetchall()
+        WHERE p.level = '1' AND r.composite_score IS NOT NULL AND {_pl_clause}
+    """, _pl_params).fetchall()
 
     from collections import defaultdict
     # team_id -> bucket -> list of scores (descending sort later)

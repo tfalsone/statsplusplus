@@ -166,6 +166,16 @@ All other analysis scripts are read-only against the DB.
 | `dev_speed` | `fv_calc.py` | Development-speed metric per player — how fast the developmentally-relevant component (offensive grade for hitters, composite for pitchers) is moving vs same-group/age/league peers, from longitudinal `ratings_history`, as a z-score + POT-gap context + confidence tier. A **separate axis, not blended into FV/surplus** (avoids double-counting). Pure logic in `evaluation/dev_speed.py`; spec at `.kiro/specs/development-speed-metric/design.md`. Cleared and rewritten each run. |
 | `trade_block` | `refresh.py` | Player IDs on the trade block (from `/tradeblock` endpoint). Cleared and repopulated each refresh. |
 | `standings` | `refresh.py` | Real W-L-GB-PCT-streak-magic# for all teams (from `/lgdata`). Used by seller classification and `standings.py` display. |
+| `league_meta` | `refresh.py` | One row (`id=1`) holding `primary_league_id` (from `/lgdata`, `primary=True`). Scopes the `mlb_*` views to *our* MLB when a co-resident top-level league exists (e.g. NPB in PPL — separate `level=1`, non-primary). Empty → no scoping (single-top-league DBs unaffected). See `db.primary_league_predicate`. |
+
+**"MLB" = the primary league.** The `mlb_batting_stats` / `mlb_pitching_stats` /
+`mlb_fielding_stats` views filter `league_id IS NULL` **and** (when `league_meta`
+has a `primary_league_id`) restrict to players in that league — a co-resident
+non-primary top-level league (NPB) is also `level=1` with `league_id NULL` top-
+level stats and would otherwise contaminate calibration/medians. Query code that
+scopes MLB directly (not via the views) uses `db.primary_league_predicate(cfg.primary_league_id)`
+(no-op when None). Backward compatible: single-top-league leagues have no primary
+set and behave exactly as before.
 
 ---
 

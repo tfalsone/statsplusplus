@@ -91,6 +91,23 @@ def _war_at(slope, intercept, ovr):
     return max(0.0, round(slope * ovr + intercept, 2))
 
 
+def _primary_lid(conn):
+    """Primary MLB league id from league_meta (written by refresh), or None.
+
+    Used to scope calibration to *our* MLB and exclude a co-resident top-level
+    league (e.g. NPB in PPL). Most calibration reads join the mlb_* views (which
+    are already primary-scoped); this covers the few that read players/ratings
+    directly. Returns None on any DB where league_meta isn't populated (single-
+    top-league leagues, older DBs) → callers treat None as no scoping.
+    """
+    try:
+        row = conn.execute(
+            "SELECT primary_league_id FROM league_meta WHERE id = 1").fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
 def _bucket_player(row, role_map):
     """Assign bucket to a player row from the calibration query."""
     p = dict(row)
@@ -709,8 +726,11 @@ def _calibrate_years_to_mlb(conn):
 
     Returns dict mapping level label → years, or None if insufficient data.
     """
+    from statsplusplus.data.db import primary_league_predicate
+    _cl, _pr = primary_league_predicate(_primary_lid(conn))
     young_mlb = conn.execute(
-        "SELECT AVG(age) FROM players WHERE level = 1 AND age <= 26"
+        f"SELECT AVG(age) FROM players p WHERE p.level = 1 AND p.age <= 26 AND {_cl}",
+        _pr,
     ).fetchone()[0]
     if not young_mlb:
         return None
@@ -924,14 +944,16 @@ def _calibrate_arb_pct(conn, game_year, dpw):
     year_lo = game_year - CALIBRATION_YEARS
     year_hi = game_year - 1
 
-    rows = conn.execute("""
+    from statsplusplus.data.db import primary_league_predicate
+    _cl, _pr = primary_league_predicate(_primary_lid(conn))
+    rows = conn.execute(f"""
         SELECT c.player_id, p.age, c.salary_0, r.ovr
         FROM contracts c
         JOIN players p ON c.player_id = p.player_id
         JOIN latest_ratings r ON r.player_id = p.player_id
         WHERE c.years = 1 AND c.salary_0 > ? AND c.salary_0 < 20000000
-          AND p.age < 30 AND p.level = 1
-    """, (_cfg.minimum_salary,)).fetchall()
+          AND p.age < 30 AND p.level = 1 AND {_cl}
+    """, (_cfg.minimum_salary, *_pr)).fetchall()
 
     arb_data = defaultdict(list)
     for r in rows:
@@ -1006,12 +1028,14 @@ def _calibrate_arb_salary_model(conn, game_year, dpw):
     min_sal = _cfg.minimum_salary
 
     # Gather 1-year contract players with career WAR data
-    rows = conn.execute("""
+    from statsplusplus.data.db import primary_league_predicate
+    _cl, _pr = primary_league_predicate(_primary_lid(conn))
+    rows = conn.execute(f"""
         SELECT p.player_id, p.age, c.salary_0
         FROM players p
         JOIN contracts c ON p.player_id = c.player_id
-        WHERE p.level = '1' AND c.years = 1
-    """).fetchall()
+        WHERE p.level = '1' AND c.years = 1 AND {_cl}
+    """, _pr).fetchall()
 
     data = []
     for r in rows:
@@ -1145,15 +1169,17 @@ def _calibrate_scarcity(conn, game_date):
         print("  Scarcity: skipped (offseason — FA pool is flooded)")
         return None
 
-    rows = conn.execute("""
+    from statsplusplus.data.db import primary_league_predicate
+    _cl, _pr = primary_league_predicate(_primary_lid(conn))
+    rows = conn.execute(f"""
         SELECT r.pot,
                SUM(CASE WHEN p.level != 1 THEN 1 ELSE 0 END) as non_mlb,
                COUNT(*) as total
         FROM latest_ratings r
         JOIN players p ON r.player_id = p.player_id
-        WHERE r.pot >= 38 AND p.team_id > 0 AND p.age BETWEEN 18 AND 32
+        WHERE r.pot >= 38 AND p.team_id > 0 AND p.age BETWEEN 18 AND 32 AND {_cl}
         GROUP BY r.pot ORDER BY r.pot
-    """).fetchall()
+    """, _pr).fetchall()
 
     if not rows:
         return None
@@ -1436,12 +1462,17 @@ def _calibrate_positional_models(conn):
     Returns dict: {position: {"features": [...], "coefficients": [...], "r2": float, "n": int}}
     """
     models = {}
+    from statsplusplus.data.db import primary_league_predicate
+    _cl, _pr = primary_league_predicate(_primary_lid(conn))
     for pos_col, features in _POS_MODEL_FEATURES.items():
-        feat_sql = ", ".join(features)
-        # Only train on players who have a rating at this position AND have defensive tools
+        feat_sql = ", ".join(f"r.{f}" for f in features)
+        # Only train on players who have a rating at this position AND have
+        # defensive tools. Scope to the primary league (exclude co-resident NPB).
         rows = conn.execute(
-            f"SELECT {pos_col}, {feat_sql} FROM latest_ratings "
-            f"WHERE {pos_col} > 0 AND {features[0]} > 0"
+            f"SELECT r.{pos_col}, {feat_sql} FROM latest_ratings r "
+            f"JOIN players p ON p.player_id = r.player_id "
+            f"WHERE r.{pos_col} > 0 AND r.{features[0]} > 0 AND {_cl}",
+            _pr,
         ).fetchall()
         if len(rows) < 30:
             continue

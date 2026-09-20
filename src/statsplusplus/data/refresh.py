@@ -910,6 +910,14 @@ def refresh_league(year, game_date=None, full=False):
                                   if lg["league_id"] in milb_lids]
             s["primary_league_id"] = primary_lid
 
+            # Also record the primary league id in the DB so the mlb_* views can
+            # scope to it (SQL views can't take a param). One-row league_meta.
+            if primary_lid is not None:
+                conn.execute(
+                    "INSERT INTO league_meta (id, primary_league_id) VALUES (1, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET primary_league_id = excluded.primary_league_id",
+                    (primary_lid,))
+                conn.commit()
             # Cumulative league_id → {name, level, abbr} map. Leagues get
             # reorganized over the years (renamed, promoted, removed), but
             # historical stat rows keep referencing the league_id they were
