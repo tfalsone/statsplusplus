@@ -922,11 +922,15 @@ def compute_two_way_scores(
     arsenal: dict | None = None,
     stamina: int = 50,
     role: str = "SP",
+    run_space: dict | None = None,
+    hitter_bucket: str | None = None,
+    positional_models: dict | None = None,
 ) -> dict:
     """Compute separate hitter and pitcher Composite_Scores for a two-way player."""
     hitter_composite = compute_composite_hitter(
         hitting_tools, hitter_weights,
         defense or {}, def_weights or {},
+        run_space=run_space, bucket=hitter_bucket, positional_models=positional_models,
     )
     pitcher_composite = compute_composite_pitcher(
         pitching_tools, pitcher_weights,
@@ -2308,6 +2312,8 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 arsenal=arsenal,
                 stamina=stamina,
                 role=pitcher_role,
+                run_space=_run_space, hitter_bucket=hitter_bucket,
+                positional_models=_positional_models,
             )
 
             composite_score = two_way_result["primary_composite"]
@@ -2326,6 +2332,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 age=player_age,
                 ratings_scale=_scale,
                 transforms=hitter_transforms,
+                run_space=_run_space, bucket=hitter_bucket, positional_models=_positional_models,
             )
             p_ceiling = compute_ceiling(
                 potential_pitcher_tools, p_weights, two_way_result["pitcher_composite"],
@@ -2349,6 +2356,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 work_ethic=row_dict.get("wrk_ethic") or "N",
                 defense=defense_tools, def_weights=def_weights,
                 transforms=hitter_transforms,
+                run_space=_run_space, bucket=hitter_bucket, positional_models=_positional_models,
             )
             p_true_ceil = compute_true_ceiling(
                 potential_pitcher_tools, p_weights, two_way_result["pitcher_composite"],
@@ -2485,6 +2493,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 age=player_age,
                 ratings_scale=_scale,
                 transforms=hitter_transforms,
+                run_space=_run_space, bucket=bucket, positional_models=_positional_models,
             )
             true_ceiling = compute_true_ceiling(
                 potential_hitter_tools, h_weights, composite_score,
@@ -2492,6 +2501,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 work_ethic=row_dict.get("wrk_ethic") or "N",
                 defense=defense_tools, def_weights=def_weights,
                 transforms=hitter_transforms,
+                run_space=_run_space, bucket=bucket, positional_models=_positional_models,
             )
 
             # Component scores for hitters
