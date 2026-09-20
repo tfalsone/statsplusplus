@@ -177,16 +177,37 @@ def _primary_def_grade(
     bucket: str,
     positional_models: Optional[dict[str, Any]],
 ) -> Optional[float]:
-    """Best available range grade for the bucket."""
-    # Direct grade if present on the tools dict (e.g. estimated positional rating).
+    """Best available range grade for the bucket.
+
+    The fielding curves are calibrated on the position's RANGE tool (OFR for
+    outfield, IFR for infield, CArm for catcher), so evaluation must use the
+    same grade type. Prefer the actual range rating; the positional-model
+    estimate is only a last resort (it under/over-estimates vs the true rating
+    — e.g. an elite CF with OFR 70 was estimated at 58, wrongly costing runs).
+    """
+    # 1) Explicit per-bucket grade if the caller supplied one.
     direct = def_tools.get(bucket)
     if direct is not None:
         return float(direct)
+    # 2) The position-appropriate RANGE tool (matches the calibration grade).
+    if bucket in ("CF", "COF", "LF", "RF"):
+        for k in ("OFR", "ofr"):
+            if def_tools.get(k) is not None:
+                return float(def_tools[k])
+    elif bucket in ("SS", "2B", "3B"):
+        for k in ("IFR", "ifr"):
+            if def_tools.get(k) is not None:
+                return float(def_tools[k])
+    elif bucket == "C":
+        for k in ("CArm", "c_arm"):
+            if def_tools.get(k) is not None:
+                return float(def_tools[k])
+    # 3) Positional-model estimate (last resort).
     if positional_models:
         ests = estimate_all_positions(def_tools, positional_models)
         if bucket in ests:
             return ests[bucket]
-    # Fall back to a generic range tool
+    # 4) Any generic range tool.
     for k in ("ifr", "ofr", "IFR", "OFR"):
         if def_tools.get(k) is not None:
             return float(def_tools[k])
