@@ -302,24 +302,30 @@ def calibrate_grade_runs_curve(
     shrink: float = 0.75,
     min_n: int = 8,
     clamp_pad: float = 1.1,
+    center_grade: Optional[float] = None,
 ) -> Optional[dict[str, float]]:
     """Fit a centered, clamped grade->runs curve from samples.
 
-    Centers at the sample-mean grade (0 runs at average), shrinks the slope
-    toward the prior, and clamps to the observed run range (±pad). Returns None
-    if the sample is too thin (caller falls back to the prior slope).
+    Centers at ``center_grade`` if given (the POPULATION-average grade at the
+    position — so a league-average fielder gets ~0 runs), else the calibration
+    sample's mean grade. The distinction matters when the calibration sample
+    (e.g. high-IP starters) is more selective than the population being scored:
+    centering on the selective sample shifts the whole population negative.
+    Shrinks the slope toward the prior and clamps to the observed run range.
+    Returns None if the sample is too thin (caller falls back to the prior slope).
     """
     if len(grades) < min_n:
         return None
     _, slope, r = _ols_1var(grades, observed_runs)
     slope *= shrink
-    mean_grade = sum(grades) / len(grades)
+    sample_mean = sum(grades) / len(grades)
+    center = center_grade if center_grade is not None else sample_mean
     return {
-        "intercept": -slope * mean_grade,
+        "intercept": -slope * center,
         "slope": slope,
         "r": round(r, 3),
         "n": len(grades),
-        "mean_grade": round(mean_grade, 1),
+        "mean_grade": round(center, 1),
         "clamp_lo": round(min(observed_runs) * clamp_pad, 1),
         "clamp_hi": round(max(observed_runs) * clamp_pad, 1),
     }

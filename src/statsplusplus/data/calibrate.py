@@ -505,7 +505,17 @@ def _calibrate_run_space(conn, game_year, role_map, woba_wts, off_norm, result_h
               AND f.year BETWEEN ? AND ?""", (year_lo, year_hi)).fetchall()
         fx = [norm(x["t"]) for x in rows if x["t"] is not None]
         fy = [x["zr"] for x in rows if x["t"] is not None]
-        cur = _fr.calibrate_grade_runs_curve(fx, fy, _fr.FIELDING_PRIOR_SLOPE, shrink=0.75)
+        # Population-mean grade at this position (all players who man it,
+        # not just the high-IP calibration starters) — the curve must be
+        # centered so a POPULATION-average fielder gets ~0 runs, else the whole
+        # population shifts negative when the qualified sample is more selective.
+        prows = conn.execute(f"""SELECT r.{tool} t FROM latest_ratings r
+            JOIN players p ON r.player_id=p.player_id
+            WHERE p.pos IN {codes} AND p.role NOT IN (11,12,13) AND r.{tool} IS NOT NULL""").fetchall()
+        pg = [norm(x["t"]) for x in prows if x["t"] is not None]
+        pop_mean = (sum(pg) / len(pg)) if pg else None
+        cur = _fr.calibrate_grade_runs_curve(fx, fy, _fr.FIELDING_PRIOR_SLOPE,
+                                             shrink=0.75, center_grade=pop_mean)
         if cur:
             def_curve[bk] = cur
 
