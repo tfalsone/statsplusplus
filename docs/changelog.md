@@ -6,6 +6,42 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ## Session 92 (2026-09-20)
 
+### Per-facet aging + development projection + dev_speed tie-in (v1.13.0)
+
+`compute_player_value`'s year-by-year WAR projection is now **per-facet** — each
+of bat / baserunning / fielding develops and declines on its own timeline,
+instead of one whole-player aging curve and a flat development ramp.
+
+- **Per-facet aging (P1):** a blended aging multiplier weights bat/baserunning/
+  fielding aging curves by each facet's positive run-share. Baserunning declines
+  earliest/steepest (physical), the bat holds longest, defense is moderate — so a
+  bat-first player ages more gracefully than a glove/speed-first player (age 34:
+  a pure-bat 1B retains ~54% of peak while a glove+speed SS retains ~46%). The
+  whole-player curve treated them identically.
+- **Per-facet development (P2):** prospect growth follows the age-based **bat**
+  development curve (bat develops latest/most into the mid-20s; baserunning is
+  near-fixed early; defense moderate) rather than a flat linear ramp.
+- **dev_speed tie-in (P3):** a player's development-pace metric (dev_speed) now
+  influences valuation through **timing only** — its z-score maps to a clamped
+  [0.6, 1.4]× growth-rate modifier (confidence-faded) applied to the development
+  ramp, so a fast developer reaches peak production sooner (more surplus while
+  cheaply controlled) and a stalled one later. **FV and ceiling are unchanged** —
+  dev_speed stays an independent axis (timing, not level); validated 0/10 FV
+  moves on the highest-|z| prospects with sensible surplus shifts (fast up,
+  stalled down, bounded ~3-5%). dev_speed is read from the prior run to avoid
+  circularity.
+
+**Curve provenance (honest note):** the aging/development curve SHAPES are
+hardcoded literature-based priors, identical across leagues; only the facet run
+MAGNITUDES they multiply are per-league-calibrated. Per-league fitting is
+deliberately deferred — the cross-section is survivorship-biased (observed
+baserunning "improves" at 33+ because only good baserunners still play) and the
+longitudinal sample is too thin; survivorship-corrected per-league curves are a
+data-gated future enhancement.
+
+Scope: hitters only (pitchers unchanged). All leagues re-evaluated; full suite
+973 passed (11 new tests). Spec: `.kiro/specs/per-facet-aging-projection/`.
+
 ### Fielding runs right-sized at high grades (v1.12.2)
 
 Surfaced by spot-checking vMLB prospect Jimmy Gregory (a no-power, contact/
