@@ -171,6 +171,19 @@ All other analysis scripts are read-only against the DB.
 
 ## Key Design Decisions
 
+**Active league — single source of truth per context** — Two league selectors exist by
+design, for two different contexts: the **process-global** default (`app_config.json`
+`active_league` / `STATSPP_LEAGUE` env, used by CLI and the initial browser load) and the
+**per-browser** selection (Flask `session["active_league"]`, set by the nav switch-league
+dropdown, so a tab can view a different league without mutating global state). In a web
+request the resolved league is stashed once in `g.league_dir`/`g.league_config` by
+`before_request` (priority: `session → app_config → default`); web code must read it via
+`web_league_context.get_cfg()`/`get_db()`. To enforce that, `get_league_dir()` **raises** when
+called with no slug inside a Flask request (no explicit `STATSPP_LEAGUE` override) — silently
+re-resolving the global there is the session-vs-global bug that caused the cross-league draft
+pool leak (Session 91). Credential helpers keep a global fallback via unguarded
+`_global_league_dir()` for onboarding (runs before a league session exists).
+
 **Two-tier ratings storage** — `ratings` table keeps only the latest snapshot (all teams overwritten
 via `INSERT OR REPLACE`). `ratings_history` stores monthly in-game snapshots with slim columns
 for development tracking. Demographics (height/bats/throws) are backfilled on existing rows via UPDATE.

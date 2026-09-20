@@ -60,12 +60,41 @@ def get_league_dir(slug: str | None = None) -> Path:
     """Return the data directory for a league.
 
     Args:
-        slug: League slug (e.g., "emlb", "vmlb"). If None, uses active league.
+        slug: League slug (e.g., "emlb", "vmlb"). If None, uses the active league.
 
     Returns:
         Path to data/<slug>/ directory.
+
+    Single source of truth:
+        The active league is resolved from ONE place per context:
+          - Web (Flask request): ``g.league_dir`` (set once in ``before_request``
+            from ``session → app_config → default``). Web code must read it via
+            ``get_cfg()``/``get_db()`` — NOT call this with ``slug=None``.
+          - CLI / background: the process-global default (``STATSPP_LEAGUE`` env
+            or ``app_config.json``).
+        To enforce that, a ``slug=None`` call *inside a Flask request* is a bug
+        (it bypasses the per-request league and silently serves the global one),
+        so it raises rather than returning the wrong league's data.
     """
     if slug is None:
+        # An explicit STATSPP_LEAGUE override is an unambiguous league selection
+        # (single-league deploys, tests that drive a blueprint without the full
+        # app's before_request). Honor it even inside a request. Absent that, a
+        # no-slug call inside a Flask request bypasses the per-request league
+        # (g.league_dir) and would silently serve the process-global league — a
+        # bug — so raise instead.
+        if not os.environ.get("STATSPP_LEAGUE"):
+            try:
+                from flask import has_request_context
+                if has_request_context():
+                    raise RuntimeError(
+                        "get_league_dir() called with no slug inside a Flask request. "
+                        "The per-request league is the single source of truth — read it "
+                        "via web_league_context.get_cfg().league_dir / get_db(), not the "
+                        "process-global active league."
+                    )
+            except ImportError:
+                pass  # Flask not installed (pure-CLI env) — global resolution is fine.
         slug = get_active_league_slug()
     root = _project_root()
     league_dir = root / "data" / slug
@@ -76,6 +105,17 @@ def get_league_dir(slug: str | None = None) -> Path:
     if legacy_db.exists():
         return root
     return league_dir  # Will fail downstream with clear path
+
+
+def _global_league_dir() -> Path:
+    """Resolve the process-global league dir WITHOUT the request-context guard.
+
+    For internal use by the credential helpers below, whose documented fallback
+    is "resolve from the active league" and which legitimately run during
+    onboarding (in a request, before a league session is set). Web query code
+    that needs the *per-request* league must use get_cfg()/get_db(), not this.
+    """
+    return get_league_dir(get_active_league_slug())
 
 
 def get_statsplus_cookie(league_dir: Path | None = None) -> str:
@@ -93,7 +133,7 @@ def get_statsplus_cookie(league_dir: Path | None = None) -> str:
         Cookie string, or empty string if not configured.
     """
     if league_dir is None:
-        league_dir = get_league_dir()
+        league_dir = _global_league_dir()
     # Per-league cookie
     state_path = league_dir / "config" / "state.json"
     if state_path.exists():
@@ -132,7 +172,7 @@ def set_statsplus_cookie(cookie: str, league_dir: Path | None = None) -> None:
         league_dir: Target league directory. If None, uses active league.
     """
     if league_dir is None:
-        league_dir = get_league_dir()
+        league_dir = _global_league_dir()
     config_dir = league_dir / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
     state_path = config_dir / "state.json"
@@ -166,7 +206,7 @@ def get_statsplus_token(league_dir: Path | None = None) -> str:
         Token string, or empty string if not configured.
     """
     if league_dir is None:
-        league_dir = get_league_dir()
+        league_dir = _global_league_dir()
     state_path = league_dir / "config" / "state.json"
     if state_path.exists():
         try:
@@ -192,7 +232,7 @@ def set_statsplus_token(token: str, league_dir: Path | None = None) -> None:
         league_dir: Target league directory. If None, uses active league.
     """
     if league_dir is None:
-        league_dir = get_league_dir()
+        league_dir = _global_league_dir()
     config_dir = league_dir / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
     state_path = config_dir / "state.json"

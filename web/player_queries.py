@@ -72,7 +72,7 @@ def _mlb_context(conn, bucket, composite, ceiling):
     unreliable across leagues.
     """
     from statsplusplus.utils.positions import assign_bucket as _ab
-    from statsplusplus.config.league_config import LeagueConfig; _lc = LeagueConfig()
+    _lc = get_cfg()  # session/request league — not a fresh global LeagueConfig
     _rm = {str(k): v for k, v in _lc.role_map.items()}
 
     _year = conn.execute("SELECT MAX(year) FROM mlb_batting_stats").fetchone()[0]

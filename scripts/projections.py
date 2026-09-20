@@ -67,11 +67,26 @@ def project_war(ovr, pot, age, bucket, year_offset=0, stat_war=None):
     return ratings_war
 
 
+def _ratings_scale():
+    """Ratings scale for the current context.
+
+    In a Flask request, read the per-request league config (single source of
+    truth); otherwise fall back to the process-global active league (CLI path).
+    """
+    try:
+        from flask import has_request_context, g
+        if has_request_context() and hasattr(g, "league_config"):
+            return g.league_config.ratings_scale
+    except ImportError:
+        pass
+    from statsplusplus.config.league_config import LeagueConfig
+    return LeagueConfig().ratings_scale
+
+
 def _to_model_scale(val):
     """Convert a tool rating to the 1-100 scale used by projection model coefficients.
     On 1-100 leagues this is a no-op. On 20-80 leagues, maps 20→0, 50→50, 80→100."""
-    from statsplusplus.config.league_config import LeagueConfig; _get_ratings_scale = lambda: LeagueConfig().ratings_scale
-    if _get_ratings_scale() == "20-80":
+    if _ratings_scale() == "20-80":
         return (val - 20) / 60 * 100
     return val
 

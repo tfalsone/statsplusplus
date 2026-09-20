@@ -969,9 +969,10 @@ def get_draft_pool():
     # newly uploaded pool never inherits a prior draft's picks (localStorage).
     draft_year = None
     try:
-        from statsplusplus.config.league_context import get_league_dir as _gld
         import json as _sj
-        _state_path = _gld() / "config" / "state.json"
+        # Use the request/session league (get_cfg), NOT the process-global active
+        # league — they differ when the browser switched leagues via the nav.
+        _state_path = get_cfg().league_dir / "config" / "state.json"
         if _state_path.exists():
             draft_year = _sj.loads(_state_path.read_text()).get("year")
     except Exception:
@@ -1118,12 +1119,12 @@ def get_draft_pool():
             _ceil_fv = _ceiling_fv_pkg(_pot) if _pot else fv_base
             from statsplusplus.evaluation.player_value import compute_player_value as _cpv_raw
             from statsplusplus.evaluation.constants import load_model_weights as _lmw_raw
-            from statsplusplus.config.league_config import league_minimum as _lmin_raw
+            from statsplusplus.config.league_config import league_minimum as _lmin_raw, dollars_per_war as _dpw_raw
             _ld_raw = get_cfg().league_dir
             _raw_result = _cpv_raw(
                 fv_continuous=float(_ceil_fv), bucket=bucket, age=p["Age"],
                 level=_oc_level, composite=_ovr, ceiling=_pot or _ovr,
-                dpw=dollars_per_war(_ld_raw), min_sal=_lmin_raw(_ld_raw),
+                dpw=_dpw_raw(_ld_raw), min_sal=_lmin_raw(_ld_raw),
                 weights=_lmw_raw(_ld_raw))
             if _raw_result and _raw_result.get("breakdown"):
                 raw_total = sum(b["market_value"] - b["salary"] for b in _raw_result["breakdown"])
@@ -1138,8 +1139,12 @@ def get_draft_pool():
     # Try to load uploaded draft pool first
     uploaded_pids = None
     try:
-        from statsplusplus.config.league_context import get_league_dir
-        pool_path = get_league_dir() / "config" / "draft_pool.json"
+        # Session/request league (get_cfg), NOT the process-global active league:
+        # get_draft_pool renders the draft board, whose /player links resolve via
+        # the session league. Reading the pool file from the global active league
+        # (app_config.json) loads the wrong league's pool when the browser has
+        # switched leagues via the nav — the board would show a foreign/empty pool.
+        pool_path = get_cfg().league_dir / "config" / "draft_pool.json"
         if pool_path.exists():
             import json as _json
             uploaded_pids = _json.loads(pool_path.read_text()).get("player_ids", [])
@@ -1153,8 +1158,10 @@ def get_draft_pool():
         from statsplusplus.config.league_context import get_statsplus_cookie, get_statsplus_token
         cfg = get_cfg()
         slug = cfg.settings.get("statsplus_slug", "")
-        cookie = get_statsplus_cookie()
-        token = get_statsplus_token()
+        # Session-league credentials (pass league_dir) — not the global active
+        # league's, which would fetch picks with the wrong team's token.
+        cookie = get_statsplus_cookie(cfg.league_dir)
+        token = get_statsplus_token(cfg.league_dir)
         if slug and (cookie or token):
             _dc.configure(slug, cookie, token)
         raw = _dc.get_draft()

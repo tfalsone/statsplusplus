@@ -4,7 +4,73 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
-## Session 90 (2026-09-18)
+## Session 91 (2026-09-19)
+
+### Bug fix — draft board `$Val` blank (swallowed NameError zeroed all surplus)
+
+Every draft-board prospect showed `—` for `$Val` (surplus). Root cause: the
+raw-surplus (ceiling-scenario) block in `queries._build_prospect` called
+`dollars_per_war(_ld_raw)` but never imported that name in scope — it threw
+`NameError` on **every** prospect, and the block's bare `except Exception:`
+reset `entry["surplus"] = 0`, clobbering the correct value set moments earlier.
+It also left `raw_surplus` ("Ceiling value" in the prospect detail panel)
+unset. League-agnostic bug (fired everywhere); most visible on PPL where the
+live draft board was in use. **Fix:** import `dollars_per_war as _dpw_raw` in
+that block. Verified surplus now populates on PPL (FV 60 prospects ~$0.4–0.5M,
+correct for a 1955 retro league's ~$22K/WAR economy) and emlb (raw_surplus now
+differentiated from surplus rather than clobbered to equal it).
+
+### Bug fix — cross-league draft pool (session vs process-global league)
+
+The draft board showed only the ~34 already-drafted players instead of the
+977-player uploaded pool. `queries.get_draft_pool` read the pool file, the
+draft year, and the StatsPlus credentials from the **process-global** active
+league (`app_config.json`, bare `get_league_dir()`), while the rest of the page
+uses the **session** league set by the nav switch-league dropdown. When they
+differed (global=emlb, browsing ppl), the pool loaded from the wrong league
+(emlb had no pool file) → fell through to the live-API picks. Same
+session-vs-global class as the Session 90 draft-endpoint fix, but on the
+page-render path. **Fix:** `get_draft_pool` now resolves the pool file, draft
+year, and cookie/token via the request-scoped `get_cfg().league_dir`.
+
+### Enforce single-source-of-truth for the active league (request-context guard)
+
+To prevent the whole class of session-vs-global bug above, `get_league_dir()`
+now **raises** when called with no slug *inside a Flask request* and with no
+explicit `STATSPP_LEAGUE` override. In a request, the per-request league
+(`g.league_dir`, set once in `before_request` from `session → app_config →
+default`) is the single source of truth — web code must read it via
+`get_cfg()`/`get_db()`, not re-resolve the global. An explicit
+`STATSPP_LEAGUE` env override is honored even in a request (single-league
+deploys, blueprint-only tests); CLI/background paths are unaffected. The
+credential helpers (`get/set_statsplus_cookie/token`) keep their documented
+"resolve from active league" fallback via a new unguarded `_global_league_dir()`
+(they legitimately run during onboarding before a league session exists).
+
+The guard immediately surfaced **three more latent instances** of the same bug,
+all fixed to use the session config: team-page ratings scale
+(`projections._to_model_scale` → new `_ratings_scale()` reading `g.league_config`
+in-request), and the player-popup / role-map lookups (`player_queries`,
+`api_routes` → session `get_cfg()`).
+
+Tests: `tests/test_league_dir_guard.py` (5 — guard in/out of request, explicit
+slug, env override). Full suite 952 pass.
+
+### Investigated — cross-environment evaluation divergence (no change)
+
+A player graded differently across two dev environments on the same code/league
+(David Monahan PPL: 38/74 FV 65 rank-1 on a heavily-refreshed env vs 39/69 FV 60
+rank-7 here). Root cause: **per-league calibration**, not a code difference —
+`tool_weights`/`tool_transforms`/`model_weights` are re-derived from each DB's
+accumulated data every refresh, and this env's small sample (hitter regression
+N=172, only 4 `ratings_history` snapshots) yields noisier weights → different
+composite/ceiling/FV. Not a bug; the more-refreshed env is the more reliable
+one, and this env converges as refresh history accumulates. Committing per-league
+calibrated JSON was rejected (breaks the league-agnostic design); `league.db`
+sync is the way to align environments. Logged as a known limitation in the task
+list.
+
+---
 
 ### Bug fix — standings show an outdated season (preseason / retro leagues)
 

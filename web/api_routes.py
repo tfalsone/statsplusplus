@@ -310,7 +310,7 @@ def api_draft_detail(pid):
     }.get(p["pos"], "?")
 
     from statsplusplus.utils.positions import assign_bucket
-    from statsplusplus.config.league_config import LeagueConfig; _cfg = LeagueConfig()
+    _cfg = _get_cfg()  # session/request league — not a fresh global LeagueConfig
     _p = dict(r)
     _p["pos"] = str(p["pos"]); _p["role"] = p["role"]
     _p["_role"] = {str(k): v for k, v in _cfg.role_map.items()}.get(str(p["role"] or 0), "position_player")
