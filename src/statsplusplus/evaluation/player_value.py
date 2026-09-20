@@ -165,6 +165,7 @@ def compute_player_value(
     def_rating: Optional[int] = None,
     scarcity_table: Optional[dict[int, float]] = None,
     facet_runs: Optional[dict[str, float]] = None,
+    dev_pace: float = 1.0,
 ) -> dict[str, Any]:
     """Compute unified surplus for any player.
 
@@ -315,15 +316,39 @@ def compute_player_value(
         time_discount = (1 - PROSPECT_DISCOUNT_RATE) ** (years_out + yr)
 
         # WAR projection for this year
-        ramp = _UNIFIED_WAR_RAMP.get(ctrl_year, 1.0)
+        # Development ramp: a prospect's climb to peak production over control
+        # years. P3 — dev_pace shifts WHERE on the ramp this year lands: a fast
+        # developer (dev_pace>1) reaches peak sooner (effective year advanced),
+        # a stalled one (dev_pace<1) later. TIMING only — the peak (ceiling) is
+        # unchanged. Neutral (dev_pace=1) leaves the ramp as-is. Fades with sc.
+        if dev_pace != 1.0 and sc < 0.9:
+            eff_ctrl_year = 1.0 + (ctrl_year - 1.0) * dev_pace
+            # interpolate the ramp at the (fractional) effective year
+            lo = int(eff_ctrl_year)
+            frac = eff_ctrl_year - lo
+            r_lo = _UNIFIED_WAR_RAMP.get(lo, 1.0)
+            r_hi = _UNIFIED_WAR_RAMP.get(lo + 1, 1.0)
+            ramp = r_lo + (r_hi - r_lo) * frac
+        else:
+            ramp = _UNIFIED_WAR_RAMP.get(ctrl_year, 1.0)
         effective_ramp = _lerp(ramp, 1.0, sc)  # Established players skip the ramp
 
-        # Development growth: project composite toward ceiling for pre-peak players
-        # This models the "still improving" arc that the existing contract model handles.
-        # Fades with stat_confidence (established players don't get growth credit).
+        # Development growth: project composite toward ceiling for pre-peak players.
+        # P2: growth follows the age-based BAT development curve (prospect
+        # development is bat-driven — it grows latest/most) rather than a flat
+        # linear ramp. P3: the rate is scaled by dev_pace (a clamped dev_speed
+        # modifier — a fast developer closes the gap sooner; TIMING only, the
+        # ceiling is unchanged). Fades with stat_confidence.
         if has_development_room and sc < 0.9:
-            progress = min(1.0, yr / years_to_peak)
-            projected_composite = composite + (ceiling - composite) * progress * 0.6
+            from statsplusplus.evaluation.facet_runs import _dev_progress, DEV_BAT
+            # Progress realized BY this control year's age (relative to now).
+            prog_now = _dev_progress(age + years_out, DEV_BAT)
+            prog_yr = _dev_progress(player_age, DEV_BAT)
+            # Fraction of the REMAINING gap closed from now to this year, paced.
+            remaining = max(0.0, 1.0 - prog_now)
+            gained = max(0.0, prog_yr - prog_now) * dev_pace
+            progress = min(1.0, (gained / remaining) if remaining > 0 else 0.0)
+            projected_composite = composite + (ceiling - composite) * progress
             projected_war = peak_war_from_score(projected_composite, bucket, weights)
             # Blend development projection with base peak_war projection
             dev_weight = (1.0 - sc) * min(1.0, (ceiling - composite) / 20.0)

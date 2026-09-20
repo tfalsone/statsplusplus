@@ -441,6 +441,16 @@ def _compute_and_store_player_values(
     from statsplusplus.evaluation.war import stat_peak_war
     from statsplusplus.evaluation.constants import load_model_weights
     from statsplusplus.config.league_config import dollars_per_war, league_minimum
+
+    # Prior-run dev_speed z/confidence for the development-pace projection (P3).
+    _dev_pace_map: dict = {}
+    try:
+        _conf_w = {"High": 1.0, "Medium": 0.6, "Low": 0.3}
+        for _r in conn.execute("SELECT player_id, z, confidence FROM dev_speed WHERE available=1"):
+            if _r[1] is not None:
+                _dev_pace_map[_r[0]] = (_r[1], _conf_w.get(_r[2], 0.3))
+    except Exception:
+        _dev_pace_map = {}
     from statsplusplus.utils.positions import assign_bucket
     from pathlib import Path
 
@@ -633,6 +643,14 @@ def _compute_and_store_player_values(
                     "fielding_runs": ((float(_dv) - 50.0) * 0.6) if _dv is not None else 0.0,
                 }
 
+        # Development pace (P3): map the player's prior dev_speed z to a clamped
+        # growth-rate modifier. Bat-driven development only; TIMING, not ceiling.
+        _dev_pace = 1.0
+        if bucket not in ("SP", "RP") and pid in _dev_pace_map:
+            from statsplusplus.evaluation.facet_runs import dev_pace_from_z
+            _z, _conf = _dev_pace_map[pid]
+            _dev_pace = dev_pace_from_z(_z, _conf)
+
         try:
             result = compute_player_value(
                 fv_continuous=fv_continuous,
@@ -651,6 +669,7 @@ def _compute_and_store_player_values(
                 perpetual_arb=perpetual_arb,
                 weights=weights,
                 facet_runs=_facet_runs,
+                dev_pace=_dev_pace,
             )
         except Exception:
             errors += 1

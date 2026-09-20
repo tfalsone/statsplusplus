@@ -72,6 +72,80 @@ AGING_DEFENSE: dict[int, float] = {  # tracks speed but experience offsets => mo
     30: 0.79, 31: 0.72, 32: 0.64, 33: 0.56, 34: 0.47, 35: 0.38, 37: 0.22, 40: 0.05,
 }
 
+# ---------------------------------------------------------------------------
+# Per-facet DEVELOPMENT (up-slope) curves — fraction of the current→ceiling gap
+# closed by a given age (spec: per-facet-aging-projection, P2). Mirror of the
+# aging curves for the pre-peak growth phase: the BAT develops most and latest
+# (still gaining into the mid-20s); BASERUNNING is a near-fixed physical trait
+# that barely "develops" (mostly realized young); DEFENSE develops moderately
+# (reads/positioning improve with reps). Literature-prior shapes — per-league
+# longitudinal facet data is too thin to fit freely (survivorship + small n).
+# ---------------------------------------------------------------------------
+
+DEV_BAT: dict[int, float] = {  # slow, extends latest — big gains through mid-20s
+    17: 0.10, 18: 0.18, 19: 0.28, 20: 0.40, 21: 0.52, 22: 0.63,
+    23: 0.73, 24: 0.82, 25: 0.90, 26: 0.96, 27: 1.00,
+}
+DEV_BASERUNNING: dict[int, float] = {  # near-fixed early; little to develop
+    17: 0.55, 18: 0.65, 19: 0.75, 20: 0.84, 21: 0.91, 22: 0.96, 23: 1.00,
+}
+DEV_DEFENSE: dict[int, float] = {  # moderate; reps/positioning through early 20s
+    17: 0.30, 18: 0.42, 19: 0.54, 20: 0.66, 21: 0.77, 22: 0.86,
+    23: 0.93, 24: 0.98, 25: 1.00,
+}
+
+
+def _dev_progress(age: float, curve: dict[int, float]) -> float:
+    """Fraction of the current→ceiling gap realized by ``age`` (0..1)."""
+    ages = sorted(curve)
+    if age <= ages[0]:
+        return curve[ages[0]]
+    if age >= ages[-1]:
+        return 1.0
+    for i in range(len(ages) - 1):
+        a0, a1 = ages[i], ages[i + 1]
+        if a0 <= age <= a1:
+            t = (age - a0) / (a1 - a0)
+            return curve[a0] + t * (curve[a1] - curve[a0])
+    return 1.0
+
+
+def project_facet_runs(
+    facet: str,
+    current_runs: float,
+    ceiling_runs: float,
+    age: float,
+    dev_pace: float = 1.0,
+) -> float:
+    """Project a facet's runs at ``age`` (development up-slope only, pre-peak).
+
+    Grows ``current_runs`` toward ``ceiling_runs`` by the per-facet development
+    progress at ``age``, scaled by ``dev_pace`` (a clamped rate modifier from
+    dev_speed; 1.0 = neutral). Only closes the gap when there IS room
+    (ceiling > current); never projects below current.
+    """
+    curve = {"bat": DEV_BAT, "baserunning": DEV_BASERUNNING, "fielding": DEV_DEFENSE}.get(facet, DEV_BAT)
+    if ceiling_runs <= current_runs:
+        return current_runs
+    progress = min(1.0, _dev_progress(age, curve) * max(0.0, dev_pace))
+    return current_runs + (ceiling_runs - current_runs) * progress
+
+
+def dev_pace_from_z(z: Optional[float], confidence: float = 1.0) -> float:
+    """Map a dev_speed z-score to a growth-rate MODIFIER, clamped to [0.6, 1.4].
+
+    A modifier, never a driver: a fast developer (z>0) closes the gap sooner, a
+    stalled one (z<0) slower. Pulled toward 1.0 by ``confidence`` in [0,1] (low
+    dev_speed confidence → little/no adjustment). dev_speed changes the TIMING of
+    reaching the (already-determined) ceiling, never the ceiling itself.
+    """
+    if z is None:
+        return 1.0
+    raw = 1.0 + max(-1.0, min(1.0, z / 2.0)) * 0.4   # z=±2 -> ±0.4
+    raw = max(0.6, min(1.4, raw))
+    conf = max(0.0, min(1.0, confidence))
+    return 1.0 + (raw - 1.0) * conf
+
 
 def _aging_mult(age: float, curve: dict[int, float]) -> float:
     ages = sorted(curve)

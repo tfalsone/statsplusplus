@@ -112,6 +112,25 @@ dev_speed to value without violating the separation.
 
 
 ## 6. Staging
+
+**STATUS (Session 92): P1 + P2 + P3 ALL IMPLEMENTED.**
+- [x] **P1 — per-facet aging.** `facet_aging_mult` blends bat/br/fielding aging
+  curves by positive-run share; wired into `compute_player_value` (hitters).
+  Bat-first ages slower than glove/speed-first (age 34: 1B 0.59 vs SS 0.46).
+- [x] **P2 — per-facet development curves.** `DEV_BAT/BASERUNNING/DEFENSE` +
+  `_dev_progress`/`project_facet_runs`; the development projection now follows the
+  age-based BAT curve (bat develops latest/most) not a flat linear ramp.
+- [x] **P3 — dev_speed tie-in.** `dev_pace_from_z` maps the prior-run dev_speed
+  z-score to a clamped [0.6,1.4] growth-rate modifier (confidence-faded), applied
+  to the prospect development ramp: fast developers reach peak sooner (more
+  surplus while cheap), stalled ones later. **FV/ceiling unchanged** (validated
+  0/10 FV moves on high-|z| prospects; 7/7 fast up, 3/3 stalled down/flat).
+  dev_speed read from the PRIOR run's `dev_speed` table (avoids circularity;
+  slow-moving trailing metric).
+- Tests: `test_facet_aging.py`, `test_facet_development.py`. All leagues re-evaluated.
+
+**Original staging plan (below) — all three stages done in one session.**
+
 - **P1:** per-facet AGING only (wire `AGING_BAT/BASERUNNING/DEFENSE` into the
   year loop, replacing the single `aging_mult`). Lower risk, no dev_speed. The
   facet-runs split is already available. Validate surplus deltas (should be
