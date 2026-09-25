@@ -58,6 +58,23 @@ premium position).
 
 All three leagues recalibrated + re-evaluated; full suite 979 passed.
 
+### Composite→WAR alignment gap — investigated, closed as a data ceiling
+
+Followed up the flagged eMLB-vs-vMLB/PPL composite→WAR correlation gap (0.62 vs
+0.47). Finding: **not a model defect.** (1) The composite is at or above the
+optimal achievable linear tool-fit in every league (vMLB composite 0.474 beats a
+from-scratch tool regression's 0.357 — our blend adds stats/position the tools
+alone miss). (2) The lower vMLB/PPL correlation traces to compressed source
+ratings (normalized tool SDs 5.4–6.4 vs eMLB's 9.0) — OOTP rates those leagues
+into tighter bands, carrying less outcome information; an intrinsic ceiling no
+reweighting can beat. (3) The composite still ranks players monotonically by
+actual WAR in all three leagues. (4) Against next-year WAR (the target that
+matters), composite (0.71 vMLB) far outperforms prior-year stats (0.42) — leaning
+harder on stats would hurt projections. Conclusion: the ranking engine is sound
+cross-league; the same-year corr gap is noise + data ceiling. The real gap is
+interpretability, not accuracy — redirecting to position-relative player-page
+context. No code change.
+
 
 
 ### Per-facet aging + development projection + dev_speed tie-in (v1.13.0)
