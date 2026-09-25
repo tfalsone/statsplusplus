@@ -4,7 +4,61 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
-## Session 92 (2026-09-20)
+## Session 93 (2026-09-24)
+
+### Prospect FV realism: rounding-cliff fix + composite-mapping population-centering
+
+Investigation started from a user spot-check (eMLB: glove-first SS "Mike French"
+graded #4 prospect FV 55, tying a clearly higher-upside COF "Chad Marshall" at
+FV 50). The dig produced two validated fixes and — as importantly — rejected
+three plausible-but-wrong changes the data disproved.
+
+**Fix 1 — FV rounding cliff (`evaluation/fv.py`).** FV snapped to the nearest 5
+with a gap-dependent rule: near-ceiling players were ROUNDED while high-gap
+(upside) players were FLOORED (`int()`). Since `fv_continuous` already discounts
+the unrealized ceiling (via the `peak = ovr + gap*closure*bust` blend +
+`ceil_weight`), the floor was a redundant SECOND penalty on upside — producing a
+full-grade cliff between two players 0.04 apart in continuous FV (French 54.0 →
+55 vs Marshall 53.96 → 50). Now rounds consistently. Marshall correctly lifts to
+55; high-upside young hitters across all leagues no longer under-graded (eMLB
+FV 60 count 24→47, similar lifts vMLB/PPL). This was the actual fix for the
+reported ordering.
+
+**Fix 2 — composite-mapping population-centering (`data/calibrate.py`,
+`evaluation/facet_runs.py`).** The runs→composite affine map (`comp_mapping`)
+was centered on the selective 300+ PA qualified-starter sample (eMLB mean
+composite 55.9) instead of the population — so every player, prospects included,
+mapped ~1 grade too high (below-average-total players landing above composite
+50). Mirrors the earlier fielding-curve population-centering fix. Now anchors the
+map center on all MLB hitters (run-totals from tool-projected wOBA to avoid
+low-PA stat noise): eMLB comp_mean 55.9→54.8, vMLB→51.5, PPL→50.7.
+
+**Empirical validations run (kept as findings, not code):**
+- Projected bat (`tool_woba_fit`) genuinely predicts MLB outcomes: worst-bat
+  tercile 1.98 WAR/600 vs best-bat 4.78. The bat model works.
+- Composite tracks actual WAR at r=0.62 (eMLB) — slightly BETTER than raw
+  total_runs (0.56); the run→composite path loses no information. But only
+  **0.47 on vMLB/PPL** — flagged as the real headline gap (see task_list).
+- Residual-bat signal after composite is real but small (partial r 0.167,
+  ~0.031 WAR/run); a calibrated residual-bat FV term improved WAR alignment only
+  +0.004 corr while flipping ~2,500 grades via rounding noise — **rejected** as
+  over-engineering.
+
+**Defensive ratings → evaluation (task resolved with evidence).** Tested whether
+fielding runs should use the full defensive profile (arm/hands/DP) vs the range
+tool alone. Result: range (IFR/OFR) is the correct and SUFFICIENT input —
+range→ZR r=0.559, full-glove→ZR only +0.014 better, and arm/hands/DP are
+*negatively* associated with WAR after controlling for range (a positional-
+selection confound: weak-range players kept at premium spots have compensating
+secondary tools). The `ss` composite grade is a WORSE ZR predictor (0.338) than
+range. Conclusion: the range-only fielding curve is empirically right; do NOT
+incorporate secondary defensive tools. French's range-based fielding value is
+correctly scored; he lands at a defensible FV 55 (rangy SS, slightly-light bat,
+premium position).
+
+All three leagues recalibrated + re-evaluated; full suite 979 passed.
+
+
 
 ### Per-facet aging + development projection + dev_speed tie-in (v1.13.0)
 

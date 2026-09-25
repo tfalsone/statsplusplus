@@ -482,14 +482,29 @@ def solve_war_anchor(
 def calibrate_composite_mapping(
     total_runs_list: list[float],
     current_composites: list[float],
+    pop_runs_mean: Optional[float] = None,
+    pop_comp_mean: Optional[float] = None,
 ) -> dict[str, float]:
-    """Affine map runs->20-80 calibrated to the current composite distribution."""
+    """Affine map runs->20-80 calibrated to the current composite distribution.
+
+    The SPREAD (runs_sd, comp_sd) is taken from the fit sample (qualified MLB
+    regulars — a clean, high-PA population with good spread). The CENTER,
+    however, must be anchored on the whole POPULATION, not just qualified
+    starters: the run->composite map is applied to the entire player universe
+    (prospects included), so if it's centered on the selective 300+ PA sample
+    (whose mean composite is inflated), every player maps too high. Pass
+    pop_runs_mean / pop_comp_mean (means over ALL MLB-level hitters) to anchor
+    the center on the population. Falls back to the fit-sample means when the
+    population anchors aren't supplied (backward compatible).
+    """
     import statistics as _st
     if len(current_composites) < 10 or len(total_runs_list) < 10:
         return {}
+    runs_mean = pop_runs_mean if pop_runs_mean is not None else _st.mean(total_runs_list)
+    comp_mean = pop_comp_mean if pop_comp_mean is not None else _st.mean(current_composites)
     return {
-        "runs_mean": _st.mean(total_runs_list),
+        "runs_mean": runs_mean,
         "runs_sd": _st.pstdev(total_runs_list),
-        "comp_mean": _st.mean(current_composites),
+        "comp_mean": comp_mean,
         "comp_sd": _st.pstdev(current_composites),
     }

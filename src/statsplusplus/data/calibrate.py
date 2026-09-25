@@ -561,7 +561,45 @@ def _calibrate_run_space(conn, game_year, role_map, woba_wts, off_norm, result_h
         if pe and pe["composite"]:
             comps.append(pe["composite"])
     anchor = _fr.solve_war_anchor(totals, wars) if wars else {}
-    comp_mapping = _fr.calibrate_composite_mapping(totals, comps) if comps else {}
+
+    # Population center for the composite mapping: the run->composite map is
+    # applied to the whole player universe (prospects included), so it must be
+    # centered on the POPULATION average, not the selective 300+ PA qualified
+    # sample (whose mean composite is inflated — good enough to start every day).
+    # Centering on qualified starters pushes every player up ~a full grade
+    # (glove-first regulars graded FV 55 instead of 50). Mirror the fielding-
+    # curve population-centering fix. Run-totals use tool-PROJECTED wOBA (from
+    # tool_woba_fit) so low-PA population members aren't stat-noise-driven.
+    pop_runs = []; pop_comps = []
+    if tool_woba_fit:
+        prows = conn.execute("""SELECT r.*,p.pos,p.role,p.player_id
+            FROM latest_ratings r JOIN players p ON r.player_id=p.player_id
+            JOIN mlb_batting_stats b ON b.player_id=p.player_id AND b.split_id=1
+            WHERE p.role NOT IN (11,12,13) AND b.year=? GROUP BY r.player_id""", (year_hi,)).fetchall()
+        for r in prows:
+            con, gap, pw, eye = norm(r["cntct"]), norm(r["pow"]), None, None
+            gp, ey = norm(r["gap"]), norm(r["eye"])
+            if None in (con, gp, norm(r["pow"]), ey):
+                continue
+            w = (tool_woba_fit[0] + tool_woba_fit[1]*con + tool_woba_fit[2]*gp
+                 + tool_woba_fit[3]*norm(r["pow"]) + tool_woba_fit[4]*ey)
+            bk = _b(r["pos"], r["role"])
+            ifr = norm(r["ifr"]); ofr = norm(r["ofr"])
+            dt = {bk: (ifr if bk in ("SS","2B","3B") else ofr), "ifr": ifr, "ofr": ofr}
+            parts = _fr.total_runs(w, lg_woba, woba_scale,
+                                   {"speed": norm(r["speed"]), "steal": norm(r["steal"])},
+                                   dt, bk, br_curve=br_curve, def_curve=def_curve,
+                                   positional_models=pmodels, pa=600, runs_per_win=9.5)
+            pe = conn.execute("SELECT composite FROM player_evaluation WHERE player_id=? LIMIT 1", (r["player_id"],)).fetchone()
+            if pe and pe["composite"]:
+                pop_runs.append(parts["total_runs"]); pop_comps.append(pe["composite"])
+    import statistics as _st
+    pop_runs_mean = _st.mean(pop_runs) if len(pop_runs) >= 10 else None
+    pop_comp_mean = _st.mean(pop_comps) if len(pop_comps) >= 10 else None
+    comp_mapping = (
+        _fr.calibrate_composite_mapping(totals, comps, pop_runs_mean, pop_comp_mean)
+        if comps else {}
+    )
 
     return {
         "woba_scale": round(woba_scale, 4),
