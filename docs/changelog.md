@@ -4,6 +4,66 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 94 (2026-10-02)
+
+### Ceiling-anchored WAR FV model (hitters) — v1.14.0
+
+Reframed how FV is computed for hitters. Previously the FV grade ran *parallel*
+to the composite (graded off current composite, with risk a cosmetic label), and
+`peak_war` was a separate downstream number — so bench/role players rode a modest
+ceiling to FV 55 (eMLB had 42% of hitters in the 45/50/55 band). FV now **derives
+from a WAR projection built off potential ratings**, so grade and value tell one
+story. Full investigation + prototype trail: `docs/fv_war_pipeline_diagnosis.md`.
+
+**New FV formula (hitters):**
+```
+ceiling_WAR  = saturate_war( runs_to_war( runs_from(ceiling_score), anchor ) )
+p(develops)  = closure_rate(age) * FV_CEILING_STRENGTH   (near-maxed gap≤2 → 1.0)
+expected_WAR = p·ceiling_WAR + (1−p)·(−0.3 replacement bust fallback)
+FV grade     = invert( per-position FV→WAR ladder + sub-40 role ladder )[expected_WAR]
+```
+
+- **Saturating runs→WAR** (`facet_runs.saturate_war`): the linear runs→WAR map is
+  only valid in the fitted ~45-65 composite band; a tanh now compresses the tails
+  toward each league's REAL hitter-WAR distribution (`calibrate` stores
+  `anchor.sat_top`=p98, `sat_bot`=p02, `sat_mid`=median). Stops ceilings
+  extrapolating to 13-18 WAR (now cap ~7-9) and the bottom to −14 (now ~−2).
+- **Risk is now BOTH** the realization discount inside the grade (p(develops)
+  weighting ceiling-WAR vs the bust fallback) AND the separate variance label —
+  resolving the old "risk is cosmetic to the grade" problem.
+- **Projects from POTENTIAL** (ceiling), not current ability — young/raw players
+  grade on upside discounted by development probability; finished low-ceiling
+  players (bad bat, no projection) grade down for the right reason.
+- **FV→WAR ladder extended below 40** (`FV_SUB40_WAR_LADDER`: 35=AAAA, 30=org,
+  25/20=fringe) so below-replacement talent grades 35/30/25/20 per the industry
+  role scale instead of flooring at 40. These are TALENT grades; **surplus keeps
+  its $0 floor** (you never pay negative dollars — `player_value`/`surplus`
+  untouched).
+- **Pitchers unchanged** — the run spine is hitters-only; pitchers keep the
+  legacy composite-gap FV path (graceful fallback when run-space is absent).
+
+**Impact (all 3 leagues recalibrated + fv_calc re-run):** hitter FV distribution
+is now a prospect pyramid — eMLB 45/50/55 band 42%→20%, vMLB/PPL ~11%; bulk in
+the 35-and-below depth/org tiers. Named cases: Mike French (glove-first SS,
+near-maxed) 55→50; Luis Carrasco (25-bat glove-only SS) 55→45 via low ceiling;
+raw high-ceiling teens (Del Vecchio FV 65, Roman Anthony 60) keep their upside.
+
+**Files:** `evaluation/fv.py` (`calc_fv` ceiling-anchored branch + `FV_CEILING_STRENGTH`,
+new `run_anchor`/`comp_mapping`/`weights`/`fv_strength` params; `calc_fv_from_dict`
+loads run_space + model weights), `evaluation/facet_runs.py` (`saturate_war`,
+`runs_to_war_saturated`), `evaluation/surplus.py` (`fv_from_peak_war` ladder
+inversion), `evaluation/constants.py` (`FV_SUB40_WAR_LADDER`), `data/calibrate.py`
+(saturation caps in run-space anchor), `data/fv_calc.py` (passes scale + league_dir
+through). Full suite 979 passed; mypy net-zero new errors.
+
+**Deferred (backlog):** PPL runs slightly top-rich (4% at 60+ vs eMLB 1%) — a PPL
+ceiling-score calibration difference (low scouting accuracy + young-prospect
+fall-off), not FV logic. Prospect-list age filter (27-yo AAA vets shouldn't rank
+as prospects). Possibly-inflated composite ratings (separate from FV now).
+Pitcher run-space FV. `calc_fv_from_dict` loads weights per-call (hoist later).
+
+---
+
 ## Session 93 (2026-09-24)
 
 ### Prospect FV realism: rounding-cliff fix + composite-mapping population-centering

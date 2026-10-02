@@ -105,6 +105,7 @@ def run(league_dir: Path | None = None) -> None:
     _init_schema(league_dir)
 
     cfg = LeagueConfig(base_dir=league_dir)
+    _scale = cfg.ratings_scale
 
     state_path = league_dir / "config" / "state.json"
     with open(state_path) as f:
@@ -220,11 +221,11 @@ def run(league_dir: Path | None = None) -> None:
                 p["_level"] = "aaa"
                 _apply_milb_context(p, conn, pid, _milb_averages, _milb_discounts, _milb_norm_ages, load_milb_stat_seasons)
                 _adjusted_ceilings[pid] = int(p.get("Pot") or 0)
-                fv_base, fv_risk = calc_fv(p)
+                fv_base, fv_risk = calc_fv(p, scale=_scale, league_dir=league_dir)
                 fv_str = str(fv_base)
                 if bucket == "RP":
                     p["_bucket"] = "SP"
-                    raw_fv, _ = calc_fv(p)
+                    raw_fv, _ = calc_fv(p, scale=_scale, league_dir=league_dir)
                     p["_bucket"] = bucket
                 else:
                     raw_fv = fv_base
@@ -244,12 +245,12 @@ def run(league_dir: Path | None = None) -> None:
             p["_level"] = level_key
             _apply_milb_context(p, conn, pid, _milb_averages, _milb_discounts, _milb_norm_ages, load_milb_stat_seasons)
             _adjusted_ceilings[pid] = int(p.get("Pot") or 0)
-            fv_base, fv_risk = calc_fv(p)
+            fv_base, fv_risk = calc_fv(p, scale=_scale, league_dir=league_dir)
             fv_str = str(fv_base)
             level_label = LEVEL_INT_LABEL.get(int(level), str(level))
             if bucket == "RP":
                 p["_bucket"] = "SP"
-                raw_fv, _ = calc_fv(p)
+                raw_fv, _ = calc_fv(p, scale=_scale, league_dir=league_dir)
                 p["_bucket"] = bucket
             else:
                 raw_fv = fv_base
