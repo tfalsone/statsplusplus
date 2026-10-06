@@ -582,7 +582,7 @@ def api_draft_upload_list():
 
         settings = data.get("settings") or load_settings(league_dir)
 
-        ordered = build_pick_list(rows, adp, needs, num_teams, min(limit, 500),
+        ordered = build_pick_list(rows, adp, needs, num_teams, min(limit, 3000),
                                   settings=settings)
         ranked_ids = [str(r["player_id"]) for r in ordered]
 

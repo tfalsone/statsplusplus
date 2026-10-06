@@ -216,7 +216,7 @@ auto-load per-round-group settings from `config/draft_settings.json` (see `draft
 python3 scripts/draft_board.py board [--top 30]           # Full ranked board (FV sort)
 python3 scripts/draft_board.py available [--top 30]       # Board minus taken players
 python3 scripts/draft_board.py pick N [--no-balance]      # Two-list merge ranked list for N players
-python3 scripts/draft_board.py upload [--top 500] [--no-balance]  # Generate auto-draft file
+python3 scripts/draft_board.py upload [--top 500] [--no-balance]  # Generate auto-draft file (--top max 3000)
 python3 scripts/draft_board.py compare "Name1" "Name2"    # Side-by-side comparison
 python3 scripts/draft_board.py sim PICK [--rounds 7] [--seed S]  # Draft simulation
 ```

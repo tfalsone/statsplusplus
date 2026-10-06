@@ -51,7 +51,9 @@ For pitchers, role distinguishes SP vs RP: role 11/12 = SP, role 13 = RP.
 
 **CLI:** `python3 scripts/draft_board.py upload [--top N]`
 
-Writes up to 500 player IDs ranked by draft value to `data/<league>/tmp/draft_upload.txt`.
+Writes up to 3000 player IDs (StatsPlus's current list cap; default 500, set via
+`--top N` on the CLI or the "List size" input in the web Auto-Draft List modal)
+ranked by draft value to `data/<league>/tmp/draft_upload.txt`.
 One ID per line, no header. Ready for StatsPlus upload.
 
 ### Mode 4: Head-to-Head Comparison
