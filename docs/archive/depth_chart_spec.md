@@ -1,5 +1,11 @@
 # Depth Chart Feature Spec
 
+> **Status:** Historical (design spec) · Not maintained as a living reference.
+> This is the design spec for the shipped depth-chart feature. The feature is
+> stable; this spec still describes its intent and layout. Treat it like the
+> design specs in `.kiro/specs/` — read for intent, verify against
+> `web/team_queries.py` and `web/templates/team.html` for exact current behavior.
+
 ## Overview
 
 A new "Depth Chart" tab on the team page showing a visual baseball diamond with 3-5 players listed at each position, including MLB starters, backups, and organizational prospects who project to contribute. Stat projections are selectable via dropdown. Pitchers displayed separately with their own stat selector.

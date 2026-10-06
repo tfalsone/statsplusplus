@@ -1,8 +1,11 @@
 # Player Valuation Model
 
+> **Status:** Living · **Owns:** surplus/valuation model (`src/statsplusplus/evaluation/{surplus,player_value}.py`)
+> **Writing standard:** prose · **Last verified against code:** Session 94
+
 Plain-language explanation of how Stats++ values prospects and MLB players.
-For implementation details, see `system_overview.md`. For constant tables, see
-`scripts/constants.py`.
+For the full pipeline, see `evaluation_system_overview.md`. For implementation
+details, see `system_overview.md`. For constant tables, see `scripts/constants.py`.
 
 ---
 

@@ -1,5 +1,8 @@
 # Farm System Analysis Guide
 
+> **Status:** Guide · **Writing standard:** prose · **Last verified against code:** Session 74
+> Methodology doc. Verify only when the farm-report process changes.
+
 ## Purpose
 
 This document defines the repeatable process for evaluating and presenting farm

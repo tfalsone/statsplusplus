@@ -1,5 +1,10 @@
 # FV / peak_war Pipeline Diagnosis (recovered research)
 
+> **⚠ HISTORICAL — not maintained.** This is the research trail for the Session 94
+> FV reframe. Its final section matches the shipped code; the earlier sections are
+> superseded prototype stages, kept for context. For the current state, see
+> `docs/evaluation_system_overview.md`.
+
 Investigation into: (a) too many players in the 45/50/55 FV tier, and (b) FV-50
 players outputting less WAR than the FanGraphs standard (50 FV ≈ 2.0 WAR regular).
 

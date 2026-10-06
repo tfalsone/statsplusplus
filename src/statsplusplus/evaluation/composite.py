@@ -131,14 +131,15 @@ def derive_tool_transform(
     shrunk: list[float] = []
     for i in range(k):
         p = prior[i]
-        if data_delta[i] is None:
+        d = data_delta[i]
+        if d is None:
             shrunk.append(p)
             continue
         n_i = band_counts[i] if i < len(band_counts) else 0
         frac = min(max(n_i, 0), TOOL_TRANSFORM_N_FULL) / TOOL_TRANSFORM_N_FULL
         lam = TOOL_TRANSFORM_MIN_LAMBDA + (1.0 - TOOL_TRANSFORM_MIN_LAMBDA) * (1.0 - frac)
         lam = max(0.0, min(1.0, lam))
-        shrunk.append(lam * p + (1.0 - lam) * data_delta[i])
+        shrunk.append(lam * p + (1.0 - lam) * d)
 
     # 3. Pin the 50 anchor to 0 (shift so average tool = average value).
     shift = shrunk[mid_i]
@@ -534,7 +535,7 @@ def compute_composite_hitter(
     rs_score = _run_space_hitter_composite(
         tools, defense, bucket, run_space, positional_models, observed)
     if rs_score is not None:
-        return rs_score
+        return int(rs_score)
 
     off_raw = offensive_grade_raw(tools, weights, transforms)
     br_raw = baserunning_value_raw(tools, weights)

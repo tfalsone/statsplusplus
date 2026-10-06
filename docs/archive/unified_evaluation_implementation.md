@@ -1,5 +1,8 @@
 # Unified Evaluation Engine — Implementation Plan
 
+> **⚠ HISTORICAL — not maintained.** Session 78 implementation plan. The work is
+> done. For the current state, see `docs/evaluation_system_overview.md`.
+
 ## Overview
 
 Phased migration from the current dual-model system (prospect FV + MLB contract surplus)

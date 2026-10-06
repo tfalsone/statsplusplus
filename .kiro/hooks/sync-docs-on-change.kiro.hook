@@ -1,8 +1,8 @@
 {
   "enabled": true,
   "name": "Sync Docs on Source Change",
-  "description": "When Python source files, HTML templates, JS, CSS, or config files are edited, asks the agent to review the change and update relevant documentation in the docs/ folder, README.md, STRUCTURE.md, or other project docs to keep them in sync.",
-  "version": "1",
+  "description": "When Python source files, HTML templates, JS, CSS, or config files are edited, asks the agent to review the change and update the owning living documentation per the ownership map in docs/README.md.",
+  "version": "2",
   "when": {
     "type": "fileEdited",
     "patterns": [
@@ -16,6 +16,6 @@
   },
   "then": {
     "type": "askAgent",
-    "prompt": "A source file was just edited. Review the change and determine if any documentation needs updating. Check README.md, STRUCTURE.md, RULES.md, PURPOSE.md, and files in the docs/ folder. If the change affects interfaces, CLI tools, query functions, routes, DB schema, directory structure, or project conventions, update the relevant docs to reflect the new state. If the change is cosmetic or doesn't affect documented behavior, do nothing."
+    "prompt": "A source file was just edited. Determine if documentation needs updating using the doc-status system in docs/README.md. Step 1: find the edited path in the ownership map (docs/README.md section 2) to identify the owning LIVING doc(s). Step 2: if the change affects what that doc describes (interfaces, CLI tools, query functions, routes, DB schema, model behavior, conventions, directory structure), update the doc to match and bump its 'Last verified against code' header line and its registry row. Also update README.md, STRUCTURE.md, RULES.md, or PURPOSE.md if relevant. Do NOT touch Historical docs (they carry a frozen banner). If the change is cosmetic or does not affect documented behavior, do nothing."
   }
 }

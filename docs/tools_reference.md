@@ -1,12 +1,15 @@
 # Tools Reference
 
+> **Status:** Living · **Owns:** CLI tools, importable query functions, data sources
+> **Writing standard:** prose · **Last verified against code:** Session 95
+
 Quick-reference catalog of all CLI tools, importable libraries, and data sources available
 in the EMLB analytics platform. Intended for agent context — keeps tool discovery out of
 the conversation window.
 
 **Maintenance rule:** Update this file whenever a script, query function, or data source
-is added, removed, or has its interface changed. Add this to the end-of-session
-documentation checklist in `.kiro/steering/emlb-agent.md`.
+is added, removed, or has its interface changed. This is enforced by the end-of-session
+documentation checklist in `.kiro/steering/dev-agent.md`.
 
 ---
 
@@ -345,6 +348,25 @@ Two-pass execution during refresh:
 
 ---
 
+## Developer Tools
+
+### `scripts/check_docs.py`
+
+Documentation staleness checker. Flags Living docs whose owned code changed after
+the doc was last touched, and docs marked `NOT YET VERIFIED`.
+
+```bash
+python3 scripts/check_docs.py            # report stale living docs
+python3 scripts/check_docs.py --all      # also list up-to-date docs
+python3 scripts/check_docs.py --strict   # exit 1 if any doc is stale
+```
+
+Uses git commit timestamps as the signal and the doc status header as the
+human-readable one. The ownership map (`DOC_OWNERSHIP`) mirrors `docs/README.md` §2.
+It is a report, not a gate — a human decides whether a flagged doc actually drifted.
+
+---
+
 ## Importable Libraries
 
 These scripts double as importable modules. Use from Python when you need structured
@@ -428,11 +450,9 @@ fv_grade, risk = calc_fv_from_dict(player_dict, scale="1-100", league_dir=league
 WAR projection and stat history loading.
 
 ```python
-from war_model import peak_war_from_score, aging_mult, load_stat_history, stat_peak_war
+from statsplusplus.evaluation.war import peak_war_from_score, aging_mult, stat_peak_war
 peak_war_from_score(60, 'SP')         # → float (uses COMPOSITE_TO_WAR when available, falls back to OVR_TO_WAR)
-peak_war_from_ovr(60, 'SP')           # → float (backward-compatible alias)
 aging_mult(33, 'SP')                  # → float (multiplier on peak WAR)
-bat_hist, pit_hist, two_way = load_stat_history(conn, game_date)
 war = stat_peak_war(pid, 'SP', bat_hist, pit_hist)
 ```
 
@@ -451,7 +471,9 @@ values from the `players` table (`mlb_service_days / 172.0`), falling back to th
 games-based heuristic when the data isn't available (pre-Phase 1 leagues).
 
 ```python
-from arb_model import arb_salary, arb_salary_perpetual, estimate_service_time, estimate_control
+from statsplusplus.evaluation.arb import (
+    arb_salary, arb_salary_perpetual, estimate_service_time, estimate_control,
+)
 
 # FA leagues: exponential base + raise model
 arb_salary(60, 'SS', arb_year=1, prior_salary=825000, min_sal=825000)  # → int
@@ -491,39 +513,44 @@ probs = career_outcome_probs(fv=55, age=21, level='AA', bucket='SP', ovr=50, pot
 # Returns dict: tiers (WAR probability curve), thresholds, confidence
 ```
 
-### `player_utils`
+### `utils.positions` / `utils.formatting` (shared utilities)
 
-Shared utilities — bucketing, display helpers, league settings, PAP.
-Also re-exports `norm`, `norm_floor`, `calc_fv`, `peak_war_from_ovr`, `aging_mult`,
-`load_stat_history`, `stat_peak_war` for backward compatibility.
+Bucketing, display helpers, and formatting. (Session 77 refactor: the old
+`player_utils` grab-bag was split into `statsplusplus.utils.*` and
+`statsplusplus.evaluation.*`.)
 
 ```python
-from player_utils import (
+from statsplusplus.utils.positions import (
     assign_bucket,    # Determine positional bucket from ratings dict
     display_pos,      # Convert bucket to display string (COF → OF)
+    PITCH_FIELDS,     # Pitch rating field names
+)
+from statsplusplus.utils.formatting import (
     height_str,       # cm → feet/inches string
     fmt_table,        # Format markdown table row
-    calc_pap,         # PAP score from WAR, salary, team games, $/WAR
-    dollars_per_war,  # Current $/WAR from league_averages.json
-    league_minimum,   # League minimum salary from league_settings.json
+    fmt_money, fmt_ip,
 )
+from statsplusplus.evaluation.surplus import calc_pap   # PAP score
 ```
 
-### `league_config`
+### `config.league_config`
 
-Single source of truth for league settings.
+Single source of truth for league settings. `LeagueConfig` takes an explicit
+`league_dir`; the `$/WAR` and minimum-salary helpers are module functions that
+take a `league_dir` (no global state).
 
 ```python
-from league_config import config
-config.my_team_id        # int
-config.year              # int
-config.team_abbr(44)     # str e.g. "ANA"
-config.team_name(44)     # str e.g. "Anaheim Angels"
-config.team_abbr_map     # {int: str}
-config.level_map         # {"1": "MLB", "2": "AAA", ...}
-config.minimum_salary    # int
-config.ratings_scale     # "1-100" or "20-80"
-config.settings          # full league_settings.json dict
+from statsplusplus.config.league_config import (
+    LeagueConfig, dollars_per_war, league_minimum,
+)
+cfg = LeagueConfig(league_dir)
+cfg.my_team_id        # int
+cfg.year              # int
+cfg.team_abbr(44)     # str e.g. "ANA"
+cfg.team_name(44)     # str e.g. "Anaheim Angels"
+cfg.ratings_scale     # "1-100" or "20-80"
+dollars_per_war(league_dir)   # int — current $/WAR
+league_minimum(league_dir)    # int — league minimum salary
 ```
 
 ### `constants`

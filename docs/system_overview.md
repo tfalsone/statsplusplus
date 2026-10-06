@@ -1,5 +1,8 @@
 # EMLB Analytics Platform — System Overview
 
+> **Status:** Living · **Owns:** architecture, data flow, DB tables, routes, query functions, design decisions
+> **Writing standard:** prose · **Last verified against code:** Session 94
+
 ## Purpose
 
 League-wide analytics platform for managing the Anaheim Angels (org ID 44) in the EMLB

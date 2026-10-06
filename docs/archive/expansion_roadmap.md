@@ -1,5 +1,8 @@
 # EMLB Project — Expansion Roadmap
 
+> **⚠ HISTORICAL — not maintained.** Original strategic roadmap. For current
+> backlog and direction, see `docs/task_list.md`.
+
 **Created:** 2033-04-22 (game date) / 2026-03-17 (real date)
 **Scope:** Strategic guidance for expanding the EMLB analytics project from a single-org tool to a league-wide assistant GM platform.
 

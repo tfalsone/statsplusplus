@@ -1,5 +1,8 @@
 # Trade Target Search Workflow
 
+> **Status:** Guide · **Writing standard:** prose · **Last verified against code:** NOT YET VERIFIED
+> Methodology doc. Verify only when the trade-target search process changes.
+
 ## Purpose
 
 Repeatable process for identifying trade targets that address specific organizational needs.

@@ -1,5 +1,8 @@
 # Code Refactoring Plan
 
+> **⚠ HISTORICAL — not maintained.** The package refactor is complete (Session 77).
+> For the current structure, see `../STRUCTURE.md`.
+
 Definitive plan for restructuring Stats++ into a well-engineered Python package.
 Each phase is self-contained: tests pass at the end of every phase.
 

@@ -1,5 +1,8 @@
 # Code Architecture — Cleanup Tracker
 
+> **⚠ HISTORICAL — not maintained.** Progress tracker for a past cleanup effort.
+> For current conventions, see `.kiro/steering/dev-agent.md` and `../STRUCTURE.md`.
+
 Status: `[ ]` open · `[x]` done · `[-]` deferred · `[~]` in progress
 
 ---

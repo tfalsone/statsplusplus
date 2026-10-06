@@ -1,10 +1,16 @@
 # StatsPlus Client Reference
 
-Python API client at `statsplus/client.py`. Credentials resolved from league context
-(`data/app_config.json` → `league_settings.json`) or explicit `configure()`.
-All methods return parsed data (list of dicts, or dict) and raise on error.
+> **Status:** Living · **Owns:** StatsPlus API client and stored fields (`src/statsplusplus/client/`, `src/statsplusplus/data/refresh.py`)
+> **Writing standard:** prose · **Last verified against code:** Session 95
 
-Import: `from statsplus import client`
+Python API client at `src/statsplusplus/client/statsplus.py`. Credentials resolved
+from league context (`data/app_config.json` → per-league `state.json`) or explicit
+`configure()`. All methods return parsed data (list of dicts, or dict) and raise on error.
+
+Import: `from statsplusplus.client import statsplus` (then call `statsplus.get_players()`),
+or import specific helpers: `from statsplusplus.client.statsplus import get_players`.
+The package `__init__` re-exports `configure`, `CookieExpiredError`, `TokenExpiredError`,
+and `RateLimitedError`.
 
 Wiki source: https://wiki.statsplus.net/web-tools/statsplus-api (last updated 2026-07-14)
 
@@ -12,13 +18,24 @@ Wiki source: https://wiki.statsplus.net/web-tools/statsplus-api (last updated 20
 
 ## Authentication
 
-Two methods:
+Two methods, resolved by `_resolve_creds()` per league context:
 
-1. **Session cookie** — `sessionid=<value>;csrftoken=<value>` from browser. Used by our client.
-2. **Team token** — `?token=XXXX` query parameter from the Preferences page on StatsPlus.
-   Valid for one team in one league. Works without cookie for `/ratings` and `/tradeblock`.
+1. **Team token** (preferred) — `?token=XXXX` query parameter from the league's
+   User Settings (Prefs) page on StatsPlus. Valid for one team in one league.
+   Tokens expire 90 days after creation. Stored per league in `state.json`
+   (`statsplus_token`), with a global `app_config.json` fallback.
+2. **Session cookie** (fallback) — `sessionid=<value>;csrftoken=<value>` from the
+   browser. Stored per league in `state.json` (`statsplus_cookie`), global fallback
+   in `app_config.json`.
 
-Cookie stored in `data/app_config.json`. Expires periodically — refresh from browser if auth fails.
+**Error classes** (raised by `_fetch` via a content-type / human-message guard, and
+re-exported from `statsplusplus.client`):
+
+| Exception | Meaning |
+|---|---|
+| `TokenExpiredError` | The team token is invalid or past its 90-day life. Refresh it on the site. |
+| `CookieExpiredError` | The session cookie expired. Re-copy it from the browser. |
+| `RateLimitedError` | A rate-limited endpoint (`/ratings`) is in cooldown. Carries the seconds to wait. |
 
 ---
 
@@ -165,11 +182,8 @@ Key fields: `player_id`, `year`, `team_id`, `league_id`, `level_id`, `split_id`,
 # MLB stats (default behavior)
 stats = client.get_player_batting_stats(year=2033, split=1)
 
-# AAA stats
+# AAA stats (one lid per call)
 aaa_stats = client.get_player_batting_stats(year=2033, split=1, lid=151)
-
-# Multiple minor leagues at once
-milb_stats = client.get_player_batting_stats(year=2033, split=1, lid=151)  # per-lid call
 ```
 
 ### `get_player_pitching_stats(...) -> list[dict]`
@@ -244,12 +258,15 @@ Signed extensions that take effect in future seasons. Same schema as contracts. 
 
 ## Ratings
 
-### `get_ratings(player_ids: list[int] = None, poll_url: str = None) -> list[dict]`
-Ratings for all active players (scouted if league uses scouts, otherwise OSA). This endpoint
-enforces a ~4 min rate limit between requests.
+### `get_ratings(player_ids=None, poll_url=None, skip_initial_wait=False) -> list[dict]`
+Ratings for all active players (scouted if the league uses scouts, otherwise OSA).
+`/ratings` is rate-limited to **once per 5 minutes per team**. Short cooldowns are
+slept through; longer ones raise `RateLimitedError` (carrying the seconds to wait)
+rather than blocking the refresh.
 
 - `player_ids` — optional filter to specific player IDs (full job still runs, filtered client-side)
 - `poll_url` — pass a previously returned poll URL to skip job startup
+- `skip_initial_wait` — skip the first poll delay when the export is already warm
 
 **OSA ratings:** Add `&osa=1` to the initial `/ratings` request to get OSA ratings instead
 of scouted ratings. Not yet implemented in client.
@@ -278,15 +295,16 @@ overlap the export generation with other API calls.
 
 ## League Structure
 
-### `/lgdata` ⚡ NEW — Not Yet Implemented
+### `get_lgdata() -> dict`
 
 Returns a single JSON structure with complete league hierarchy and current standings.
+Used by refresh to discover the MiLB league IDs and to store real W-L-GB standings.
 
 **Top-level keys:** `leagues`, `subleagues`, `divisions`, `teams`, `standings`
 
 ```python
-# Not yet wrapped in client.py
-data = client._json("/lgdata/")
+from statsplusplus.client import statsplus
+data = statsplus.get_lgdata()
 ```
 
 | Key | Fields |
@@ -299,45 +317,45 @@ data = client._json("/lgdata/")
 
 **League state values:** 0=Preseason, 1=Spring Training, 2=Regular Season, 3=Playoffs, 4=Offseason
 
-**Key uses:**
-- Replace our game-frequency clustering for division detection (authoritative source)
-- Real W-L standings (vs pythagorean-only)
-- Minor league structure discovery (league IDs for stats queries)
+**Key uses (implemented):**
+- Division detection and league hierarchy (authoritative source)
+- Real W-L standings stored in the `standings` table (vs pythagorean-only)
+- Minor league structure discovery — refresh reads `leagues[]` to find the MiLB
+  league IDs under the primary league, then pulls MiLB stats per `lid`
+- `primary_league` flag drives `league_meta.primary_league_id` (MLB-scoping)
 - DH rule detection per subleague
 
 ---
 
 ## Trade Block
 
-### `/tradeblock` ⚡ NEW — Not Yet Implemented
+### `get_tradeblock() -> dict`
 
-Returns JSON list of all player IDs currently on the trade block in the league.
+Returns `{"player_ids": [...]}` — all player IDs currently on the trade block.
+Requires authentication (token or cookie). Refresh stores these in the
+`trade_block` table each run.
 
 ```python
-# Not yet wrapped in client.py
-data = client._json("/tradeblock/")
-# {"player_ids": [20394, 25681, 28271, ...]}
+from statsplusplus.client import statsplus
+data = statsplus.get_tradeblock()   # {"player_ids": [20394, 25681, ...]}
 ```
 
-Requires authentication (session cookie or team token).
-
-**Key uses:**
-- Flag confirmed-available targets in `trade_targets.py`
-- Surface trade block players in trade workbench UI
-- Reduce false positives in target identification
+**Key uses (implemented):**
+- `trade_targets.py` shows a 📋 annotation and `--on-block` filters to these players
 
 ---
 
 ## Ballparks
 
-### `/ballparks` ⚡ NEW — Not Yet Implemented
+### `get_ballparks(lid: int = None) -> dict`
 
-Returns JSON with OOTP park factors, capacity, stadium type, and surface for all ballparks.
-Optional `?lid=N` parameter for specific league.
+Returns OOTP park factors, capacity, stadium type, and surface for all ballparks.
+Optional `lid` filters to one league. **Client method exists; not yet called by
+refresh / not stored.** (Park-adjusted projections are a backlog item.)
 
 ```python
-# Not yet wrapped in client.py
-data = client._json("/ballparks/")
+from statsplusplus.client import statsplus
+data = statsplus.get_ballparks()
 ```
 
 Response structure:
@@ -413,26 +431,29 @@ Key fields: `ID`, `Round`, `Pick In Round`, `Supp`, `Overall`, `Player Name`, `T
 
 | Endpoint | Client Method | Stored in DB | Used by Refresh |
 |---|---|---|---|
-| `/players` (core 10 fields) | `get_players()` | ✅ | ✅ |
-| `/players` (extended 45 fields) | — | ❌ | ❌ |
+| `/players` (core fields) | `get_players()` | ✅ | ✅ |
+| `/players` (extended fields) | `get_players()` | ✅ (most — see field table) | ✅ |
 | `/teams` | `get_teams()` | ✅ | ✅ |
 | `/date` | `get_date()` | ✅ | ✅ |
 | `/exports` | `get_exports()` | ❌ | ❌ |
 | `/gamehistory` | `get_game_history()` | ✅ | ✅ |
 | `/playerbatstatsv2` (MLB) | `get_player_batting_stats()` | ✅ | ✅ |
-| `/playerbatstatsv2` (MiLB) | — | ❌ | ❌ |
+| `/playerbatstatsv2` (MiLB via `lid`) | `get_player_batting_stats(lid=…)` | ✅ | ✅ |
 | `/playerpitchstatsv2` (MLB) | `get_player_pitching_stats()` | ✅ | ✅ |
-| `/playerpitchstatsv2` (MiLB) | — | ❌ | ❌ |
+| `/playerpitchstatsv2` (MiLB via `lid`) | `get_player_pitching_stats(lid=…)` | ✅ | ✅ |
 | `/playerfieldstatsv2` (MLB) | `get_player_fielding_stats()` | ✅ | ✅ |
-| `/playerfieldstatsv2` (MiLB) | — | ❌ | ❌ |
+| `/playerfieldstatsv2` (MiLB via `lid`) | `get_player_fielding_stats(lid=…)` | ✅ | ✅ |
 | `/teambatstats` | `get_team_batting_stats()` | ✅ | ✅ |
 | `/teampitchstats` | `get_team_pitching_stats()` | ✅ | ✅ |
 | `/contract` (core) | `get_contracts()` | ✅ | ✅ |
-| `/contract` (incentives/options) | — | ❌ | ❌ |
+| `/contract` (incentives/options) | `get_contracts()` | ✅ | ✅ |
 | `/contractextension` | `get_contract_extensions()` | ✅ | ✅ |
 | `/ratings` (scouted) | `get_ratings()` | ✅ | ✅ |
 | `/ratings` (OSA via `&osa=1`) | — | ❌ | ❌ |
-| `/draftv2` | `get_draft()` | ✅ | ❌ |
-| `/tradeblock` | — | ❌ | ❌ |
-| `/ballparks` | — | ❌ | ❌ |
-| `/lgdata` | — | ❌ | ❌ |
+| `/draftv2` | `get_draft()` | — (draft-pool flow only) | ❌ |
+| `/tradeblock` | `get_tradeblock()` | ✅ (`trade_block`) | ✅ |
+| `/lgdata` | `get_lgdata()` | ✅ (`standings`, `league_meta`, settings) | ✅ |
+| `/ballparks` | `get_ballparks()` | ❌ | ❌ |
+
+**Still not implemented:** OSA ratings (`&osa=1`), ballpark storage. Both are
+backlog items in `task_list.md`.

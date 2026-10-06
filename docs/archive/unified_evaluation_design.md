@@ -1,5 +1,10 @@
 # Unified Player Evaluation Model — Design Document
 
+> **⚠ HISTORICAL — not maintained.** Session 78 design doc. The `stat_confidence`
+> blend it proposes shipped and is live (see `player_value.py`). The FV section is
+> superseded by the ceiling-anchored FV (Session 94). For the current state, see
+> `docs/evaluation_system_overview.md`.
+
 ## Purpose
 
 This document describes the proposed unified evaluation model for Stats++. The goal

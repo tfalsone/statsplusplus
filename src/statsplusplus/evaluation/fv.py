@@ -11,7 +11,10 @@ Public API:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from statsplusplus.evaluation.constants import RP_POT_DISCOUNT
 

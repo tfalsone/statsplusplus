@@ -1,5 +1,10 @@
 # Evaluation Model Reference
 
+> **⚠ HISTORICAL — not maintained.** This document describes the pre-run-space
+> grade-blend model and the old composite-anchored FV. Both were superseded in
+> Sessions 92-94. It does not describe the current system. For the current state,
+> see `docs/evaluation_system_overview.md`.
+
 Complete reference for the Stats++ player evaluation pipeline. Covers every
 stage from raw tool ratings to FV grade and surplus value.
 

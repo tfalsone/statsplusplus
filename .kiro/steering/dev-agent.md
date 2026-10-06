@@ -20,8 +20,10 @@ These give you the project shape and current work state. Do not skip them.
 
 Read these when you're about to modify or analyze code, not for planning/discussion:
 
+- `docs/README.md` — doc index, status convention, and the code→doc ownership map (consult this to find which doc a change affects)
 - `docs/system_overview.md` — architecture, data flow, DB schema, design decisions, workflows
 - `docs/tools_reference.md` — CLI tools, query functions, data sources
+- `docs/evaluation_system_overview.md` — the evaluation pipeline entry point (read before any model work)
 
 ### Tier 3 — Load on demand
 
@@ -30,21 +32,21 @@ Only load when the task directly involves that area. Use the gate table below.
 | Task type | Load these |
 |---|---|
 | Web UI (routes, templates, queries) | `docs/system_overview.md` §Web UI, `.kiro/specs/ui_spec.md` |
-| Valuation models (FV, surplus, WAR) | `docs/assistant_gm_requirements.md`, `docs/valuation_model.md`, `scripts/constants.py`, `scripts/calibrate.py` |
-| FV grade calculation | `scripts/fv_model.py` |
-| WAR projection / stat history | `scripts/war_model.py` |
-| Arb salary / service time | `scripts/arb_model.py` |
-| Rating normalization | `scripts/ratings.py` |
+| Valuation models (FV, surplus, WAR) | `docs/evaluation_system_overview.md`, `docs/valuation_model.md`, `src/statsplusplus/evaluation/constants.py`, `src/statsplusplus/data/calibrate.py` |
+| FV grade calculation | `docs/evaluation_system_overview.md` §5, `src/statsplusplus/evaluation/fv.py` |
+| WAR projection / stat history | `src/statsplusplus/evaluation/{war,player_value}.py` |
+| Arb salary / service time | `src/statsplusplus/evaluation/arb.py` |
+| Rating normalization | `src/statsplusplus/config/ratings.py` |
 | Trade/prospect features | `docs/trade_analysis_guide.md`, `docs/trade_target_workflow.md`, `.kiro/specs/phase4-trade-analysis.md`, `.kiro/specs/trade-review-tab.md` |
 | Farm system / prospect analysis | `docs/farm_analysis_guide.md`, `docs/prospect_query_guide.md` |
 | Roster analysis | `docs/roster_analysis_guide.md`, `docs/org_overview_guide.md` |
-| Depth chart | `docs/depth_chart_spec.md` |
+| Depth chart | `docs/archive/depth_chart_spec.md` (design spec), `web/team_queries.py` |
 | StatsPlus API / client changes | `docs/client_reference.md` |
 | DB schema / migrations | `docs/system_overview.md` §DB Tables, `scripts/db.py` |
-| Multi-league support | `docs/multi_league_spec.md` |
+| Multi-league support | `docs/system_overview.md` (§ "Active league" design decision), `src/statsplusplus/config/league_context.py`; `docs/archive/multi_league_spec.md` (original planning spec) |
 | OOTP domain knowledge | `docs/ootp/ratings_and_attributes.md`, `docs/ootp/financial_model.md`, `docs/ootp/aging_and_development.md` |
-| Code architecture / refactoring | `docs/code_cleanup.md` |
-| Strategic planning | `docs/expansion_roadmap.md` |
+| Code architecture / refactoring | `.kiro/steering/dev-agent.md` (Code Style), `../STRUCTURE.md`; `docs/archive/{code_cleanup,refactoring_plan,code_audit}.md` (historical) |
+| Strategic planning | `docs/task_list.md`; `docs/archive/expansion_roadmap.md` (historical) |
 | SQLite migration | `.kiro/specs/sqlite-migration.md` |
 | League sync | `.kiro/specs/phase3-league-sync.md` |
 | Game history | `.kiro/specs/game_history_spec.md` |
@@ -67,14 +69,32 @@ documentation pass.
 
 ### End-of-session documentation checklist
 
-1. **`docs/task_list.md`** — add new backlog items. Remove completed items (they go to changelog).
-2. **`docs/changelog.md`** — add completed items under the current session heading.
-3. **`docs/system_overview.md`** — update if scripts, routes, DB tables, query functions, data flow, UI layout, or design decisions changed.
-4. **`STRUCTURE.md`** — update if files/directories were added or removed.
-5. **Guide docs** (`farm_analysis_guide.md`, `roster_analysis_guide.md`, `trade_analysis_guide.md`) — update only if methodology changed.
-6. **`docs/tools_reference.md`** — update if any script, query function, or data source interface changed.
+Documentation is organized by the doc-status convention in `docs/README.md`
+(the doc index, status convention, and ownership map). Three status classes:
+**Living** (tracks code), **Guide** (methodology, changes rarely), **Historical**
+(frozen, banner only). Follow these steps:
+
+1. **Consult the ownership map** (`docs/README.md` §2). For each code area you
+   changed, find its owning **Living** doc, verify the doc against the new code,
+   fix any drift, and bump its `Last verified against code:` header line AND its
+   row in the registry (`docs/README.md` §3). This replaces the old fixed doc
+   list — the map is now the source of truth for which doc a change affects.
+2. **`docs/task_list.md`** — add new backlog items. Remove completed items (they go to changelog).
+3. **`docs/changelog.md`** — add completed items under the current session heading.
+4. **`docs/system_overview.md`** — update if scripts, routes, DB tables, query functions, data flow, UI layout, or design decisions changed. (Living doc — bump its verified line.)
+5. **`docs/tools_reference.md`** — update if any script, query function, or data source interface changed. (Living doc — bump its verified line.)
+6. **`STRUCTURE.md`** — update if files/directories were added or removed.
 7. **`RULES.md`** — update only if data pull/storage conventions changed.
-8. **Discord patch notes** — post a summary of the session's changes to Discord. Skip if `data/discord_config.json` doesn't exist (webhook not configured on this environment).
+8. **Guide docs** (`farm_analysis_guide.md`, `roster_analysis_guide.md`, `trade_analysis_guide.md`, etc.) — update only if the methodology changed, not for routine code edits.
+9. **New or obsolete docs** — a new doc gets a status header and a registry row
+   (`docs/README.md` §3). A doc that becomes obsolete gets the `Historical` banner
+   (pointing at its replacement) and moves to the Historical registry table.
+10. **Run `python3 scripts/check_docs.py`** — it flags Living docs whose owned
+    code changed after the doc was last touched, and docs marked `NOT YET VERIFIED`.
+    It is a report, not a gate: verify each flagged doc and bump its verified line,
+    or confirm it did not drift. Keep the script's `DOC_OWNERSHIP` map in sync with
+    `docs/README.md` §2 when either changes.
+11. **Discord patch notes** — post a summary of the session's changes to Discord. Skip if `data/discord_config.json` doesn't exist (webhook not configured on this environment).
 
    **Format requirements:**
    - **Title**: concise and descriptive of what changed — e.g. "WAR Projection Overhaul & Standings Tools", "Pitcher Evaluation Fixes", "Draft Board UX Improvements". NOT "Session X" or "Stats++ Update".
@@ -84,7 +104,7 @@ documentation pass.
    - **Tone**: concise but informative. One sentence per bullet explaining what changed and why it matters.
    - Post using `discord_post.py message` with a custom formatted embed (not `latest` which parses changelog with truncation). See prior session examples for the Python webhook pattern.
 
-9. **Version release** — whenever a Discord post goes out, cut a release so launcher-install users (who update via the release zip, not `git`) get the same changes. Steps: bump `version` in `pyproject.toml`, commit, push `main`, then create and push an annotated tag (`git tag -a vX.Y.Z -m "..."; git push origin vX.Y.Z`) — the tag triggers the `release.yml` workflow that builds the zip. Version choice: **patch** (`Z`) for bug-fix-only batches, **minor** (`Y`) for new features or behavior/model changes, **major** (`X`) for breaking changes. The annotated-tag message should summarize the release (mirrors the Discord post). Note any migration caveat (e.g. per-league calibrated data updates only on the user's next calibrate/refresh — code must degrade gracefully until then). `gh` is not installed locally, so verifying the CI build succeeded and the zip contains `MANIFEST.txt` is a user action.
+12. **Version release** — whenever a Discord post goes out, cut a release so launcher-install users (who update via the release zip, not `git`) get the same changes. Steps: bump `version` in `pyproject.toml`, commit, push `main`, then create and push an annotated tag (`git tag -a vX.Y.Z -m "..."; git push origin vX.Y.Z`) — the tag triggers the `release.yml` workflow that builds the zip. Version choice: **patch** (`Z`) for bug-fix-only batches, **minor** (`Y`) for new features or behavior/model changes, **major** (`X`) for breaking changes. The annotated-tag message should summarize the release (mirrors the Discord post). Note any migration caveat (e.g. per-league calibrated data updates only on the user's next calibrate/refresh — code must degrade gracefully until then). `gh` is not installed locally, so verifying the CI build succeeded and the zip contains `MANIFEST.txt` is a user action.
 
 ### What does NOT need updating
 

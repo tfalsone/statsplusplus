@@ -4,6 +4,195 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 95 (2026-10-02)
+
+### CI workflow (Stage 1 of the testing pipeline)
+
+Added `.github/workflows/ci.yml` — the first automated test gate (nothing ran the
+suite on push/PR before). Two jobs: `test` (Python 3.10/3.11/3.12/3.13 matrix,
+`pytest -m "not live_api"` — hermetic, no network) and `typecheck` (`mypy`,
+**non-blocking** `continue-on-error: true` until the in-progress strict-typing
+pass lands). Supporting changes: added a `live_api` pytest marker and tagged the
+live-API `test_client.py` with it (so CI deselects the 22 network tests; they
+remain a manual canary); added `hypothesis` to the `[dev]` extras — a clean-venv
+CI simulation caught it was an undeclared test dependency that would have made CI
+red on the first push; registered `statsplusplus.client`'s `py.typed` in
+package-data. Validated by replicating the exact CI steps (`pip install -e .[dev]`
+→ `pytest -m "not live_api"` → `mypy`) in a throwaway venv: **957 passed / 1
+skipped / 22 deselected**, mypy at the expected 374 pre-existing (non-blocking)
+errors. Un-archived `docs/testing_pipeline_design.md` (now partially implemented).
+The tag-triggered `release.yml` (zip build) was already in place; Stages 2–4
+(artifact-boot, Playwright, API canary) remain roadmap.
+
+### Consolidated the StatsPlus API client (removed the stale orphan)
+
+A strict-typing pass surfaced that `from statsplus import client` resolved to a
+pre-refactor orphan `./statsplus/client.py` (top-level, not a package, not
+type-checked) rather than the maintained `src/statsplusplus/client/statsplus.py`.
+Nearly everything imported the orphan (refresh, web ×3, draft_board, standings,
+3/4 client tests). Root cause: the Session 77 refactor copied the client into
+`src/` but never rewired imports; the copies drifted when Session 89 edited only
+the package. The running orphan was missing all three Session 89 reliability fixes
+(render pacing, render-429 backoff, ratings export-ID expiry recovery); the package
+lacked `tokencheck` (which web calls).
+
+**Fix (Option A — consolidate on the package):** ported `tokencheck` into the
+package client; redirected all runtime sites + the 3 client tests to
+`from statsplusplus.client import statsplus as client`; deleted
+`./statsplus/client.py` (whole dir) and the harmless completed-purpose orphan
+`scripts/validate_unified.py`; removed the `_PROJECT_ROOT` sys.path hack in
+`refresh.py`; added `statsplusplus.client` to mypy `packages` + a `py.typed`
+marker and removed the dead `statsplus.*` override/`exclude`.
+
+**Verified:** full suite 979 passed / 1 skipped (unchanged from baseline);
+client-behavior tests pass against the package; `refresh.client` now resolves to
+the package file with the Session 89 `_render_path` pacing + `tokencheck` present;
+web-smoke (`/settings` onboarding), entry-point, and CLI-smoke tests green in
+isolation; mypy clean on the client (the 374 remaining mypy errors are the
+in-progress strict-typing work in `data/`/`evaluation/`, unrelated to this change).
+
+### Diagnosed: refresh/web run a stale orphan API client (not fixed — backlogged)
+
+A strict-typing pass surfaced that `from statsplus import client` resolves to a
+pre-refactor orphan `./statsplus/client.py` (top-level, not a package, not
+type-checked) rather than the maintained `src/statsplusplus/client/statsplus.py`.
+Nearly everything imports the orphan (refresh, web ×3, draft_board, standings, 3/4
+client tests); only the package `__init__` and one test use the package. Root
+cause: the Session 77 refactor copied the client into `src/` but never rewired
+imports; the two copies drifted when Session 89 edited only the package. Confirmed
+functional impact: the running orphan is missing all three Session 89 reliability
+fixes (render pacing, render-429 backoff, ratings export-ID expiry recovery), while
+the package lacks `tokencheck` (which web calls). Diagnosis only — no code changed;
+remediation is a deliberate behavior change filed as a High-Priority bug in
+`task_list.md`. Added an interim ⚠ note to `client_reference.md`. Also did a full
+orphan/dead-code sweep (per user request): the only *dangerous* orphan is
+`./statsplus/client.py` (shadows the package); `scripts/validate_unified.py` is a
+harmless completed-purpose one-shot (safe to delete); everything else flagged by a
+reachability scan verified as live. Full inventory in the backlog item.
+
+### Documentation maintenance system
+
+Built a system for keeping complex-system docs from going stale. Problem: doc
+updates were ad hoc — a fixed checklist covered ~7 docs; everything else drifted
+(13 docs still sat at "Initial commit" while the code moved far past them), and
+nothing signaled which docs were current.
+
+- **Doc-status convention** — every substantive doc carries a status header:
+  `Status` (Living / Guide / Historical), `Owns` (code area), `Writing standard`,
+  and `Last verified against code: Session N`. Historical docs carry a deprecation
+  banner pointing at the living replacement.
+- **Central index + ownership map** (`docs/README.md`, new) — the registry of every
+  doc with its status + last-verified session, plus a code-area → owning-living-doc
+  map. This is the authoritative map for the checklist and the staleness script.
+- **Classified all docs** — 10 Living, 6 Guide, 13 Historical. Added headers to the
+  Living/Guide docs; added Historical banners to the superseded ones (`evaluation_model`,
+  `evaluation_engine_assessment`, `unified_evaluation_design/implementation`,
+  `fv_war_pipeline_diagnosis`, `refactoring_plan`, `code_audit`, etc.).
+- **Staleness checker** (`scripts/check_docs.py`, new) — compares the last git-commit
+  timestamp of each Living doc's owned code against the doc's own last commit, and
+  surfaces `NOT YET VERIFIED` docs. A report, not a gate. On first run it correctly
+  flagged `evaluation_model_findings.md` as stale (code moved in Session 94, doc last
+  touched Session 79).
+- **Wired into steering** (`.kiro/steering/dev-agent.md`) — the end-of-session
+  checklist now drives doc updates off the ownership map (not a fixed list), requires
+  bumping the verified line, and runs `check_docs.py`. Added `docs/README.md` and
+  `evaluation_system_overview.md` to Tier 2 loading; fixed stale evaluation paths in
+  the Tier 3 gate table.
+- **Updated the sync-docs hook** (v2) to route edits through the ownership map.
+
+### Doc folder reorg + follow-ups (Session 95)
+
+- **Archived historical docs** — moved 15 frozen docs into `docs/archive/` via
+  `git mv` (preserves history), physically separating living/guide docs from stale
+  ones. The top level of `docs/` now holds only Living docs, Guide docs, the index,
+  and the logs.
+- **Reclassified two "specs"** — `multi_league_spec.md` (a pre-build planning spec
+  whose "current assumptions" no longer exist) and `depth_chart_spec.md` (a design
+  spec for a shipped, stable feature) were Living-but-unverified. Both are really
+  design/planning docs → reclassified Historical and archived. The living source for
+  league resolution is the "Active league" design decision in `system_overview.md`.
+  No doc is left in Living-but-unverified limbo.
+- **Fixed `tools_reference.md` stale imports** — the importable-library examples
+  pointed at removed `scripts/`-era modules (`war_model`, `arb_model`, `player_utils`,
+  `league_config`). Corrected to the real package paths and removed the dead
+  `peak_war_from_ovr` alias.
+- **Marked `evaluation_model_findings.md` accuracy tables as a Session 79 baseline**
+  (measured before the run-space model + ceiling-anchored FV). Re-validation is a
+  backlog item.
+- Updated the `check_docs.py` ownership map, `docs/README.md` registry, STRUCTURE.md,
+  and the steering gate table to the new `archive/` paths. Checker runs clean (no map
+  warnings).
+
+### Brought the stale living docs current (Session 95)
+
+Worked through every doc the checker flagged, verifying each against the code:
+
+- **`client_reference.md`** — corrected the import path (`src/statsplusplus/client/
+  statsplus.py`), rewrote the Auth section (token-first + the three error classes),
+  fixed the `/ratings` rate limit (5 min, not 4), and converted the `/lgdata`,
+  `/tradeblock`, `/ballparks` "NOT Yet Implemented" sections to their real client
+  methods (`get_lgdata`/`get_tradeblock`/`get_ballparks`). Rewrote the Implementation
+  Status table — MiLB stats, trade block, lgdata/standings, extended player/contract
+  fields are all stored now; only OSA ratings and ballpark storage remain unbuilt.
+- **`statsplus_api_analysis.md`** — marked the content-type / human-message guard and
+  the token-auth action items (Sections 2 and 6) as DONE Session 83 (the guard shipped;
+  `_classify_message` + `TokenExpiredError` confirmed in the client). Corrected the
+  `/ballparks` status (client method exists, refresh does not call it) and the stale
+  `statsplus/client.py` path.
+- **`milb_stat_integration_spec.md`** — reclassified Historical (design spec) and
+  archived. Core shipped Session 74; the composite-blend portion was superseded by the
+  run-space per-facet model (Session 92). Captured the still-live mechanisms
+  (performance-adjusted ceiling, stat risk modifier, level discounts, per-facet MiLB
+  blend) in a new `evaluation_system_overview.md` §4.3 so nothing was lost.
+- **`evaluation_model_findings.md`** — added a scope note separating the durable
+  empirical findings from the Session 79 accuracy-table baseline; verified the WAR-driver
+  / defense / aging / calibration content against the current pipeline.
+
+After this pass, 16 docs are archived; the checker's remaining flags are the
+commit-timestamp artifact for docs edited-but-not-yet-committed this session.
+
+### Aggregated doc-surfaced findings onto the backlog (Session 95)
+
+Swept the refreshed living docs for recommendations/opportunities and added the
+untracked ones to `task_list.md` under a new "Findings Surfaced By The Session 95
+Doc Audit" section (six items): the four model simplification/correctness reviews
+from `evaluation_system_overview.md` §12 (pitcher-path decision, surplus-multiplier
+double-counting audit, near-maxed-blend guard re-examination, composite-role audit)
+and two tuning opportunities from `evaluation_model_findings.md` (weak-side contact
+bonus r=+0.12, ISO stat-blend residual r=+0.25). Items already tracked (pitcher
+run-space build, ballpark storage, OSA ratings, platoon modeling, position-relative
+player-page context, survivorship bias) were not duplicated. Cross-linked the docs'
+recommendation sections to the backlog so they stay connected.
+
+### Value-grade research (non-prospect overvaluation)
+
+Investigated whether composite/ceiling mislead users on non-prospect players, and
+whether a WAR-anchored value grade should be added. Read-only research
+(`scripts/analyze_grade_divergence.py`, `scripts/proto_value_grade.py`), findings in
+`docs/value_grade_research.md`. Conclusions: (1) the overvaluation trap is real and
+systematic for established hitters — ceiling flatters true (`peak_war`) value by a
+median +5 to +9 grade points, one-directional, 31-58% by ≥1.5 tiers (Mac Powerz,
+Donnelly, etc.); (2) prospects are NOT misgraded (cohort cleared — the earlier
+"52% off" was an FV-20/ladder-floor artifact); (3) `peak_war` and FV are coherent —
+`fv_from_peak_war(peak_war)` reproduces FV within ~1 pt for all real prospects, so no
+model fix is a prerequisite; (4) **decision: value grades stay position-relative** — an
+RP 80 means best-in-class reliever (~1.5 WAR), not a cross-position absolute, because a
+WAR scale erases the reliever tier structure. No code/model changes. Open decision
+(backlogged): surface the value grade for established/graduated hitters vs keep internal.
+
+### Evaluation system overview document (ASD-STE100)
+Wrote `docs/evaluation_system_overview.md` — a single high-level entry point that
+explains the current player-evaluation system in Simplified Technical English with
+flow diagrams. Verified against the code (not the older docs), so it reflects the
+Session 92 run-space facet model and the Session 94 ceiling-anchored FV. Covers the
+four stages (composite/ceiling → FV → WAR projection → surplus), the batch pipeline
+order, the downstream dependency fan-out, known limits, and a document-status table
+flagging which older docs are current vs historical. No code or model change — a
+documentation/assessment pass to make the system legible before a simplification
+review.
+
+---
+
 ## Session 94 (2026-10-02)
 
 ### Ceiling-anchored WAR FV model (hitters) — v1.14.0

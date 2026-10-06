@@ -103,7 +103,7 @@ def stat_confidence(career_pa: int, career_ip: float) -> float:
     else:
         ip_conf = 0.0
 
-    return max(pa_conf, ip_conf)
+    return float(max(pa_conf, ip_conf))
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +378,7 @@ def compute_player_value(
 
         # Salary estimation
         if use_known_salaries:
+            assert salaries is not None  # guaranteed by use_known_salaries
             salary = salaries[yr]
         elif perpetual_arb:
             cum_war = sum(r["war"] for r in rows) + war

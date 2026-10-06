@@ -1,5 +1,8 @@
 # Prospect Query Guide
 
+> **Status:** Guide · **Writing standard:** prose · **Last verified against code:** Session 90
+> Methodology doc. Verify only when prospect-query usage changes.
+
 ## Overview
 
 `scripts/prospect_query.py` provides league-wide prospect rankings and farm system comparisons using the `prospect_fv` table. Data must be current — run `fv_calc.py` after any league refresh before querying.

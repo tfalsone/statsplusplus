@@ -1,5 +1,10 @@
 # Evaluation Engine — Current State Assessment
 
+> **⚠ HISTORICAL — not maintained.** This is a point-in-time assessment from
+> Session 48. Its known-issues list predates the run-space facet model (Session 92)
+> and the ceiling-anchored FV (Session 94). For the current state, see
+> `docs/evaluation_system_overview.md`.
+
 *Generated: 2026-04-19 | Updated: Session 48 | League year: 2033*
 
 ---

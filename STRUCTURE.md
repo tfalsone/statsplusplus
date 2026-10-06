@@ -9,6 +9,7 @@ statsplusplus/
 ├── RULES.md                    # Data pull and storage rules
 ├── start.sh / start.bat        # Launchers (venv setup, deps, stale-file prune, run app)
 ├── prune_stale.py              # Manifest-based cleanup of stale files on upgrade (zip installs)
+├── .github/workflows/          # CI (ci.yml — pytest+mypy matrix) + release (release.yml — tag→zip)
 │
 ├── src/statsplusplus/          # Core package (all logic lives here)
 │   ├── models/                     # Typed dataclasses (contracts between layers)
@@ -67,7 +68,10 @@ statsplusplus/
 │   ├── benchmark.py                # Evaluation accuracy benchmark
 │   ├── comp_validate.py            # Comp-based FV validation
 │   ├── model_regression.py         # Model accuracy testing + parameter calibration
-│   └── draft_settings.py           # Draft board settings management
+│   ├── draft_settings.py           # Draft board settings management
+│   ├── check_docs.py               # Documentation staleness checker (ownership map in docs/README.md)
+│   ├── analyze_grade_divergence.py # Research: composite/ceiling vs WAR-anchored value grade (read-only)
+│   └── proto_value_grade.py        # Prototype: per-bucket value grade exploration (read-only)
 │
 ├── web/                        # Flask web application
 │   ├── app.py                      # Core routes (team, league, player) + middleware
@@ -94,12 +98,19 @@ statsplusplus/
 │   ├── app_config.json
 │   └── <league>/league.db, config/, history/, reports/
 │
-├── statsplus/                  # StatsPlus API client library
-│   └── client.py
-│
-└── docs/                       # Documentation
-    ├── evaluation_model_findings.md  # Model accuracy, user guide, empirical findings
+└── docs/                       # Documentation (see docs/README.md — index, status convention, ownership map)
+    ├── README.md                     # Doc index + registry + code→doc ownership map
+    ├── evaluation_system_overview.md # Evaluation pipeline — single entry point (ASD-STE100)
+    ├── system_overview.md            # Architecture, data flow, DB, routes, design decisions
+    ├── *.md                          # Living + Guide docs (status header on each)
+    └── archive/                      # Historical/frozen docs (not maintained; banner on each)
 ```
+
+**Doc maintenance:** every living doc carries a status header
+(`Living`/`Guide`/`Historical` + `Last verified against code`). The ownership map
+in `docs/README.md` maps code areas to their owning living doc. `scripts/check_docs.py`
+flags living docs whose owned code changed after the doc. See the end-of-session
+checklist in `.kiro/steering/dev-agent.md`.
 
 ## Architecture Layers
 

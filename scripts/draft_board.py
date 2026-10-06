@@ -110,7 +110,7 @@ def _query_board(conn, pids):
 def _get_taken_pids():
     """Fetch already-drafted player IDs from StatsPlus API."""
     try:
-        from statsplus import client
+        from statsplusplus.client import statsplus as client
         from statsplusplus.config.league_context import get_statsplus_cookie, get_statsplus_token
         from statsplusplus.config.league_config import LeagueConfig
         cfg = LeagueConfig()

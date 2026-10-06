@@ -1,5 +1,8 @@
 # Trade Analysis Guide
 
+> **Status:** Guide · **Writing standard:** prose · **Last verified against code:** NOT YET VERIFIED
+> Methodology doc. Verify only when the trade-analysis process changes.
+
 ## Purpose
 
 This document defines the repeatable process for evaluating trades, contracts, extensions, and payroll projections for the Anaheim Angels. It is the methodology specification for the assistant GM scripts.

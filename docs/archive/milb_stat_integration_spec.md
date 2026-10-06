@@ -1,5 +1,13 @@
 # MiLB Stats Integration — Design Spec
 
+> **⚠ HISTORICAL (design spec) — not maintained.** This is the original design
+> spec for MiLB stat integration. The core shipped in Session 74, and the
+> composite-blend portion was later superseded by the run-space per-facet model
+> (Session 92). Live mechanisms that remain (performance-adjusted ceiling, stat
+> risk modifier, level discounts) are documented in
+> `docs/evaluation_system_overview.md` §4.3; the current composite blend is §4.1.
+> Read this doc for original design intent only.
+
 ## Objective
 
 Integrate minor league statistics into the player evaluation pipeline so that

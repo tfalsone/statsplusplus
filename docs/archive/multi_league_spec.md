@@ -1,5 +1,12 @@
 # Multi-League Support — Alpha/Beta Readiness Spec
 
+> **⚠ HISTORICAL — not maintained.** This is the original planning spec written
+> BEFORE multi-league support was built (its "Current Hardcoded Assumptions"
+> describe a single-league state that no longer exists). Multi-league is now
+> implemented. For the current design, see the "Active league — single source of
+> truth per context" and `league_meta` / primary-league-scoping decisions in
+> `docs/system_overview.md`, plus `src/statsplusplus/config/league_context.py`.
+
 ## Goal
 
 Transform the application from a single-user, single-league tool into a

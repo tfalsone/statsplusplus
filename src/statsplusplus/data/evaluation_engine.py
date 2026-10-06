@@ -39,7 +39,7 @@ import statistics
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Project root on path for statsplus.client (used indirectly via refresh)
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent.parent)
@@ -281,7 +281,8 @@ def load_carrying_tool_config(league_dir: Path) -> dict:
 
 def _deep_copy_config(config: dict) -> dict:
     """Return a deep copy of a carrying tool config dict."""
-    return json.loads(json.dumps(config))
+    result: dict = json.loads(json.dumps(config))
+    return result
 
 
 def _validate_carrying_tool_config(config: dict) -> None:
@@ -339,11 +340,11 @@ def _scarcity_multiplier(tool_grade: int, schedule: list[dict]) -> float:
 
     # Below or at the first breakpoint
     if tool_grade <= schedule[0]["threshold"]:
-        return schedule[0]["multiplier"]
+        return float(schedule[0]["multiplier"])
 
     # Above or at the last breakpoint
     if tool_grade >= schedule[-1]["threshold"]:
-        return schedule[-1]["multiplier"]
+        return float(schedule[-1]["multiplier"])
 
     # Find the surrounding breakpoints and interpolate
     for i in range(len(schedule) - 1):
@@ -352,12 +353,12 @@ def _scarcity_multiplier(tool_grade: int, schedule: list[dict]) -> float:
         if lo["threshold"] <= tool_grade <= hi["threshold"]:
             span = hi["threshold"] - lo["threshold"]
             if span == 0:
-                return lo["multiplier"]
+                return float(lo["multiplier"])
             frac = (tool_grade - lo["threshold"]) / span
-            return lo["multiplier"] + frac * (hi["multiplier"] - lo["multiplier"])
+            return float(lo["multiplier"] + frac * (hi["multiplier"] - lo["multiplier"]))
 
     # Fallback (should not be reached with a well-formed schedule)
-    return schedule[-1]["multiplier"]
+    return float(schedule[-1]["multiplier"])
 
 
 def compute_carrying_tool_bonus(
@@ -413,7 +414,7 @@ def compute_carrying_tool_bonus(
             continue
 
         wpf = tool_cfg.get("war_premium_factor", 0.0)
-        scarcity = _scarcity_multiplier(grade, schedule)
+        scarcity = _scarcity_multiplier(int(grade), schedule)
         bonus = wpf * (grade - threshold) * scarcity
 
         if bonus > 0:
@@ -545,7 +546,7 @@ def load_tool_weights(league_dir: Path) -> dict:
 
     try:
         with open(config_path) as f:
-            weights = json.load(f)
+            weights: dict = json.load(f)
     except (json.JSONDecodeError, OSError) as exc:
         log.warning("Failed to read tool_weights.json at %s (%s) — using default weights",
                      config_path, exc)
@@ -1026,11 +1027,11 @@ def detect_divergence(
     # Add component context when divergence exists and components are provided
     if divergence_type != "agreement" and components is not None:
         context = [
-            {"component": name, "value": val}
+            {"component": name, "value": float(val)}
             for name, val in components.items()
             if val is not None
         ]
-        context.sort(key=lambda entry: entry["value"], reverse=True)
+        context.sort(key=lambda entry: cast(float, entry["value"]), reverse=True)
         result["component_context"] = context
 
     # Add positional context annotation when criteria are met
@@ -1270,7 +1271,7 @@ def compute_snapshot_deltas(
         "defensive": abs(defensive_delta),
     }
     max_delta = max(component_deltas.values())
-    top_component_change = "" if max_delta == 0 else max(component_deltas, key=component_deltas.get)
+    top_component_change = "" if max_delta == 0 else max(component_deltas, key=lambda k: component_deltas[k])
 
     return {
         "tool_deltas": tool_deltas,
@@ -2089,10 +2090,10 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
     from statsplusplus.evaluation.constants import load_model_weights as _load_mw
     _mw = _load_mw(league_dir)
     import statsplusplus.evaluation.composite as _comp_mod
-    _comp_mod.HITTER_IMBALANCE_SPREAD_THRESHOLD = int(_mw.get_param(
-        "HITTER_IMBALANCE_SPREAD_THRESHOLD", _constants.HITTER_IMBALANCE_SPREAD_THRESHOLD))
-    _comp_mod.PITCHER_IMBALANCE_SPREAD_THRESHOLD = int(_mw.get_param(
-        "PITCHER_IMBALANCE_SPREAD_THRESHOLD", _constants.PITCHER_IMBALANCE_SPREAD_THRESHOLD))
+    setattr(_comp_mod, "HITTER_IMBALANCE_SPREAD_THRESHOLD", int(_mw.get_param(
+        "HITTER_IMBALANCE_SPREAD_THRESHOLD", _constants.HITTER_IMBALANCE_SPREAD_THRESHOLD)))
+    setattr(_comp_mod, "PITCHER_IMBALANCE_SPREAD_THRESHOLD", int(_mw.get_param(
+        "PITCHER_IMBALANCE_SPREAD_THRESHOLD", _constants.PITCHER_IMBALANCE_SPREAD_THRESHOLD)))
 
     # -- Load tool weights --
     weights = load_tool_weights(league_dir)
@@ -2378,7 +2379,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
             ct_breakdown = []
 
             # Recompute hitter composite with enhanced offensive grade for two-way
-            if ct_bonus > 0:
+            if ct_bonus > 0 and offensive_grade is not None:
                 recombo = weights.get("recombination", DEFAULT_TOOL_WEIGHTS["recombination"])
                 bucket_recombo = recombo.get(hitter_bucket, recombo.get("COF", {}))
                 enhanced_hitter_composite = derive_composite_from_components(
@@ -2516,7 +2517,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
 
             # Recompute composite with enhanced offensive grade (carrying tool
             # bonus flows through the offensive component only — Req 7.1, 7.2)
-            if ct_bonus > 0:
+            if ct_bonus > 0 and offensive_grade is not None:
                 recombo = weights.get("recombination", DEFAULT_TOOL_WEIGHTS["recombination"])
                 bucket_recombo = recombo.get(bucket, recombo.get("COF", {}))
                 composite_score = derive_composite_from_components(

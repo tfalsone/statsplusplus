@@ -1,5 +1,8 @@
 # Codebase Quality Audit
 
+> **⚠ HISTORICAL — not maintained.** Session 76 audit snapshot. For current
+> structure and conventions, see `../STRUCTURE.md` and `.kiro/steering/dev-agent.md`.
+
 Comprehensive review of the Stats++ codebase conducted Session 76.
 Organized by severity and category.
 

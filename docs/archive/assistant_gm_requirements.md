@@ -1,5 +1,8 @@
 # EMLB Assistant GM — Requirements Document
 
+> **⚠ HISTORICAL — not maintained.** Original requirements draft. For the current
+> system, see `docs/system_overview.md` and `docs/evaluation_system_overview.md`.
+
 **Created:** 2026-03-17
 **Status:** Draft
 **Scope:** Trade analysis and transaction planning tooling for the EMLB project

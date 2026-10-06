@@ -1,11 +1,26 @@
 # Player Evaluation Model — Findings & User Guide
 
+> **Status:** Living · **Owns:** model accuracy, empirical WAR drivers (`src/statsplusplus/evaluation/`)
+> **Writing standard:** prose · **Last verified against code:** Session 95
+> **Scope note:** The empirical WAR-driver findings, defense/aging insights, and
+> calibration architecture below are durable and current. The **Model Accuracy**
+> R² tables are a Session 79 baseline (pre-run-space / pre-ceiling-anchored FV) —
+> see the banner on that section. For current pipeline mechanics, see
+> `evaluation_system_overview.md`.
+
 *Last validated: 2026-08-10 (Session 79)*
 *Leagues tested: EMLB (1-100 scale, 2033 season), VMLB (20-80 scale, 2034 season)*
 
 ---
 
 ## Model Accuracy
+
+> **⚠ Baseline note (Session 95):** The accuracy tables below were measured in
+> **Session 79**, BEFORE the run-space facet model (Session 92) and the
+> ceiling-anchored FV (Session 94). They describe the previous grade-space
+> composite. Treat the R² figures as a historical baseline, not current accuracy.
+> The empirical WAR-driver findings (contact/power/movement correlations) are
+> still broadly valid. Re-validation against the current model is a backlog item.
 
 ### Composite Score vs OOTP OVR — Predicting Same-Year WAR
 
@@ -181,7 +196,8 @@ Key calibration principles:
 
 ## Future Improvement Opportunities
 
-*For when we return to model tuning:*
+*For when we return to model tuning. Tracked in `docs/task_list.md` ("Findings
+Surfaced By The Session 95 Doc Audit" for the weak-side-contact and ISO items).*
 
 1. **Ratings history integration** — Use per-year rating snapshots in calibration
    instead of current ratings against historical stats (eliminates any remaining

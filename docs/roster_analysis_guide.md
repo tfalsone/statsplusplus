@@ -1,5 +1,8 @@
 # MLB Roster Analysis Guide
 
+> **Status:** Guide · **Writing standard:** prose · **Last verified against code:** Session 74
+> Methodology doc. Verify only when the roster-scaffold process changes.
+
 ## Purpose
 
 This document defines the repeatable process for evaluating and presenting the

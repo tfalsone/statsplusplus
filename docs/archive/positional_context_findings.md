@@ -1,5 +1,8 @@
 # Positional Context & Carrying Tool Findings
 
+> **⚠ HISTORICAL — not maintained.** Session 46-47 research findings. For the
+> current state, see `docs/evaluation_system_overview.md`.
+
 *Generated: 2026-04-20 | Data: EMLB + VMLB combined (2033 season)*
 
 ---

@@ -203,7 +203,7 @@ def facet_stat_confidence(facet: str, pa_or_ip: float) -> float:
     cap = {"bat": 0.90, "baserunning": 0.95, "fielding": 0.80}.get(facet, 0.9)
     if pa_or_ip <= 0:
         return 0.0
-    return min(cap, (pa_or_ip / full) ** 1.1)
+    return float(min(cap, (pa_or_ip / full) ** 1.1))
 
 
 def bat_runs(
@@ -296,16 +296,19 @@ def _primary_def_grade(
     # 2) The position-appropriate RANGE tool (matches the calibration grade).
     if bucket in ("CF", "COF", "LF", "RF"):
         for k in ("OFR", "ofr"):
-            if def_tools.get(k) is not None:
-                return float(def_tools[k])
+            v = def_tools.get(k)
+            if v is not None:
+                return float(v)
     elif bucket in ("SS", "2B", "3B"):
         for k in ("IFR", "ifr"):
-            if def_tools.get(k) is not None:
-                return float(def_tools[k])
+            v = def_tools.get(k)
+            if v is not None:
+                return float(v)
     elif bucket == "C":
         for k in ("CArm", "c_arm"):
-            if def_tools.get(k) is not None:
-                return float(def_tools[k])
+            v = def_tools.get(k)
+            if v is not None:
+                return float(v)
     # 3) Positional-model estimate (last resort).
     if positional_models:
         ests = estimate_all_positions(def_tools, positional_models)
@@ -313,8 +316,9 @@ def _primary_def_grade(
             return ests[bucket]
     # 4) Any generic range tool.
     for k in ("ifr", "ofr", "IFR", "OFR"):
-        if def_tools.get(k) is not None:
-            return float(def_tools[k])
+        v = def_tools.get(k)
+        if v is not None:
+            return float(v)
     return None
 
 

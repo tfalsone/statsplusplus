@@ -1,6 +1,13 @@
 # Testing & Release Pipeline Design
 
-Status: **Draft for discussion** (Session 81). Not yet implemented.
+> **Status:** Living (partially implemented) · **Owns:** `.github/workflows/` (CI + release)
+> **Writing standard:** prose · **Last verified against code:** Session 95
+> **Progress:** Stage 1 (CI: pytest + mypy on the Python matrix) is **implemented**
+> (`.github/workflows/ci.yml`, Session 95). The release zip build (`release.yml`)
+> predates this. Stages 2–4 (artifact-boot, Playwright, API canary) are not yet
+> built. The staged design below is the roadmap for the rest.
+
+Status: **Stage 1 shipped (Session 95); Stages 2–4 are the remaining roadmap.**
 
 ## Context: what Stats++ is (and isn't)
 

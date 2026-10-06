@@ -86,6 +86,9 @@ def run(league_dir: Path | None = None) -> None:
     from statsplusplus.config.league_config import dollars_per_war as _dpw_fn, league_minimum as _lm_fn
     from statsplusplus.evaluation.war import peak_war_from_score as peak_war_from_ovr, aging_mult
     from statsplusplus.evaluation.war import load_stat_history as _lsh_fn
+    if league_dir is None:
+        from statsplusplus.config.league_context import get_league_dir
+        league_dir = get_league_dir()
     def load_stat_history(conn, game_date):
         return _lsh_fn(conn, game_date, dh_rule=cfg.settings.get("dh_rule", "Universal DH"))
     dollars_per_war = lambda: _dpw_fn(league_dir)
@@ -96,10 +99,6 @@ def run(league_dir: Path | None = None) -> None:
         compute_stat_risk_modifier,
     )
     from statsplusplus.data.milb import load_milb_averages, load_milb_stat_seasons
-
-    if league_dir is None:
-        from statsplusplus.config.league_context import get_league_dir
-        league_dir = get_league_dir()
 
     conn = _get_conn(league_dir)
     _init_schema(league_dir)

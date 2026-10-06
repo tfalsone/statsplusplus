@@ -16,11 +16,10 @@ Usage: python3 -m statsplusplus.data.calibrate [--dry-run]   (or: spp-calibrate)
 import json, os, sys, math
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
-# Ensure project root is on path for statsplus.client (used by refresh)
+# Project root (used to locate data/logs); client is a package import now.
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent.parent)
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
 
 from statsplusplus.data.db import get_connection as _get_connection, init_schema as _init_schema
 from statsplusplus.config.league_context import get_league_dir
@@ -596,12 +595,14 @@ def _calibrate_run_space(conn, game_year, role_map, woba_wts, off_norm, result_h
             gp, ey = norm(r["gap"]), norm(r["eye"])
             if None in (con, gp, norm(r["pow"]), ey):
                 continue
+            pow_n = norm(r["pow"])
             w = (tool_woba_fit[0] + tool_woba_fit[1]*con + tool_woba_fit[2]*gp
-                 + tool_woba_fit[3]*norm(r["pow"]) + tool_woba_fit[4]*ey)
+                 + tool_woba_fit[3]*pow_n + tool_woba_fit[4]*ey)
+            assert w is not None  # arithmetic sum of non-None terms (guarded above)
             bk = _b(r["pos"], r["role"])
             ifr = norm(r["ifr"]); ofr = norm(r["ofr"])
             dt = {bk: (ifr if bk in ("SS","2B","3B") else ofr), "ifr": ifr, "ofr": ofr}
-            parts = _fr.total_runs(w, lg_woba, woba_scale,
+            parts = _fr.total_runs(float(w), lg_woba, woba_scale,
                                    {"speed": norm(r["speed"]), "steal": norm(r["steal"])},
                                    dt, bk, br_curve=br_curve, def_curve=def_curve,
                                    positional_models=pmodels, pa=600, runs_per_win=9.5)
@@ -694,7 +695,7 @@ def _fit_tool_transforms(rows, tool_cols, war_key="war"):
     b0 = beta[0]
     bt = {t: beta[i + 1] for i, t in enumerate(tool_cols)}
 
-    curves = {"_n": n}
+    curves: dict[str, Any] = {"_n": n}
     for t in tool_cols:
         band_vals = {b: [] for b in _TRANSFORM_BANDS}
         for vals, war in data:
@@ -1321,7 +1322,7 @@ def _calibrate_arb_salary_model(conn, game_year, dpw):
     # Model: salary - min_sal = k × max(0, career_war - discount)^exp
     # Try discount values and pick the one with best fit
 
-    best_r2 = -1
+    best_r2 = -1.0
     best_params = None
 
     for discount_try in [3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]:
@@ -1890,8 +1891,9 @@ def calibrate(dry_run=False):
     scarcity = _calibrate_scarcity(conn, game_date)
     if scarcity:
         for pot in sorted(scarcity.keys()):
-            old = SCARCITY_MULT.get(pot, "—")
-            print(f"  Pot {pot}: {scarcity[pot]:.2f} (was {old})")
+            old_val = SCARCITY_MULT.get(pot)
+            old_disp = "—" if old_val is None else f"{old_val}"
+            print(f"  Pot {pot}: {scarcity[pot]:.2f} (was {old_disp})")
     else:
         print("  Using existing curve (no update)")
         scarcity = {str(k): v for k, v in SCARCITY_MULT.items()}

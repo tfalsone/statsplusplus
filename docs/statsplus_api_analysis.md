@@ -1,9 +1,13 @@
 # StatsPlus API — Wiki Analysis & Action Items
 
+> **Status:** Living · **Owns:** API endpoint coverage and field usage (`src/statsplusplus/client/`, `src/statsplusplus/data/refresh.py`)
+> **Writing standard:** prose · **Last verified against code:** Session 89
+
 Analysis of the updated StatsPlus API wiki (saved at
 `docs/StatsPlus APIs _ StatsPlus Wiki.html`). Captures the authentication,
 error-handling, rate-limit, and caching behavior the wiki documents, and how
-Stats++ should adapt. Cross-reference for PR #11 (token auth) and future work.
+Stats++ adapts. The token-auth and content-type-guard work (originally tracked as
+PR #11) shipped in Session 83; the action items below are annotated with status.
 
 Source: https://wiki.statsplus.net/web-tools/statsplus-api
 
@@ -88,24 +92,21 @@ user-facing "refresh your token/cookie" error for the auth cases). One guard
 covers token expiry, cookie logout, ratings-not-published, and rate limits
 uniformly. This is cleaner than string-matching each message.
 
-**Current state:** our `_fetch` already string-matches two of these messages:
-the `wait (\d+) seconds` rate-limit message (retries) and
-`"requires user to be logged in"` (raises `CookieExpiredError`). So the cookie
-path and throttling are partly covered *by specific string matches*. It does
-**not** handle the token messages (`API token has expired`,
-`Invalid or unknown API token`), nor `Ratings are not published`,
-`The ratings are being updated`, or `Request ID ... still in progress`.
+**Status (implemented Session 83):** `_fetch` now uses the content-type guard the
+wiki recommends. After each response it checks the Content-Type: a `text/csv` or
+JSON body is parsed as data; anything else is passed to `_classify_message`, which
+branches on the human message:
 
-Two problems with the current string-match approach:
-- It is brittle — each new human-message needs a new hardcoded substring, and
-  the wiki lists several we don't cover.
-- Under PR #11, an expired **token** would slip through entirely (no matching
-  string), writing the error text into the DB pipeline.
+- auth — `API token has expired` / `Invalid or unknown API token` → raise `TokenExpiredError`;
+  `requires user to be logged in` → raise `CookieExpiredError`.
+- rate-limit — `wait N seconds` → retry after the stated wait.
+- transient — `ratings are being updated` → retry.
+- anything else → treated as data (the ratings-poll "still in progress" body is
+  left for the poll loop).
 
-The wiki's **content-type guard** is the robust generalization: treat any
-`text/plain` response to a data request as a human message, then branch on its
-content (retry vs. raise). This subsumes all current and future messages with
-one check. Recommended over adding more string matches.
+This replaced the earlier brittle string-match-only approach and covers both the
+cookie and token paths. The remaining non-fatal messages (`Ratings are not
+published for this league`) fall through as data and surface downstream.
 
 ### Status codes
 
@@ -182,35 +183,27 @@ meaningful because there's no conditional GET.
 
 ## 6. Action items
 
-Ordered by priority. Ties into PR #11 (token auth).
+Ordered by priority. (Most shipped in Session 83 with the token-auth work.)
 
 ### High — makes token auth (and cookie auth) safe
-1. **Content-type / human-message guard in `_fetch`** (both `statsplus/client.py`
-   and `src/statsplusplus/client/statsplus.py`). Generalize the existing
-   string-match handling (rate-limit `wait N`, cookie `requires user to be
-   logged in`) into one content-type check: if a data request returns
-   `text/plain` (a human message), do not parse as data:
-   - Rate-limit / in-progress / updating → retry with the stated wait (extend
-     existing logic).
-   - Auth messages (`token has expired`, `Invalid or unknown API token`,
-     `requires user to be logged in`) → raise a clear, user-facing error telling
-     the user to refresh their token/cookie. This is the wiki's explicit ask.
-     (`CookieExpiredError` already exists; add the token analog.)
-   - `Ratings are not published for this league` → clear message, non-fatal.
-2. **Token-expiry surfacing** — when the auth message indicates an expired token,
-   the web UI (and CLI) should show "your StatsPlus token expired, log in on the
-   site to refresh it," not a generic failure.
+1. ~~**Content-type / human-message guard in `_fetch`**~~ **DONE Session 83.**
+   `_fetch` checks Content-Type and routes non-data bodies through
+   `_classify_message` → retry (rate-limit/transient) or raise
+   (`TokenExpiredError` / `CookieExpiredError`). One guard, both auth paths.
+2. ~~**Token-expiry surfacing**~~ **DONE Session 83.** `TokenExpiredError` carries
+   a user-facing "log in on the site to refresh it" message, shown in the web UI
+   and CLI rather than a generic failure.
 
 ### Medium — quality of the token integration
-3. **Back the token "Test Connection" with `/tokencheck`** rather than a generic
-   fetch — it validates the token and returns the team ID with proper HTTP 400s.
-4. **Onboarding token option** — PR #11 leaves onboarding cookie-only; offer the
-   token in the wizard so new installs start on the sanctioned path.
+3. ~~**Back the token "Test Connection" with `/tokencheck`**~~ **DONE Session 83.**
+4. ~~**Onboarding token option**~~ **DONE Session 83** — the token is offered in
+   onboarding and Settings as the preferred auth method.
 
 ### Lower — optimization / roadmap
-5. **`/date`-gated refresh** — skip or trim a refresh when the game date hasn't
-   advanced (no conditional GET, so this is the intended pattern).
-6. **`osa=1` anonymous ratings** — ties into API Roadmap Phase 5a (OSA ratings);
+5. ~~**`/date`-gated refresh**~~ **DONE Session 83.** Refresh skips redundant pulls
+   when the game date is unchanged; `--force` overrides. (A per-endpoint cache
+   extension remains a lower-priority backlog item.)
+6. **`osa=1` anonymous ratings** — still open. Ties into the OSA-ratings task;
    note the 15-min/IP anonymous limit and that it needs no auth.
 
 ---
@@ -218,18 +211,20 @@ Ordered by priority. Ties into PR #11 (token auth).
 ## 7. Endpoint coverage & untapped-data opportunities (Session 83 first pass)
 
 Comparison of the wiki's documented endpoints against what the client actually
-consumes (`statsplus/client.py`). Deeper field-level audit is a tracked recurring
-task (`docs/task_list.md` — "StatsPlus API doc-diff review").
+consumes (`src/statsplusplus/client/statsplus.py`). Deeper field-level audit is a
+tracked recurring task (`docs/task_list.md` — "StatsPlus API doc-diff review").
 
 ### Endpoints we already consume
 `/teams`, `/players`, `/date`, `/contract`, `/contractextension`, `/exports`,
 `/gamehistory`, `/teambatstats`, `/teampitchstats`, `/playerbatstatsv2`,
 `/playerpitchstatsv2`, `/playerfieldstatsv2`, `/draftv2`, `/tradeblock`,
-`/ballparks`, `/lgdata`, plus `/ratings` and (new) `/tokencheck`.
+`/lgdata`, plus `/ratings` and `/tokencheck`. (`/ballparks` is wrapped in the
+client but not yet consumed by refresh — see below.)
 
 ### Documented but NOT consumed — opportunities
-- **`/ballparks` park factors (fetched but unused).** We call `/ballparks` but
-  don't use the payload's park factors: `avg_r`, `avg_l`, `avg`, `d` (doubles),
+- **`/ballparks` park factors (client method exists, not called by refresh).**
+  `get_ballparks()` is wrapped in the client but refresh does not call it and the
+  payload is not stored. Fields: `avg_r`, `avg_l`, `avg`, `d` (doubles),
   `t` (triples), `hr_r`, `hr_l`, `hr`, plus `capacity`, `stadium_type`,
   `surface`. **Opportunity:** park-adjusted offensive stats and HR normalization
   (a big HR park inflates raw power output); handedness-split HR factors

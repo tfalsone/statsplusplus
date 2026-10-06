@@ -116,12 +116,12 @@ def aging_mult(age: int | float, bucket: str, weights: Optional[Any] = None) -> 
     if age <= ages[0]:
         return 1.0
     if age >= ages[-1]:
-        return table[ages[-1]]
+        return float(table[ages[-1]])
     for i in range(len(ages) - 1):
         a0, a1 = ages[i], ages[i + 1]
         if a0 <= age <= a1:
             t = (age - a0) / (a1 - a0)
-            return table[a0] + t * (table[a1] - table[a0])
+            return float(table[a0] + t * (table[a1] - table[a0]))
     return 0.35
 
 

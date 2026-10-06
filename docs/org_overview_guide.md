@@ -1,5 +1,8 @@
 # Organizational Overview Guide
 
+> **Status:** Guide · **Writing standard:** prose · **Last verified against code:** NOT YET VERIFIED
+> Methodology doc. Verify only when the org-overview process changes.
+
 ## Purpose
 
 The org overview report synthesizes the MLB roster and farm system into a single

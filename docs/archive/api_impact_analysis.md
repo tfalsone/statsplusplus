@@ -1,5 +1,8 @@
 # API Integration Impact Analysis
 
+> **⚠ HISTORICAL — not maintained.** Planning doc for API integration work. For
+> current API coverage, see `docs/client_reference.md` and `docs/statsplus_api_analysis.md`.
+
 Comprehensive mapping of how newly available StatsPlus API data integrates with
 existing Stats++ subsystems. Documents where new data replaces estimates, feeds
 into models, and touches the UI/CLI.
