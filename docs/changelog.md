@@ -165,6 +165,50 @@ league rankings page:
 
 Full suite 966 passed (965 + the new regression test).
 
+### Defensive-runs model overhaul — per-position multi-tool blends (all positions)
+
+Replaced the single-range-tool ZR fielding curve with per-position, per-league
+**multi-tool defensive-runs blends** fit against the fullest observable run target.
+Motivated by a catcher spot-check (PPL: Phil Hussey, elite defense, graded only ~2
+composite points above an average-glove backup) that exposed the range-only curve as
+structurally wrong for positions whose value isn't range.
+
+- **New machinery** (`evaluation/facet_runs.py`): `calibrate_multitool_curve(tools, …)`
+  derives per-tool blend weights from each tool's regression **slope** (runs per
+  rating point × rating SD — NOT correlation, which conflates importance with noise),
+  shrinks them toward a cross-league positional prior by sample size, and fits a
+  centered/clamped linear grade→runs curve on the blended grade. `fielding_runs`
+  routes any curve carrying a `weights` dict through the blend; a general tool-alias
+  map handles both lowercase DB keys and the engine's CamelCase.
+- **Per-position targets + tools** (`data/calibrate.py`):
+  - **C** = framing + blocking + arm → `ZR + OOTP framing runs`. Fixes the crushed
+    catcher-defense spread (eMLB ~2.8 → ~12 composite points, r 0.50→0.81). Framing is
+    the dominant tool; the old curve used `CArm` alone through a ±3-run clamp.
+  - **SS/2B/3B** = range + error + arm + DP → `ZR + (−0.5·errors)`. **3B is
+    error/arm-led, not range-led** (validated — the biggest correction vs the old
+    model); SS/2B range-led. Error run value is literature-anchored (−0.5);
+    chances-rate-adjustment tested and confirmed immaterial; DP left out of the target
+    (opportunity-confounded) but `TDP` kept as a predictor.
+  - **CF/COF** = range + error + arm → `ZR + (−0.5·errors) + OOTP arm runs`. OF `arm`
+    is the throwing-value dimension ZR can't see (the OF analog of catcher framing);
+    cannon-arm corners now earn defensive credit. COF kept pooled (LF+RF).
+  - **1B/DH** unchanged (~0 fielding runs).
+- **Key finding — defensive run VALUE is league-dependent.** Framing runs-per-rating-
+  point: vMLB 0.69, eMLB 0.34, **PPL 0.08** (framing is a near-worthless skill in
+  PPL's 1955 run environment — a league-settings property, correctly reflected by
+  per-league calibration, not overridden). So Hussey's edge over an average-glove
+  catcher is correctly modest IN PPL and large in vMLB/eMLB.
+- **Scoping note:** this does not contradict the Session-93 "range-only is sufficient"
+  finding for IF/OF — that was tested against WAR (confounded) and against ZR alone
+  (which can't see framing/arm/error-events); fit against the fuller run target, the
+  secondary tools carry real signal. **Position *gating*** (how much range/arm a
+  position DEMANDS to be playable — the defensive spectrum) is a separate, orthogonal
+  axis, logged as its own backlog item (upstream of this value model).
+- Validated on all three leagues (recalibrate → engine → fv_calc): within-position
+  weightings make baseball sense, catcher spread restored, 3B re-weighted, OF arm
+  contributes. Tests: `tests/evaluation/test_defensive_runs.py` (10). Full suite 976
+  passed.
+
 ### CI workflow (Stage 1 of the testing pipeline)
 
 Added `.github/workflows/ci.yml` — the first automated test gate (nothing ran the

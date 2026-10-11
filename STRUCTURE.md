@@ -87,7 +87,7 @@ statsplusplus/
 │   ├── templates/                  # Jinja2 templates
 │   └── static/                     # CSS, JS, favicon assets
 │
-├── tests/                      # Test suite (952 tests)
+├── tests/                      # Test suite (~975 tests)
 │   ├── models/                     # Model + utility tests
 │   ├── evaluation/                 # Pure computation tests
 │   ├── data/                       # DB integration tests

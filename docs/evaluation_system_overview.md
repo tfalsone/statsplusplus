@@ -104,7 +104,7 @@ composite uses the run-space method.
 
    contact, gap, power, eye ──► projected wOBA ──► bat runs
    speed, steal             ─────────────────────► baserunning runs
-   range/arm (by position)  ─────────────────────► fielding runs
+   def tools (by position)  ─────────────────────► fielding runs
    position                 ─────────────────────► positional runs
                                                       │
                                                       ▼
@@ -122,9 +122,17 @@ The four facets are:
   is a plate-production metric. The system then converts wOBA to runs above
   average (wRAA) over a 600 plate-appearance baseline.
 - **Baserunning runs.** A calibrated curve maps speed and steal grades to runs.
-- **Fielding runs.** A per-position curve maps the range grade to runs. First base
-  and designated hitter get zero fielding runs, because the range tool shows little
-  spread there.
+- **Fielding runs.** A per-position curve maps the player's defensive tools to runs.
+  Most positions use a **multi-tool blend** fit per league against the fullest
+  observable run target: catcher = framing + blocking + arm (vs ZR + framing runs);
+  infield = range + error + arm + DP (vs ZR + error runs; third base is error/arm-led,
+  not range-led); outfield = range + error + arm (vs ZR + error + arm runs — the OF
+  arm captures throwing value that range cannot). Per-tool weights come from each
+  tool's run-per-rating-point slope, shrunk toward a cross-league positional prior.
+  First base and designated hitter get zero fielding runs. (Note: defensive run VALUE
+  is league-dependent — e.g. framing is worth far more in a modern run environment
+  than in a deep retro league — which the per-league calibration reflects. How much
+  range/arm a position DEMANDS to be playable is a separate axis, not this value model.)
 - **Positional runs.** Each position gets a fixed run adjustment. A shortstop gets
   a positive adjustment. A first baseman gets a negative one.
 
