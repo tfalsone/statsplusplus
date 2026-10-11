@@ -1,7 +1,7 @@
 # Player Evaluation System — High-Level Overview
 
 > **Status:** Living · **Owns:** evaluation pipeline (`src/statsplusplus/evaluation/`, `src/statsplusplus/data/{evaluation_engine,fv_calc,calibrate}.py`)
-> **Writing standard:** ASD-STE100 · **Last verified against code:** Session 95
+> **Writing standard:** ASD-STE100 · **Last verified against code:** Session 97
 
 This document explains how the evaluation system works today. It is the single
 entry point for the evaluation pipeline. It replaces the out-of-date
@@ -128,6 +128,28 @@ The four facets are:
 - **Positional runs.** Each position gets a fixed run adjustment. A shortstop gets
   a positive adjustment. A first baseman gets a negative one.
 
+**Runs to the 20-80 composite (hybrid map).** The system adds the four facets into
+a total runs-above-average, then maps that total to the 20-80 scale with a
+calibrated **hybrid** map (`facet_runs.runs_to_composite`, built by
+`facet_runs.calibrate_hybrid_mapping`). The map has two parts:
+
+- **A WAR-anchored slope.** One win of value is worth a fixed number of composite
+  points (`COMPOSITE_PTS_PER_WAR`, default 4.0). The slope is
+  `pts_per_war / runs_per_win`. This replaced an earlier map whose spread was taken
+  from the *previous* composite distribution — a self-referential loop that kept
+  re-freezing a compressed scale where a ~1 WAR gap read as only ~2 composite
+  points. The new slope decompresses the scale so value differences are visible.
+- **A per-position center.** Each position is centered on its own population
+  run-mean, then offset by its positional adjustment. So a league-average player at
+  **every** position maps to ~50 plus its positional credit (catcher ~55, first
+  base ~45). This makes composites comparable across positions and stops a
+  glove-first up-the-middle player from floating up past better bats.
+
+The top tail soft-saturates toward 80 (a hard clip would re-compress the handful of
+true elites that overshoot). The bottom is a **display clamp** at 20: a large,
+genuinely sub-replacement minor-league population falls below 20 in run terms, so
+the internal value may be lower while the shown grade is floored.
+
 For an MLB hitter with a track record, the system blends each facet with the
 player's **observed** career runs. Each facet blends at its own speed, because each
 statistic becomes reliable at a different sample size:
@@ -138,9 +160,13 @@ statistic becomes reliable at a different sample size:
 | Baserunning | UBR | ~250 PA (fast) |
 | Fielding | ZR | ~900 IP (slowest) |
 
-For a minor-league hitter, the system blends the bat and baserunning facets with
-level-adjusted minor-league stats. Minor-league fielding stats are not available,
-so defense stays tool-based.
+For a minor-league hitter (a prospect), the composite is **tool-only**. The system
+does NOT blend minor-league stats into a prospect's current-ability composite. The
+tool ratings are the authoritative current-ability signal, and a minor-league stat
+line is a lagging hint about where the ratings are headed (an upside question), not
+evidence of present MLB-level ability. The prospect's minor-league performance
+instead feeds the **ceiling** (the age-gated PAC) and the **risk label**, described
+in Section 4.3 — never the current-ability composite.
 
 **Pitcher composite.** The pitcher composite uses the older grade-space method. It
 takes a weighted average of stuff, movement, and control (plus HRA and PBABIP when
@@ -167,19 +193,28 @@ The ceiling can never fall below the current composite.
 
 ### 4.3 Minor-league performance signals (prospects)
 
-For a prospect, minor-league stats feed the evaluation in three ways. They never
-replace the tools; they refine confidence in them.
+For a prospect, minor-league stats feed the evaluation in **two** ways. They never
+replace the tools, and they never change the current-ability composite — the
+composite stays tool-only (Section 4.1). The signal is routed to upside and risk,
+age-gated:
 
-- **Composite blend (run-space).** The bat and baserunning facets blend with
-  level-adjusted minor-league runs, as described in Section 4.1. Minor-league
-  fielding is not available, so defense stays tool-based.
 - **Performance-adjusted ceiling (PAC).** The system adjusts the ceiling up or
   down (at most ±6 points) based on how the player's level-relative production
   compares to his tools. A young player who dominates a level gets a boost; an old
   player who struggles gets a penalty. The adjustment scales with sample size.
+  This is where the "is this player's upside higher than the scouts show?" signal
+  belongs.
 - **Stat risk modifier.** The same signal nudges the development-confidence number
   used for the risk label (at most ±0.12). Outperforming the tools lowers risk;
   underperforming raises it.
+
+A prospect's current-ability composite is deliberately NOT blended with
+minor-league stats. (An earlier design, Session 92, blended level-relative MiLB
+runs into the composite; it was removed Session 97 because it over-rode the game's
+tool ratings on current ability, was not age-gated, and empirically inflated most
+prospects rather than acting as the intended reality-check. The PAC and risk
+modifier above carry the signal correctly — age-gated, bounded, and on the upside
+axis where it belongs.)
 
 Level discounts weight each level's stats by how well they translate (AAA counts
 more than A-ball). The code is in `evaluation/fv.py`
@@ -419,7 +454,9 @@ detail.
 4. **The dev_speed metric can show a false signal during the migration window.**
    Older rating snapshots used the grade-space composite. The newest uses run-space.
    A window that straddles the change can read the model change as development. This
-   self-heals as new snapshots accumulate.
+   self-heals as new snapshots accumulate. (The newest snapshot's composite is
+   recomputed on the current model every run and matches the player-page header —
+   the engine writes it to each player's latest `ratings_history` row.)
 
 5. **The composite and the stat projection can tell different stories.** For some
    proven MLB players, the ranking (composite) and the production (projection) do

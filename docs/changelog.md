@@ -4,7 +4,166 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
-## Session 95 (2026-10-02)
+## Session 97 (2026-10-07)
+
+### Hitter composite decompression — hybrid runs→composite mapping
+
+Fixed a long-standing compression in the hitter composite: a ~1 WAR gap in value
+rendered as only ~2 composite points, so a glove-first prospect could sit a single
+point behind a far better bat (the motivating case: eMLB CF Pat Dunn 62/66 bat and
+AA CF Noel Rosner 51/56 bat both graded ~55-56 — a 1-point gap for a ~1 WAR
+difference). Root cause: the runs→composite map set its spread from
+`comp_sd = pstdev(prior stored composites)` — a self-referential loop that
+re-froze whatever compression already existed, and used a single global center
+that flattered low-run positions (up-the-middle gloves) while burying high-run
+ones.
+
+Replaced it with a **hybrid map** (`facet_runs.calibrate_hybrid_mapping` +
+`runs_to_composite` hybrid branch):
+- **WAR-anchored slope** — one win of value is worth a fixed `COMPOSITE_PTS_PER_WAR`
+  (= 4.0) composite points; slope = `pts_per_war / runs_per_win`. Roughly doubles
+  the usable spread (~2 → ~4 composite points per WAR) and breaks the self-ref loop.
+- **Per-position center** — each bucket centered on its own population run-mean, then
+  offset by its positional adjustment, so a league-average player at every position
+  maps to ~50 + positional credit (comparable across positions).
+- **Top soft-saturation** (tanh, knee 70 → cap 80) so the few genuine 9-10 WAR
+  elites asymptote under 80 instead of hard-clipping (which would re-compress them).
+- **Bottom display clamp** at 20 — a large, genuinely sub-replacement minor-league
+  population falls below 20 in run terms; the internal value is kept for ordering,
+  the shown grade is floored.
+
+Validated on eMLB (recalibrate → engine → fv_calc): MLB-regular composite SD 4.8 →
+8.9 (the intended ~2× decompression) and mean 55.8 → 51.6 (also corrected a known
+~1-grade inflation); per-position means land on the positional ladder (C 58.9, SS
+~53, CF 49.9, 1B 45.0); zero players hard-clipped at 80 (true stars land at 79);
+hitter FV 60+ went 74 → 31 (top over-inflation corrected). Full suite 965 passed /
+1 skipped (957 prior + 8 new `tests/evaluation/test_hybrid_mapping.py`).
+
+Backward compatible: a mapping without the hybrid keys falls back to the legacy
+affine z-map. Per-league calibrated data (`tool_weights.json`) updates on each
+league's next calibrate; until then a league degrades gracefully on the old map.
+eMLB recalibrated this session; vMLB and PPL pending calibrate+fv_calc.
+
+Removed three read-only prototype scripts used to design and validate the fix
+(`scripts/proto_comp_{decompress,topend,symmetric}.py`).
+
+**Follow-up:** eMLB and vMLB recalibrated this session; PPL pending calibrate+fv_calc.
+
+### Prospect composite is now tool-only (MiLB stats no longer blended into current ability)
+
+Removed the per-facet MiLB stat blend from a PROSPECT's current-ability composite
+(added Session 92). A prospect's composite is now the pure tool-only run-space
+composite. Rationale, confirmed by investigation:
+
+- The game's tool ratings are the authoritative CURRENT-ability signal. A MiLB
+  stat line is a lagging hint about where the ratings are HEADED (an upside
+  question), not evidence of present MLB-level ability — a dominant AA line does
+  not translate 1:1 to MLB value.
+- The old blend was **un-age-gated** (a 27-yo AAAA masher got the same composite
+  bump as a 20-yo phenom) and, empirically, an across-the-board **inflator** (~85%
+  of prospects moved UP, median +2.4 runs) rather than the two-sided reality-check
+  it was designed as — because the level discount CANCELLED out of the run
+  magnitude (`num/eff_pa`), surviving only as a weak confidence brake, and because
+  minor-league rosters skew toward level-outperformers (survivorship).
+- The genuinely useful signal — "is this young player outperforming his level, so
+  maybe more upside than the scouts show?" — is already carried, correctly and
+  age-gated, by the **Performance-Adjusted Ceiling** (PAC) and the **stat-risk
+  modifier** on the FV path. Verified both fire in BOTH directions: a young
+  outperformer gets a bounded ceiling boost; an over-scouted non-producer gets a
+  ceiling cut + higher risk, scaled harder for old-for-level players. The Session
+  94 ceiling-anchored FV means prospect FV already derives from the ceiling (not
+  the composite), so Session 92's "composite and WAR share one run total"
+  consistency motive for the blend is now largely moot for prospects.
+
+The MLB observed-career-facet blend is UNCHANGED — a real MLB track record IS valid
+current-ability evidence; AA stats are not the same kind of evidence.
+
+Validated on vMLB: Noel Rosner (the motivating case) composite 56 → 54 (= his
+tool-only), with **ceiling 59 and FV 55 unchanged** (upside preserved) — now sits
+behind 4 MLB CF instead of grading #1 CF in the league. Population: 6,677 hitters,
+mean composite change −0.51, median 0; only the previously-inflated outperformers
+(1,976) drop to their tools, 141 rise, the rest unchanged. Full suite 965 passed.
+Removed the now-dead `_observed_milb_facets` + `_MILB_LEVEL_DISCOUNT`.
+
+**Follow-up:** re-run engine+fv_calc for eMLB and PPL (vMLB done this session).
+
+### Refresh pipeline ordering fix (calibrate before the evaluation engine)
+
+The full refresh ran `evaluation_engine → calibrate → fv_calc`, but the engine
+CONSUMES the per-league model weights (`tool_weights.json`: tool/def curves,
+run-space anchor, the runs→composite mapping) that calibrate WRITES. So the engine
+always computed composites with the PREVIOUS refresh's calibration — a silent
+one-refresh lag that delayed any calibration/model change by a cycle (surfaced when
+a vMLB refresh wrote the new hybrid mapping but left composites on the old scale).
+Reordered to `calibrate → evaluation_engine → fv_calc` in `refresh.py` so a
+calibration change takes effect in the same refresh. Verified safe: the hybrid
+mapping doesn't depend on prior composites, and `_calibrate_composite_to_war`
+already tolerates one-cycle-lagged composites (same as `_calibrate_ovr_to_war`).
+
+### Dev-history timeline: fixed the dead `ratings_history` composite write
+
+The player-page development chart (and the dev-speed window) plot
+`ratings_history.composite_score`/`ceiling_score`, but those were frozen at
+whatever scale each snapshot carried when first inserted — so the newest point on
+the timeline disagreed with the player-page header (e.g. PPL's Phil Hussey: header
+58/58 vs timeline ending 52/54). Root cause: the evaluation engine recomputes the
+current composite and writes it back to `ratings_history` keyed on
+`WHERE snapshot_date = <MAX ratings date>`, but `ratings_history` snapshots are
+taken once per in-game MONTH (dated to the first refresh of the month) while the
+`ratings` table advances to the latest game date — so after the first refresh of
+any month the two dates never coincide and the `UPDATE` matched **zero rows**
+(confirmed in all three leagues). The engine's history-composite recompute had been
+silently inert.
+
+Fixed in `evaluation_engine.py`: the write now targets each player's OWN latest
+`ratings_history` snapshot (`MAX(snapshot_date)` per player) rather than the
+`ratings` date, so the newest timeline point is always recomputed on the current
+model and equals the header. Validated on PPL (engine + fv_calc): Hussey's latest
+history point 52/54 → 58/58 (= header); 100% of players now have their latest
+history composite equal to their current `ratings` composite; dev-speed window
+reads coherently (Hussey comp_first 55 → comp_last 58, "On pace"). Within-month
+tool drift affects only ~4% of players, and for those writing the current composite
+onto the month's row reflects their most-current grade. NOT backfilled: older
+history snapshots keep their original-scale composites (a derived quantity isn't
+worth retro-recomputing — the drift self-heals as new-scale snapshots accumulate).
+Full suite 965 passed.
+
+### Dev-history write regression test + league-rankings scale fixes
+
+Three follow-ons to the decompression + history-write work, all surfaced from the
+league rankings page:
+
+- **Regression test for the history-write invariant** (`tests/data/test_history_write.py`):
+  builds a fixture, plants a month-start `ratings_history` row with a stale
+  composite, advances `ratings` to a later *same-month* date (the second-refresh
+  state that triggered the dead write), runs the engine, and asserts the player's
+  newest history composite == current `latest_ratings` composite. Verified it fails
+  on the pre-fix engine (stale value survives) and passes on the fix — the first of
+  the pipeline-invariant/behavioral test tier (see the test-strategy task_list item).
+
+- **Dev-speed reporting floor recalibrated to the run-space scale.**
+  `MIN_COMPOSITE_REPORT` 38 → **25**. The 38 floor was an old-compressed-scale value;
+  after the Session-97 decompression + per-position centering, 85-90% of prospects
+  sit below composite 38, so the league rankings / prospect lists showed an EMPTY
+  DEV column for nearly every prospect. 25 sits just above the runs→composite
+  display-clamp (20) — it excludes clamped players whose composite movement is noise
+  while admitting the full FV-45+ population whose trajectory is meaningful. After
+  re-running fv_calc on all three leagues, dev availability rose from ~10-15% to
+  33-63%, and FV-45+ prospect visibility to 75-85% (vMLB/eMLB; PPL lower by design —
+  it assigns genuinely low current composites to high-ceiling teenagers who have no
+  meaningful current-ability trajectory yet). `MIN_AGE_REPORT` (18) is scale-independent, unchanged.
+
+- **League positional-rankings DEF column now uses `defensive_value`.** The MLB DEF
+  column rendered `norm(raw single-position fielding tool)`, which read 5-10 points
+  off the engine's run-space `defensive_value` shown on the player-page evaluation
+  panel — two different numbers both labeled "Defense" (e.g. PPL SS Worley: tool 75
+  vs defensive_value 80). Switched `get_positional_rankings` to emit
+  `defensive_value` (the model's actual defensive grade, which feeds composite/WAR),
+  so the rankings DEF column agrees with the player page and sits coherently next to
+  the composite it's shown with. Trimmed the now-unused per-position tool columns
+  from the query. Read-time web change (no pipeline re-run needed).
+
+Full suite 966 passed (965 + the new regression test).
 
 ### CI workflow (Stage 1 of the testing pipeline)
 
