@@ -163,6 +163,14 @@ league rankings page:
   the composite it's shown with. Trimmed the now-unused per-position tool columns
   from the query. Read-time web change (no pipeline re-run needed).
 
+- **Positional-rankings tab: prospects now show the Dev-pace column (v1.17.1).** The
+  by-position rankings grid rendered a Dev column header but `get_positional_rankings`
+  never joined `dev_speed`, so every prospect's Dev cell was blank on that tab
+  (regardless of a valid reading) — the Top-100 tab was unaffected. Added the
+  `dev_speed` join + `dev` cell to the prospect query (mirroring `get_top_prospects`),
+  guarded on table existence so a league without a populated `dev_speed` degrades
+  gracefully. Read-time web fix.
+
 Full suite 966 passed (965 + the new regression test).
 
 ### Defensive-runs model overhaul — per-position multi-tool blends (all positions)
