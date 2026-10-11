@@ -42,12 +42,12 @@ hitter FV 60+ went 74 → 31 (top over-inflation corrected). Full suite 965 pass
 Backward compatible: a mapping without the hybrid keys falls back to the legacy
 affine z-map. Per-league calibrated data (`tool_weights.json`) updates on each
 league's next calibrate; until then a league degrades gracefully on the old map.
-eMLB recalibrated this session; vMLB and PPL pending calibrate+fv_calc.
+Per-league calibration applies on each league's next calibrate+engine+fv_calc (the refresh runs them in order); the code degrades gracefully until then.
 
 Removed three read-only prototype scripts used to design and validate the fix
 (`scripts/proto_comp_{decompress,topend,symmetric}.py`).
 
-**Follow-up:** eMLB and vMLB recalibrated this session; PPL pending calibrate+fv_calc.
+**Follow-up:** per-league calibration applies on each league's next calibrate+fv_calc.
 
 ### Prospect composite is now tool-only (MiLB stats no longer blended into current ability)
 
@@ -85,7 +85,7 @@ mean composite change −0.51, median 0; only the previously-inflated outperform
 (1,976) drop to their tools, 141 rise, the rest unchanged. Full suite 965 passed.
 Removed the now-dead `_observed_milb_facets` + `_MILB_LEVEL_DISCOUNT`.
 
-**Follow-up:** re-run engine+fv_calc for eMLB and PPL (vMLB done this session).
+**Follow-up:** per-league curves apply on each league's next engine+fv_calc.
 
 ### Refresh pipeline ordering fix (calibrate before the evaluation engine)
 
