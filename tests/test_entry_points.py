@@ -3,29 +3,29 @@
 These guard the class of bug that shipped silently after the package refactor:
 entry points pointing at a non-existent ``main()``. Cheap to run, no I/O.
 
-Parses ``[project.scripts]`` from pyproject.toml and asserts every target
-resolves to a callable — nothing is mocked, the real modules are imported.
+Reads the installed ``console_scripts`` entry points via
+``importlib.metadata`` (stdlib on every supported Python) and asserts every
+target resolves to a callable — nothing is mocked, the real modules are
+imported. Reading the installed metadata (rather than parsing the source
+pyproject) also verifies the package was installed with its scripts.
 """
 
 from __future__ import annotations
 
 import importlib
-import tomllib
-from pathlib import Path
+from importlib import metadata
 
 import pytest
 
-_PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
-
 
 def _entry_points() -> dict[str, str]:
-    data = tomllib.loads(_PYPROJECT.read_text())
-    return data.get("project", {}).get("scripts", {})
+    eps = metadata.entry_points(group="console_scripts")
+    return {ep.name: ep.value for ep in eps if ep.name.startswith("spp-")}
 
 
-def test_pyproject_has_entry_points():
+def test_entry_points_present():
     eps = _entry_points()
-    assert eps, "no [project.scripts] entry points found"
+    assert eps, "no spp-* console_scripts entry points found (package not installed?)"
 
 
 @pytest.mark.parametrize("name,target", sorted(_entry_points().items()))

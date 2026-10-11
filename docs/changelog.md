@@ -171,6 +171,16 @@ league rankings page:
   guarded on table existence so a league without a populated `dev_speed` degrades
   gracefully. Read-time web fix.
 
+- **CI fix — entry-points test broke collection on Python 3.10 (v1.17.2).**
+  `tests/test_entry_points.py` imported `tomllib` to parse `pyproject.toml`, but
+  `tomllib` is stdlib only from 3.11 — so the module failed at import on the 3.10
+  matrix leg (`ModuleNotFoundError`), aborting the whole collection with exit 2
+  (passed locally on 3.12, hence missed). Rewrote it to read the installed
+  `console_scripts` via `importlib.metadata.entry_points(group=...)` (stdlib on all
+  supported versions, no TOML parse, no new dependency) — which also makes the test
+  verify the package installed its scripts, closer to what it guards. Test-only; no
+  app code change.
+
 Full suite 966 passed (965 + the new regression test).
 
 ### Defensive-runs model overhaul — per-position multi-tool blends (all positions)
