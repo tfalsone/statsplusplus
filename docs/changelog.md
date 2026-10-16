@@ -4,6 +4,67 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 98 (2026-10-16)
+
+### Rule 5 offseason panel — rebuilt around a GM's actual decision process
+
+Took the Session-87 Rule 5 panel (a proof-of-concept protect/target split) to a
+feature-complete tool, driven end-to-end by `web/offseason_queries.py::get_rule5`
+and the Rule 5 blocks in `offseason.html`. All changes are **display/eligibility
+layer** — no evaluation or model code touched.
+
+**Eligibility — OOTP-validated.** Corrected the eligibility rule against an exported
+vMLB draft pool (1,919/1,919 recall, 0 false negatives):
+`pro_service_years ≥ years_protected_from_rule_5 − 1` (OOTP exposes a player one
+year before the raw protection window elapses — the field is the window LENGTH,
+4 or 5 by signing age, NOT a countdown-to-zero) AND off the 40-man
+(`is_on_secondary != 1`) AND `level != '0'` (excludes only historical/FA rows;
+MLB-level players off the 40-man ARE eligible — 31 such in the pool). The prior rule
+(`years_protected_from_rule_5 == 0`) returned nothing post-draft and missed 842
+off-by-one eligibles + 31 MLB players. FV now sourced from `player_evaluation`
+(full table) rather than the age-capped `prospect_fv` view, which had silently
+dropped 452 of 1,048 eligibles (every 26+ player, hiding real targets).
+
+**Protect side — triaged, evidence-backed.** Four display tiers (Protect / Consider /
+fringe / Expose) from a value × draftability recommendation (`_rule5_protect_rec`,
+a 3×3 FV × readiness matrix with an advisory 40-man-full modifier). Small prominent
+tiers render as cards; long reference tiers (fringe/Expose) as compact rows behind
+expanders. Each card carries a **level-qualified season stat line** as decision
+evidence (`_rule5_stat_lines` — resolves the stat's accrued level from its
+`league_id` via `milb_league_map`, NOT `players.level`, since a player's recent line
+was often earned a level below his current assignment).
+
+**Draft-targets side — results-first ranking.** Dropped need-fill from the sort
+entirely (Rule 5 is upside-hoarding, not hole-filling) — `fills_need` is now a ★ flag
+only. Added a level-adjusted performance signal (`_rule5_perf_score`: K/BB-led + ERA
+for arms, OPS for bats, sample-gated) and a composite target score
+(`_rule5_target_score` = 0.60 × performance + 0.40 × upside(FV, age)) so proven
+upper-level arms outrank FV-mirages (e.g. a 5.84-ERA FV-55 arm fell from the strip to
+#100). Steepened level credit (A-ball/Rookie barely count for a straight-to-majors
+pick) and gated the top-targets strip to upper-level (AAA/AA/MLB) reps. Pool table
+restyled: Pos first, level/FV pills, aligned columns, and a **readiness filter**
+(default: exclude Distant).
+
+**SP→RP role awareness (stickiness only).** `_rule5_readiness` applies a
+**relief-as-floor** for pitchers — any arm at AA+ (or with MLB service) is MLB-ready,
+since a Rule 5 pick only needs to be carried in the bullpen for the retention year;
+hitters keep the stiffer bat-must-play bar. `_rule5_role_label` surfaces the realistic
+role (RP, or "SP → RP" for a listed starter our eval buckets as relief). Scope
+discipline: `fills_need` still keys on the real position bucket, and **no valuation
+changed** — the deeper "is this SP actually worth more as an RP" stays the tracked
+core-model item.
+
+**40-man cut candidates ("Need room?").** When a GM wants to protect/draft more
+players than open 40-man spots, a collapsible section surfaces the low-cost drops.
+Gated on BOTH value axes (low composite AND low surplus) so each metric's blind spot
+is neutralized: a good reliever with a broken-low surplus survives on composite, and a
+premium young prospect with low composite survives on surplus. Rows show comp/ceil,
+FV (prospects only), and a level-qualified stat line. Defaults open when the 40-man is
+full, hidden when there are no candidates. Advisory only — no options/waivers rules
+modeled.
+
+---
+
 ## Session 97 (2026-10-07)
 
 ### Hitter composite decompression — hybrid runs→composite mapping

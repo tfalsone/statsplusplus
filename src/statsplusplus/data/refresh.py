@@ -46,6 +46,7 @@ def _upsert_players(conn, players):
         # Service time
         "mlb_service_years", "mlb_service_days", "mlb_service_days_this_year",
         "pro_service_years", "pro_service_days",
+        "secondary_service_years",
         # Roster status
         "is_active", "is_on_secondary", "is_on_waivers",
         "designated_for_assignment", "free_agent", "was_traded",
@@ -74,6 +75,7 @@ def _upsert_players(conn, players):
             # Service time
             p.get("mlb_service_years"), p.get("mlb_service_days"), p.get("mlb_service_days_this_year"),
             p.get("pro_service_years"), p.get("pro_service_days"),
+            p.get("secondary_service_years"),
             # Roster status
             p.get("is_active"), p.get("is_on_secondary"), p.get("is_on_waivers"),
             p.get("designated_for_assignment"), p.get("free_agent"), p.get("was_traded"),

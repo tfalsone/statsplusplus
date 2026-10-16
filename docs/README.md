@@ -91,13 +91,13 @@ Guide docs own a *process*, not a code path. Verify them only when the process c
 | Document | Owns | Last verified |
 |---|---|---|
 | `evaluation_system_overview.md` | Evaluation pipeline (the entry point) | Session 97 |
-| `system_overview.md` | Architecture, data flow, DB, routes, design decisions | Session 94 |
+| `system_overview.md` | Architecture, data flow, DB, routes, design decisions | Session 98 |
 | `valuation_model.md` | Surplus/valuation model (plain language) | Session 94 |
 | `evaluation_model_findings.md` | Model accuracy, empirical WAR drivers (accuracy tables are a Session 79 baseline) | Session 95 |
 | `value_grade_research.md` | Value-grade research findings + decisions | Session 95 |
 | `client_reference.md` | StatsPlus API client and fields | Session 95 |
 | `statsplus_api_analysis.md` | API wiki analysis, endpoint coverage | Session 95 |
-| `tools_reference.md` | CLI tools, query functions, data sources | Session 95 |
+| `tools_reference.md` | CLI tools, query functions, data sources | Session 98 |
 | `testing_pipeline_design.md` | CI/release pipeline (Stage 1 shipped; 2–4 roadmap) — `.github/workflows/` | Session 95 |
 
 ### Guide — methodology, changes rarely (top level of `docs/`)

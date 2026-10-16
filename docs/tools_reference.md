@@ -1,7 +1,7 @@
 # Tools Reference
 
 > **Status:** Living · **Owns:** CLI tools, importable query functions, data sources
-> **Writing standard:** prose · **Last verified against code:** Session 95
+> **Writing standard:** prose · **Last verified against code:** Session 98
 
 Quick-reference catalog of all CLI tools, importable libraries, and data sources available
 in the EMLB analytics platform. Intended for agent context — keeps tool discovery out of
@@ -643,7 +643,7 @@ panels show; all reuse existing valuation data.
 | `get_market_board(team_id)` | Unsigned + league-played free agents with Proj WAR / recommended contract |
 | `get_extension_candidates(team_id)` | High-surplus own players 1–2 years from free agency |
 | `get_option_decisions(team_id)` | Team/player/vesting option decisions (exercise/decline rec) |
-| `get_rule5(team_id)` | `{protect, targets, available}` — your Rule 5-eligible prospects (add-to-40-man) + other orgs' exposed MLB-viable players. Built on `years_protected_from_rule_5 == 0`. |
+| `get_rule5(team_id)` | `{eligible?, forty_man{count,cap,open,full,cut_candidates}, draft_pos, protect, protect_tiers, targets}` — OOTP-validated eligibility (`pro_service_years ≥ years_protected_from_rule_5 − 1`, off-40-man, MLB-off-40man eligible). Protect side (triaged tiers, level-qualified stat lines, SP→RP readiness) + results-first draft targets (`_rule5_target_score`, need-fill as ★ flag) + both-axes 40-man cut candidates. |
 
 ---
 

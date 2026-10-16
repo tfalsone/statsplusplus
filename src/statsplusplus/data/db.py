@@ -475,6 +475,7 @@ def _migrate_players(conn: sqlite3.Connection) -> None:
         ("mlb_service_days_this_year", "INTEGER"),
         ("pro_service_years", "INTEGER"),
         ("pro_service_days", "INTEGER"),
+        ("secondary_service_years", "INTEGER"),
         ("is_active", "INTEGER"),
         ("is_on_secondary", "INTEGER"),
         ("is_on_waivers", "INTEGER"),

@@ -1,7 +1,7 @@
 # EMLB Analytics Platform — System Overview
 
 > **Status:** Living · **Owns:** architecture, data flow, DB tables, routes, query functions, design decisions
-> **Writing standard:** prose · **Last verified against code:** Session 94
+> **Writing standard:** prose · **Last verified against code:** Session 98
 
 ## Purpose
 
@@ -88,12 +88,38 @@ Options** panel (`get_option_decisions`) surfaces own-team option decisions:
 team options get an Exercise/Decline rec (breakeven `proj_value > option_salary
 − buyout`, projected value from the shared `compute_player_value`), player/vesting
 options are informational, and `next_last_year_*` options show as a next-offseason
-heads-up. A **Rule 5** panel (`get_rule5`) surfaces protection/draft decisions:
-built on the `/players` `years_protected_from_rule_5` field (`0` = eligible this
-offseason, off the 40-man) — a **protect** side (your eligible prospects, joined
-to `prospect_fv`, ranked by FV/surplus) and a **draft-targets** side (other orgs'
-eligible + MLB-viable FV ≥ 45 players). `draft_eligible` is amateur-draft
-eligibility, not a Rule 5 signal.
+heads-up. A **Rule 5** panel (`get_rule5`) surfaces protection/draft decisions.
+Eligibility is OOTP-validated (checked against an exported draft pool, 1,919/1,919
+recall): `pro_service_years ≥ years_protected_from_rule_5 − 1` (OOTP exposes a
+player one year before the raw protection window elapses — `years_protected_from_rule_5`
+is the window LENGTH, 4 or 5 by signing age, not a countdown) AND off the 40-man
+(`is_on_secondary != 1`) AND `level != '0'` (excludes historical/FA only; MLB-level
+players off the 40-man ARE eligible). FV is sourced from `player_evaluation` (the
+full table, not the age-capped `prospect_fv` view, which silently dropped 26+
+eligibles).
+
+The panel has three sections, all **advisory** (no auto-decisions):
+
+- **40-man header** — count/cap/open and the team's draft position (reverse
+  standings, scoped to the 30 MLB clubs). A collapsible **"Need room?"** cut-candidate
+  list surfaces the lowest-value 40-man members, gated on BOTH value axes (low
+  composite AND low surplus) so a good reliever with a broken-low surplus survives
+  on composite and a premium young prospect with low composite survives on surplus.
+- **Protect side** — your eligible prospects, triaged into four tiers (Protect /
+  Consider / fringe / Expose) by a value × draftability recommendation
+  (`_rule5_protect_rec`), each with readiness, a level-qualified season stat line as
+  evidence, and a SP→RP role label.
+- **Draft-targets side** — other orgs' eligible players, ranked **results-first**
+  (`_rule5_target_score` = 0.60 × level-adjusted performance + 0.40 × upside(FV, age))
+  so proven upper-level arms outrank FV-mirages; a top-targets strip gated to
+  upper-level reps, a sortable pool with pos/level/FV pills, and a readiness filter
+  (default: exclude Distant). Need-fill is a ★ flag only, not a ranking key (Rule 5
+  is upside-hoarding, not hole-filling).
+
+Readiness applies a **relief-as-floor** for pitchers (any arm at AA+ or with MLB
+service is MLB-ready, since a Rule 5 arm only needs to be carried in the bullpen).
+`draft_eligible` is amateur-draft eligibility, not a Rule 5 signal. The panel is only
+actionable pre-draft; a league past the Rule 5 draft shows no active eligibles.
 
 **Offseason budget (finance settings):** driven by per-league finance settings
 (`statsplusplus.config.finance_settings`, stored as
