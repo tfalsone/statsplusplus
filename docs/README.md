@@ -90,7 +90,7 @@ Guide docs own a *process*, not a code path. Verify them only when the process c
 
 | Document | Owns | Last verified |
 |---|---|---|
-| `evaluation_system_overview.md` | Evaluation pipeline (the entry point) | Session 97 |
+| `evaluation_system_overview.md` | Evaluation pipeline (the entry point) | Session 100 |
 | `system_overview.md` | Architecture, data flow, DB, routes, design decisions | Session 98 |
 | `valuation_model.md` | Surplus/valuation model (plain language) | Session 94 |
 | `evaluation_model_findings.md` | Model accuracy, empirical WAR drivers (accuracy tables are a Session 79 baseline) | Session 95 |

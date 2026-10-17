@@ -256,19 +256,33 @@ def calc_fv(
         _ceil_runs = composite_to_runs(float(pot), _cm, bucket)
         ceiling_war = saturate_war(runs_to_war(_ceil_runs, _anchor), _anchor)
 
-        # p(develops): probability of realizing the ceiling. Near-maxed (small
-        # gap) → ~1.0 (what you see is what you get). Else empirical gap-closure
-        # rate for age, scaled by fv_strength (upside-friendliness).
+        # Current-ability WAR (the already-owned FLOOR), via the identical run
+        # inversion applied to the CURRENT composite. The defensive-runs value is
+        # already baked into the composite, so this floor automatically credits a
+        # good glove / present bat.
+        _cur_runs = composite_to_runs(float(ovr), _cm, bucket)
+        current_war = saturate_war(runs_to_war(_cur_runs, _anchor), _anchor)
+
+        # p(develops): probability of realizing the REMAINING gap. Near-maxed
+        # (small gap) → ~1.0. Else empirical gap-closure rate for age, scaled by
+        # fv_strength (upside-friendliness).
         if gap <= 2:
             p_dev = 1.0
         else:
             closure_tbl = gap_closure_table or GAP_CLOSURE_HITTER_DEFAULT
             p_dev = max(0.0, min(1.0, _interp_table(closure_tbl, age) * fv_strength))
 
-        # Bust fallback: a prospect who doesn't develop lands ~replacement
-        # (sent down / washes out), NOT a negative full-season regular.
-        fallback_war = -0.3
-        expected_war = p_dev * ceiling_war + (1.0 - p_dev) * fallback_war
+        # Discount only the UNDEVELOPED DELTA, not the whole projection. A player
+        # already owns his current ability; only the gap between current and
+        # ceiling is speculative, so only that increment carries the development
+        # discount. For an advanced prospect (high current_war) the floor
+        # dominates; for a young flier (near-replacement current_war) almost all
+        # value is still in the discounted delta — so the fliers stay correctly
+        # volatile and are never re-inflated (validated cross-league Session 100).
+        # Replaces the old flat -0.3 "washout" fallback that discarded a near-
+        # finished prospect's real floor (e.g. a composite-50 AAA SS graded FV 40
+        # when his owned ability alone is ~2 WAR / FV 45).
+        expected_war = current_war + p_dev * (ceiling_war - current_war)
 
         war_floor = _anchor.get("sat_bot")
         fv = fv_from_peak_war(expected_war, bucket, weights, war_floor=war_floor)

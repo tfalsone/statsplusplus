@@ -1,7 +1,7 @@
 # Player Evaluation System — High-Level Overview
 
 > **Status:** Living · **Owns:** evaluation pipeline (`src/statsplusplus/evaluation/`, `src/statsplusplus/data/{evaluation_engine,fv_calc,calibrate}.py`)
-> **Writing standard:** ASD-STE100 · **Last verified against code:** Session 97
+> **Writing standard:** ASD-STE100 · **Last verified against code:** Session 100
 
 This document explains how the evaluation system works today. It is the single
 entry point for the evaluation pipeline. It replaces the out-of-date
@@ -147,11 +147,18 @@ calibrated **hybrid** map (`facet_runs.runs_to_composite`, built by
   from the *previous* composite distribution — a self-referential loop that kept
   re-freezing a compressed scale where a ~1 WAR gap read as only ~2 composite
   points. The new slope decompresses the scale so value differences are visible.
-- **A per-position center.** Each position is centered on its own population
-  run-mean, then offset by its positional adjustment. So a league-average player at
-  **every** position maps to ~50 plus its positional credit (catcher ~55, first
-  base ~45). This makes composites comparable across positions and stops a
-  glove-first up-the-middle player from floating up past better bats.
+- **A global offensive center.** Every position shares one offensive zero — the
+  population mean of non-positional runs (bat + baserunning + fielding) — and the
+  position's value is then credited **exactly once** by its positional adjustment.
+  So a given bat and glove map to the **same** composite regardless of position,
+  and a catcher's advantage over a first baseman comes entirely from the explicit
+  positional credit (catcher ~55, first base ~45 for a league-average player). This
+  replaced an earlier *per-position* center that centered each position on its own
+  population **total**-run mean (bat included) — which graded players *relative to
+  their position* and so inflated weak-hitting catchers (a weak catcher bat read as
+  "normal for a catcher") and deflated strong-hitting center fielders. Centering on
+  offense globally makes the composite an absolute "how good is this player, period"
+  measure; a position-relative view, if ever wanted, belongs in a display layer.
 
 The top tail soft-saturates toward 80 (a hard clip would re-compress the handful of
 true elites that overshoot). The bottom is a **display clamp** at 20: a large,
@@ -256,7 +263,7 @@ that the player develops. The steps are:
    p = chance to develop  (empirical gap-closure rate for the age)
                                      │
                                      ▼
-   expected_WAR = p × ceiling_WAR + (1 − p) × (−0.3)
+   expected_WAR = current_WAR + p × (ceiling_WAR − current_WAR)
                                      │
                      read the grade off the FV→WAR ladder
                                      │
@@ -270,9 +277,16 @@ Three points explain the design:
   absurd WAR (13 to 18). The system compresses the tails toward the league's real
   WAR distribution. The top cap is the 98th percentile of real WAR; the bottom cap
   is the 2nd percentile.
-- **A player who does not develop lands near replacement.** The fallback WAR is
-  −0.3, not a deep negative. A prospect who fails is sent down, not played every
-  day at a loss.
+- **Only the undeveloped gap is discounted; current ability is a floor.** The
+  player already owns his current ability (`current_WAR`, from the composite run of
+  his current ratings); only the increment from current to ceiling is speculative,
+  so only that **delta** carries the development discount. An advanced,
+  already-good prospect (high `current_WAR`) therefore keeps a floor near what he is
+  today, while a raw young flier (near-replacement `current_WAR`) still has almost
+  all his value in the discounted delta and stays correctly volatile. This replaced
+  an earlier flat −0.3 "washout" fallback that discarded a near-finished prospect's
+  real floor — e.g. a composite-50 AAA shortstop graded FV 40 when his owned ability
+  alone is ~2 WAR (FV 45+).
 - **The ladder goes below FV 40.** The industry role scale uses grades below 40 for
   bench, depth, and organizational players. The ladder now reaches 35, 30, 25, and
   20. Marginal players spread into these grades instead of piling up at 40.

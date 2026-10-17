@@ -4,6 +4,57 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 100 (2026-10-17)
+
+Three hitter-evaluation model corrections, each diagnosed from data and validated
+cross-league (vMLB/eMLB/PPL). Full suite green (468 evaluation/engine tests); all
+three leagues re-run `calibrate → engine → fv_calc` in order; composites fully
+reconcile with `latest_ratings` (100% match) and composite→actual-WAR correlation
+stays strong and monotonic (vMLB 0.74 / eMLB 0.84 / PPL 0.76).
+
+### Composite re-centered on offense globally (fixes position-relative inflation)
+
+**Root-cause fix for over-valued catching prospects.** The hybrid runs→composite
+map (`facet_runs.runs_to_composite` / `calibrate_hybrid_mapping`) centered each
+position on its own population **total**-run mean (bat included), which graded
+players *relative to their position* — a weak-hitting catcher read as "average for
+a catcher" and floated up, while a strong-hitting center fielder was compressed
+down. Replaced with a single **global offensive center** (population mean of
+non-positional bat+br+fld runs) plus the positional adjustment credited exactly
+once (`global_center_mode`); the player's own positional-adjustment runs are
+removed from the comparison term so position is never double-counted.
+`composite_to_runs` inverse updated to match (ceiling-anchored FV unchanged in
+meaning). Result: the matched-composite catcher-vs-field actual-WAR gap closed from
+−1.06/−0.63/−0.53 WAR to −0.08/−0.04/−0.18; the four flagged vMLB Rays catching
+prospects dropped from composite ~48 to ~44 (and a 30/30/30/30 bat to 34) while a
+genuinely elite catcher held at 59. Per-position centers retained in the mapping
+for diagnostics/back-compat but unused under the new mode.
+
+### FV floor now discounts only the undeveloped gap (credits current ability)
+
+`fv.py` ceiling-anchored hitter FV: `expected_WAR = p_dev·ceiling_WAR + (1−p_dev)·(−0.3)`
+replaced with `current_WAR + p_dev·(ceiling_WAR − current_WAR)`, where `current_WAR`
+is the composite run of the player's current ratings. A prospect owns his current
+ability as a floor; only the current→ceiling increment is development-discounted.
+Fixes advanced, already-good prospects graded too low (a composite-50 AAA SS went
+FV 40 → 45; defensive/present-bat value is credited because it is already in the
+composite). Validated cross-league: 1–3% of prospect hitters move, all in the
+target cohort; washout-risk young fliers are unchanged or nudged *down* (never
+re-inflated).
+
+### Positional-adjustment table confirmed correct (reverted an interim change)
+
+An interim session edit lowered the catcher positional adjustment (treating the
+catcher inflation as a positional-adjustment error). Re-deriving the table against
+the **fixed** global center showed the original `POSITIONAL_WAR_ADJUSTMENTS` values
+were right all along — per-position WAR residuals under the corrected center are
+all within ±0.1–0.2 WAR (noise). The interim edit was reverted; the inflation was
+entirely the mapping center, not the positional adjustment. (A diagnostic
+matched-composite WAR-residual regression was used to confirm this; it is a
+verification method, not a live calibration step.)
+
+---
+
 ## Session 98 (2026-10-16)
 
 ### Rule 5 offseason panel — rebuilt around a GM's actual decision process
