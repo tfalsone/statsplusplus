@@ -654,17 +654,20 @@
       <polyline points="{{ cv.line }}" fill="none" stroke="#5aa9e6" stroke-width="2"/>
       <line x1="0" y1="{{ cv.base_y }}" x2="{{ cv.vb_w }}" y2="{{ cv.base_y }}" stroke="var(--border)" stroke-width="1"/>
       {# ceiling marker (hollow gold); value label sits in the top band so it never
-         clips regardless of where on the curve the marker falls #}
+         clips. The SOLID marker line spans only curve-point → baseline (never
+         above the curve); a faint dotted leader links the top-band label to the dot. #}
       {% if cv.ceil_x is defined %}
       {% set clx = [[cv.ceil_x, 388]|min, 12]|max %}
-      <line x1="{{ cv.ceil_x }}" y1="12" x2="{{ cv.ceil_x }}" y2="{{ cv.base_y }}" stroke="#e9c46a" stroke-width="2"/>
+      <line x1="{{ cv.ceil_x }}" y1="25" x2="{{ cv.ceil_x }}" y2="{{ cv.ceil_y }}" stroke="#e9c46a" stroke-width="1" stroke-dasharray="2 2" opacity="0.5"/>
+      <line x1="{{ cv.ceil_x }}" y1="{{ cv.ceil_y }}" x2="{{ cv.ceil_x }}" y2="{{ cv.base_y }}" stroke="#e9c46a" stroke-width="2"/>
       <circle cx="{{ cv.ceil_x }}" cy="{{ cv.ceil_y }}" r="4" fill="var(--surface)" stroke="#e9c46a" stroke-width="2"/>
       <text x="{{ clx }}" y="9" fill="#e9c46a" font-size="7" text-anchor="middle" opacity="0.85">CEIL</text>
       <text x="{{ clx }}" y="22" fill="#e9c46a" font-size="14" font-weight="700" text-anchor="middle">{{ ceil_val }}</text>
       {% endif %}
       {# current marker (solid green) #}
       {% set cnx = [[cv.cur_x, 388]|min, 12]|max %}
-      <line x1="{{ cv.cur_x }}" y1="12" x2="{{ cv.cur_x }}" y2="{{ cv.base_y }}" stroke="#4caf50" stroke-width="2"/>
+      <line x1="{{ cv.cur_x }}" y1="25" x2="{{ cv.cur_x }}" y2="{{ cv.cur_y }}" stroke="#4caf50" stroke-width="1" stroke-dasharray="2 2" opacity="0.5"/>
+      <line x1="{{ cv.cur_x }}" y1="{{ cv.cur_y }}" x2="{{ cv.cur_x }}" y2="{{ cv.base_y }}" stroke="#4caf50" stroke-width="2"/>
       <circle cx="{{ cv.cur_x }}" cy="{{ cv.cur_y }}" r="4" fill="#4caf50"/>
       <text x="{{ cnx }}" y="9" fill="#4caf50" font-size="7" text-anchor="middle" opacity="0.85">NOW</text>
       <text x="{{ cnx }}" y="22" fill="#4caf50" font-size="14" font-weight="700" text-anchor="middle">{{ p.composite_score }}</text>
