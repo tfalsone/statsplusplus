@@ -358,6 +358,7 @@
       <span id="adv-poschips" style="display:inline-flex; gap:5px; flex-wrap:wrap"></span>
       <span style="color:var(--text-dim)">·</span>
       <span class="adv-poschip" onclick="advPosAll(true)" style="opacity:0.8">All</span>
+      <span class="adv-poschip" onclick="advPosAll(false)" style="opacity:0.8">None</span>
     </div>
     <div id="adv-wrap" style="position:relative; width:100%; max-width:1100px">
       <svg id="adv-chart" width="100%" style="display:block; height:auto"></svg>
@@ -506,8 +507,9 @@
   }
   svg.addEventListener('mousemove',e=>{ const t=e.target;
     if(t.classList && t.classList.contains('advdot')){ const d=pool()[+t.dataset.i], xk=xs.value;
-      let txt='<b>'+d.name+'</b> <span style="color:#888">'+d.team+'</span><br>'+xk+': '+d[xk];
+      let txt='<b>'+d.name+'</b> <span style="color:#888">'+d.team+' · '+d.pos+'</span><br>'+xk+': '+d[xk];
       if(mode2d) txt+=' · '+ys.value+': '+d[ys.value];
+      txt+='<br><span style="color:#888">'+(side==='bat'?d.pt+' PA':d.pt+' IP')+'</span>';
       tip.innerHTML=txt; tip.style.display='block';
       const w=document.getElementById('adv-wrap').getBoundingClientRect();
       tip.style.left=(e.clientX-w.left+12)+'px'; tip.style.top=(e.clientY-w.top+12)+'px';
