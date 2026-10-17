@@ -10,7 +10,37 @@ Three hitter-evaluation model corrections, each diagnosed from data and validate
 cross-league (vMLB/eMLB/PPL). Full suite green (468 evaluation/engine tests); all
 three leagues re-run `calibrate → engine → fv_calc` in order; composites fully
 reconcile with `latest_ratings` (100% match) and composite→actual-WAR correlation
-stays strong and monotonic (vMLB 0.74 / eMLB 0.84 / PPL 0.76).
+stays strong and monotonic (vMLB 0.74 / eMLB 0.84 / PPL 0.76). Plus two web-UI
+analytics features (display-only).
+
+### Player page — positional bell-curve context
+
+The evaluation panel's bare `#N/M` positional rank is replaced by a
+normal-distribution **bell curve** of the position's composite spread (built from
+the real per-position mean/SD in `_mlb_context`), with the player's current
+(solid green) and ceiling (hollow gold) markers, a room-to-grow band, SD
+gridlines labeled with the composite **value** at each line, and right-side
+shading for the share of the position the player exceeds. The Now/Ceiling numbers
+are merged onto the chart (values ride their markers); rank/tier/percentile sit in
+a caption. `_mlb_context` returns a ready-to-render `curve` payload (pixel-space
+SVG geometry); `player.html` draws it. No stats vocabulary surfaced.
+
+### League page — Advanced stats tab (distribution / scatter)
+
+New **Advanced** tab. Default is a single-stat **1D league distribution** rendered
+as a symmetric beeswarm (dots stack outward from a center line so vertical
+thickness = density); an **"+ add metric"** control promotes it to a **2D
+scatter** vs a second stat (with a least-squares regression line + live `r`/`R²`
+and mean crosshairs). Hitters/pitchers toggle (distinct stat sets), multi-select
+**position** chips (+All/None), a **min-PA/IP threshold slider** (defaults to the
+qualified mark, loosens to part-timers or tightens to regulars), **mean lines**
+(1D vertical, 2D crosshairs — recomputed from the filtered pool), the user's org
+highlighted, and a hover tooltip (name/team/pos/values + PA·IP sample size).
+`queries.get_scatter_data()` returns per-player qualified hitter+pitcher pools
+(aggregated per player across stints — traded players appear once with
+full-season totals, rates recomputed from summed components; same games-scaled
+qualifier as the leaders panels, lowered floor for the slider; FIP/rate stats
+derived). Framework-free SVG+JS in `league.html`; wired via the `/league` route.
 
 ### Composite re-centered on offense globally (fixes position-relative inflation)
 

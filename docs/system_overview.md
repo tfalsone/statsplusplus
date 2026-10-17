@@ -1,7 +1,7 @@
 # EMLB Analytics Platform — System Overview
 
 > **Status:** Living · **Owns:** architecture, data flow, DB tables, routes, query functions, design decisions
-> **Writing standard:** prose · **Last verified against code:** Session 98
+> **Writing standard:** prose · **Last verified against code:** Session 100
 
 ## Purpose
 
@@ -411,7 +411,7 @@ Local Flask app at `web/`. Dark theme, monospace font, no CSS/JS frameworks.
 | `/` | redirect | Redirects to `/team/<my_team_id>` |
 | `/dashboard` | redirect | Redirects to `/team/<my_team_id>` |
 | `/team/<id>` | `team.html` or `team_minor.html` | MLB team page (roster, depth chart, contracts, farm) or minor league team page (notables, full roster). Detected by player level. |
-| `/league` | `league.html` | League overview (vitals KPIs, 2×3 division standings grid with WC badges, scrollable power rankings with score heatmap, hero leader cards with MLB/AL/NL toggle), top 100 prospects with side panel, trade builder tab, draft tab with sim/upload |
+| `/league` | `league.html` | League overview (vitals KPIs, 2×3 division standings grid with WC badges, scrollable power rankings with score heatmap, hero leader cards with MLB/AL/NL toggle), top 100 prospects with side panel, Advanced stats tab (1D distribution / 2D scatter with regression + r/R², position/threshold filters), trade builder tab, draft tab with sim/upload |
 | `/player/<id>` | `player.html` | Player detail — ratings, stats, percentiles, contract, surplus projection |
 | `/settings` | `settings.html` | Team selector (`my_team_id` in `config/state.json`) |
 | `/refresh` | JSON | POST — starts background refresh (`refresh.py`). Returns 409 if already running. |
@@ -472,7 +472,7 @@ MLB players use a three-tab layout (Overview / Stats / Contract). Prospects disp
 | `web/promotion_readiness.py` | Promotion readiness and demotion risk assessment — league-calibrated badges (Ready/Knocking/Overmatched/Struggling) for minor league and MLB players |
 | `web/templates/team.html` | Team page — standings, stats, roster, contracts, farm |
 | `web/templates/player.html` | Player detail template with macros (`grade`, `pctile_grid`) and `toggleSplits()` JS |
-| `web/templates/league.html` | League page — vitals KPIs, standings, power rankings, prospects tab, standings tab (expanded + H2H matrix), rankings tab, trade tab, draft tab (side-by-side layout: board left, detail/picks sidebar right, settings modal with per-round-group sliders) |
+| `web/templates/league.html` | League page — vitals KPIs, standings, power rankings, prospects tab, standings tab (expanded + H2H matrix), rankings tab, Advanced tab (beeswarm distribution ↔ 2D scatter, framework-free SVG), trade tab, draft tab (side-by-side layout: board left, detail/picks sidebar right, settings modal with per-round-group sliders) |
 | `web/static/style.css` | Dark theme, grade bar tiers, percentile styling, rank coloring, draft bar chart styles |
 | `web/static/sort.js` | Client-side table sorting (numeric, string, positional spectrum) with smart rank renumbering |
 

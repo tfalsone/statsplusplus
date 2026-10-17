@@ -1,7 +1,7 @@
 # Tools Reference
 
 > **Status:** Living · **Owns:** CLI tools, importable query functions, data sources
-> **Writing standard:** prose · **Last verified against code:** Session 98
+> **Writing standard:** prose · **Last verified against code:** Session 100
 
 Quick-reference catalog of all CLI tools, importable libraries, and data sources available
 in the EMLB analytics platform. Intended for agent context — keeps tool discovery out of
@@ -595,6 +595,7 @@ Import with `sys.path.insert(0, 'web')`. All are read-only against the DB.
 | `get_division_standings(team_id)` | Division-only standings for a team |
 | `get_power_rankings()` | Composite rankings — pyth, L10, RD/G, surplus |
 | `get_head_to_head_matrix(year)` | Full NxN team-vs-team W-L matrix for a season |
+| `get_scatter_data(year)` | Per-player qualified hitter+pitcher pools for the league Advanced tab (1D distribution / 2D scatter). Aggregated per player across stints; stat sets + per-player PA/IP + position + my-org flag; same games-scaled qualifier as the leaders (lowered floor for the client threshold slider) |
 | `get_roster(team_id)` | Full MLB roster with ratings, contract, surplus |
 | `get_roster_hitters(team_id)` | Hitters with full stat lines and ratings |
 | `get_roster_pitchers(team_id)` | Pitchers with full stat lines and ratings |
