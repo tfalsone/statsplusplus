@@ -162,7 +162,7 @@ def _mlb_context(conn, bucket, composite, ceiling):
     sd = (sum((v - mean) ** 2 for v in vals) / n) ** 0.5
     # Native pixel canvas (matches the mockup that rendered crisply).
     VBW, VBH = 400.0, 130.0
-    PAD_X, PAD_T, PAD_B = 8.0, 14.0, 8.0
+    PAD_X, PAD_T, PAD_B = 8.0, 30.0, 8.0
     plot_w = VBW - 2 * PAD_X
     plot_h = VBH - PAD_T - PAD_B
     base_y = VBH - PAD_B
@@ -197,10 +197,13 @@ def _mlb_context(conn, bucket, composite, ceiling):
     ez = _z(ceiling) if ceiling else None
     same = composite and ceiling and abs(composite - ceiling) < 1
 
-    # SD gridline x-positions (±1, ±2) + the average line; labels are plain
-    # ("−2 −1 Avg +1 +2"), no sigma/mu symbols.
-    grid = [{"x": round(_x(z), 1), "label": lbl, "avg": z == 0}
-            for z, lbl in ((-2, "−2"), (-1, "−1"), (0, "Avg"), (1, "+1"), (2, "+2"))]
+    # SD gridline x-positions (±1, ±2) + the average line, labeled with the
+    # COMPOSITE VALUE at that point (mean + z·sd rounded) rather than ±Nσ — the
+    # user reads the real 20-80 scale, no stats symbols.
+    grid = [{"x": round(_x(z), 1),
+             "label": str(int(round(mean + z * sd))),
+             "avg": z == 0}
+            for z in (-2, -1, 0, 1, 2)]
 
     curve = {
         "vb_w": VBW, "vb_h": VBH, "base_y": round(base_y, 1), "top_y": round(PAD_T, 1),
@@ -213,14 +216,16 @@ def _mlb_context(conn, bucket, composite, ceiling):
         curve["cur_x"] = round(_x(cz), 1)
         curve["cur_y"] = round(_y(cz), 1)
         curve["cur_pct"] = _pct(composite)
-        curve["beats"] = _curve_points(cz, 3.0, True)
+        # Left-fill: the field BELOW current (left edge → now). This area IS the
+        # percentile — green, strongest fill.
+        curve["fill_now"] = _curve_points(-3.0, cz, True)
     if ez is not None and not same:
         curve["ceil_x"] = round(_x(ez), 1)
         curve["ceil_y"] = round(_y(ez), 1)
         curve["ceil_pct"] = _pct(ceiling)
         if cz is not None:
             lo, hi = (cz, ez) if ez >= cz else (ez, cz)
-            curve["gap"] = _curve_points(lo, hi, True)
+            curve["gap"] = _curve_points(lo, hi, True)  # room-to-grow band (gold)
 
     return {
         "comp_rank": comp_rank,
