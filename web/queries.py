@@ -281,8 +281,15 @@ def get_scatter_data(yr=None):
     conn = get_db()
     _abbr = team_abbr_map()
     my_tid = get_my_team_id()
+    # Use the latest year that actually HAS stats, not the state game-year — in
+    # the offseason the current season (e.g. 2035) is unplayed, so year() points
+    # at an empty year. Fall back to the newest year present in the stat tables.
+    row = conn.execute("SELECT MAX(year) FROM mlb_batting_stats").fetchone()
+    stat_bat_yr = row[0] if row and row[0] else yr
+    row = conn.execute("SELECT MAX(year) FROM mlb_pitching_stats").fetchone()
+    stat_pit_yr = row[0] if row and row[0] else yr
     tip = conn.execute(
-        "SELECT AVG(ip) FROM team_pitching_stats WHERE year=? AND split_id=1", (yr,)
+        "SELECT AVG(ip) FROM team_pitching_stats WHERE year=? AND split_id=1", (stat_pit_yr,)
     ).fetchone()
     team_g = round(tip[0] / 9) if tip and tip[0] else 0
     pa_qual = max(1, round(3.1 * team_g))
@@ -298,7 +305,7 @@ def get_scatter_data(yr=None):
         JOIN players p ON p.player_id = b.player_id
         LEFT JOIN player_evaluation pe ON pe.player_id = b.player_id
         WHERE b.year=? AND b.split_id=1 AND p.level='1' AND b.pa >= ?
-    """, (yr, pa_qual)).fetchall()
+    """, (stat_bat_yr, pa_qual)).fetchall()
     hitters = []
     for r in hrows:
         pa = r["pa"] or 0
@@ -329,7 +336,7 @@ def get_scatter_data(yr=None):
         JOIN players p ON p.player_id = ps.player_id
         LEFT JOIN player_evaluation pe ON pe.player_id = ps.player_id
         WHERE ps.year=? AND ps.split_id=1 AND p.level='1' AND ps.ip >= ?
-    """, (yr, ip_qual)).fetchall()
+    """, (stat_pit_yr, ip_qual)).fetchall()
     pitchers = []
     for r in prows:
         ip = r["ip"] or 0
