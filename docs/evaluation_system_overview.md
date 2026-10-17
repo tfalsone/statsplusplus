@@ -278,15 +278,18 @@ Three points explain the design:
   WAR distribution. The top cap is the 98th percentile of real WAR; the bottom cap
   is the 2nd percentile.
 - **Only the undeveloped gap is discounted; current ability is a floor.** The
-  player already owns his current ability (`current_WAR`, from the composite run of
-  his current ratings); only the increment from current to ceiling is speculative,
-  so only that **delta** carries the development discount. An advanced,
-  already-good prospect (high `current_WAR`) therefore keeps a floor near what he is
-  today, while a raw young flier (near-replacement `current_WAR`) still has almost
-  all his value in the discounted delta and stays correctly volatile. This replaced
-  an earlier flat −0.3 "washout" fallback that discarded a near-finished prospect's
-  real floor — e.g. a composite-50 AAA shortstop graded FV 40 when his owned ability
-  alone is ~2 WAR (FV 45+).
+  player already owns his current ability (`current_WAR`), computed from his **pure
+  tool grade** (not the stat-blended composite — the FV grade is a ratings-based
+  development projection, and the MLB stat blend is current-ability noise, not
+  unrealized development). The development gap is likewise tool-grade → potential.
+  Only the increment from current to ceiling is speculative, so only that **delta**
+  carries the development discount. An advanced, already-good prospect (high
+  `current_WAR`) therefore keeps a floor near what he is today, while a raw young
+  flier (near-replacement `current_WAR`) still has almost all his value in the
+  discounted delta and stays correctly volatile. A finished player (tool grade ==
+  ceiling) has gap 0 and reads straight off his ceiling WAR. This replaced an
+  earlier flat −0.3 "washout" fallback that discarded a near-finished prospect's
+  real floor.
 - **The ladder goes below FV 40.** The industry role scale uses grades below 40 for
   bench, depth, and organizational players. The ladder now reaches 35, 30, 25, and
   20. Marginal players spread into these grades instead of piling up at 40.

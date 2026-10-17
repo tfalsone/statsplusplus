@@ -30,12 +30,22 @@ prospects dropped from composite ~48 to ~44 (and a 30/30/30/30 bat to 34) while 
 genuinely elite catcher held at 59. Per-position centers retained in the mapping
 for diagnostics/back-compat but unused under the new mode.
 
-### FV floor now discounts only the undeveloped gap (credits current ability)
+### FV floor now discounts only the undeveloped gap, off the pure tool grade
 
 `fv.py` ceiling-anchored hitter FV: `expected_WAR = p_dev·ceiling_WAR + (1−p_dev)·(−0.3)`
-replaced with `current_WAR + p_dev·(ceiling_WAR − current_WAR)`, where `current_WAR`
-is the composite run of the player's current ratings. A prospect owns his current
-ability as a floor; only the current→ceiling increment is development-discounted.
+replaced with `current_WAR + p_dev·(ceiling_WAR − current_WAR)`. A prospect owns his
+current ability as a floor; only the current→ceiling increment is
+development-discounted. The current-ability floor **and** the development gap are
+computed from the **pure tool grade** (`tool_only_score`), NOT the stat-blended
+composite — the FV grade is a ratings-based development projection, and the MLB stat
+blend that moves a player's composite is current-ability noise, not unrealized
+development. Using the composite manufactured a phantom gap for finished players
+(e.g. a 2B with `tool_only == ceiling == 53` but a stat-dragged composite of 50 ate a
+43% discount on a gap that does not exist → FV 40 instead of 45, contradicting his
+composite/surplus). `calc_fv` gained a `tool_ovr` param (falls back to `ovr`);
+`fv_calc` selects `tool_only_score` into the player dict. Stats now stay out of the
+FV grade entirely — they live in the composite display and the surplus WAR
+projection.
 Fixes advanced, already-good prospects graded too low (a composite-50 AAA SS went
 FV 40 → 45; defensive/present-bat value is credited because it is already in the
 composite). Validated cross-league: 1–3% of prospect hitters move, all in the
