@@ -154,26 +154,29 @@ def _mlb_context(conn, bucket, composite, ceiling):
     # --- Bell-curve context payload (pure display geometry) --------------------
     # A normal curve from the real mean/SD of this position's composite pool, with
     # the player's current + ceiling plotted on a standardized ±3 SD x-axis. The
-    # template renders the returned SVG geometry directly (no stats shown to the
-    # user — just the curve, an "Avg" tick, and the two markers). Jargon-free per
-    # design: we return pixel geometry, not mean/sigma, so the template needs no math.
+    # template renders the returned SVG geometry directly. Geometry is emitted in
+    # REAL PIXEL coordinates (not a tiny unitless box stretched to width) so the
+    # render is crisp — a small viewBox scaled up non-uniformly blurred the strokes.
     import math as _math
     mean = sum(vals) / n
     sd = (sum((v - mean) ** 2 for v in vals) / n) ** 0.5
-    # SVG viewBox is 0..100 wide, 0..40 tall (unitless; template sets width/height).
-    VBW, VBH, PAD = 100.0, 40.0, 2.0
-    base_y = VBH - PAD
+    # Native pixel canvas (matches the mockup that rendered crisply).
+    VBW, VBH = 400.0, 130.0
+    PAD_X, PAD_T, PAD_B = 8.0, 14.0, 8.0
+    plot_w = VBW - 2 * PAD_X
+    plot_h = VBH - PAD_T - PAD_B
+    base_y = VBH - PAD_B
 
     def _z(score):
         if sd <= 0:
             return 0.0
         return max(-3.0, min(3.0, (score - mean) / sd))
 
-    def _x(z):  # z in [-3,3] -> x in [0,VBW]
-        return (z + 3.0) / 6.0 * VBW
+    def _x(z):  # z in [-3,3] -> pixel x
+        return PAD_X + (z + 3.0) / 6.0 * plot_w
 
-    def _y(z):  # normal height -> y (top is small y)
-        return PAD + (VBH - 2 * PAD) * (1.0 - _math.exp(-z * z / 2.0))
+    def _y(z):  # normal height -> pixel y (top is small y)
+        return PAD_T + plot_h * (1.0 - _math.exp(-z * z / 2.0))
 
     def _curve_points(z0, z1, close_to_base):
         pts = []
@@ -182,7 +185,7 @@ def _mlb_context(conn, bucket, composite, ceiling):
         z = z0
         while z <= z1 + 1e-6:
             pts.append(f"{_x(z):.1f},{_y(z):.1f}")
-            z += 0.1
+            z += 0.05
         if close_to_base:
             pts.append(f"{_x(z1):.1f},{base_y:.1f}")
         return " ".join(pts)
@@ -194,10 +197,15 @@ def _mlb_context(conn, bucket, composite, ceiling):
     ez = _z(ceiling) if ceiling else None
     same = composite and ceiling and abs(composite - ceiling) < 1
 
+    # SD gridline x-positions (±1, ±2) + the average line; labels are plain
+    # ("−2 −1 Avg +1 +2"), no sigma/mu symbols.
+    grid = [{"x": round(_x(z), 1), "label": lbl, "avg": z == 0}
+            for z, lbl in ((-2, "−2"), (-1, "−1"), (0, "Avg"), (1, "+1"), (2, "+2"))]
+
     curve = {
-        "vb_w": VBW, "vb_h": VBH, "base_y": round(base_y, 1),
-        "avg_x": round(_x(0.0), 1),
-        "line": _curve_points(-3.0, 3.0, False),      # the bell outline
+        "vb_w": VBW, "vb_h": VBH, "base_y": round(base_y, 1), "top_y": round(PAD_T, 1),
+        "line": _curve_points(-3.0, 3.0, False),
+        "grid": grid,
         "n": n,
         "same": bool(same),
     }
@@ -205,13 +213,14 @@ def _mlb_context(conn, bucket, composite, ceiling):
         curve["cur_x"] = round(_x(cz), 1)
         curve["cur_y"] = round(_y(cz), 1)
         curve["cur_pct"] = _pct(composite)
-        curve["beats"] = _curve_points(cz, 3.0, True)  # right-side shaded area
+        curve["beats"] = _curve_points(cz, 3.0, True)
     if ez is not None and not same:
         curve["ceil_x"] = round(_x(ez), 1)
         curve["ceil_y"] = round(_y(ez), 1)
+        curve["ceil_pct"] = _pct(ceiling)
         if cz is not None:
             lo, hi = (cz, ez) if ez >= cz else (ez, cz)
-            curve["gap"] = _curve_points(lo, hi, True)  # room-to-grow band
+            curve["gap"] = _curve_points(lo, hi, True)
 
     return {
         "comp_rank": comp_rank,

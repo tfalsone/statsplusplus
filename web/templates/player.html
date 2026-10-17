@@ -628,81 +628,68 @@
 <div class="panel">
   <h2>Player Evaluation</h2>
 
-  {# ── Now / Ceiling boxes ── #}
-  <div style="display:flex; gap:24px; margin-bottom:16px">
-    {# NOW #}
-    <div style="flex:1; background:var(--surface); border-radius:8px; padding:12px; text-align:center">
-      <div style="color:var(--text-dim); font-size:11px; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px">Now</div>
-      <div style="font-size:32px; font-weight:700"><span class="ovr-color" data-g="{{ p.composite_score }}">{{ p.composite_score }}</span></div>
-      {% if p.two_way_scores %}
-      <div style="font-size:12px; margin-top:4px; color:var(--text-dim)">
-        P: {{ p.two_way_scores.pitcher_composite }} · H: {{ p.two_way_scores.hitter_composite }} · Combined: <span style="color:var(--text); font-weight:600">{{ p.two_way_scores.combined_value }}</span>
-      </div>
-      {% endif %}
-      {% if p.mlb_context %}
-      {% set ctx = p.mlb_context %}
-      {% set cdiff = p.composite_score - ctx.median %}
-      <div style="font-size:12px; margin-top:4px">
-        <span style="color:var(--text-dim)">#{{ ctx.comp_rank }}/{{ ctx.n }} MLB {{ p.valuation.bucket if p.valuation else '' }}</span>
-      </div>
-      <div style="font-size:11px; margin-top:2px">
-        <span style="{% if cdiff > 3 %}color:#4caf50{% elif cdiff < -3 %}color:#f44336{% else %}color:var(--text-dim){% endif %}">{{ "%+d"|format(cdiff) }} vs median ({{ ctx.median }})</span>
-        · <span style="color:var(--text-dim)">{{ ctx.comp_tier }}</span>
-      </div>
-      {% endif %}
-    </div>
-    {# CEILING #}
-    <div style="flex:1; background:var(--surface); border-radius:8px; padding:12px; text-align:center">
-      <div style="color:var(--text-dim); font-size:11px; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px">Ceiling</div>
-      <div style="font-size:32px; font-weight:700"><span class="ovr-color" data-g="{{ p.true_ceiling or p.ceiling_score }}">{{ p.true_ceiling or p.ceiling_score }}</span></div>
-      {% if p.mlb_context %}
-      {% set cldiff = (p.true_ceiling or p.ceiling_score) - ctx.median %}
-      <div style="font-size:12px; margin-top:4px">
-        <span style="{% if cldiff > 3 %}color:#4caf50{% elif cldiff < -3 %}color:#f44336{% else %}color:var(--text-dim){% endif %}">{{ "%+d"|format(cldiff) }} vs MLB {{ p.valuation.bucket if p.valuation else '' }} median ({{ ctx.median }})</span>
-      </div>
-      <div style="font-size:11px; color:var(--text-dim)">{{ ctx.ceil_tier }}</div>
-      {% endif %}
-    </div>
-  </div>
-
-  {# ── Positional context bell curve ── #}
-  {% if p.mlb_context and p.mlb_context.curve and p.mlb_context.curve.cur_x is defined %}
-  {% set cv = p.mlb_context.curve %}
+  {# ── Now / Ceiling + positional bell curve (merged) ── #}
   {% set bk = p.valuation.bucket if p.valuation else '' %}
-  <div style="margin-bottom:16px; background:var(--surface); border-radius:8px; padding:12px">
-    <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:1px; margin-bottom:6px">
-      Where {{ p.name }} ranks among MLB {{ bk }}s
+  {% set has_curve = p.mlb_context and p.mlb_context.curve and p.mlb_context.curve.cur_x is defined %}
+  {% set ceil_val = p.true_ceiling or p.ceiling_score %}
+  <div style="background:var(--surface); border-radius:8px; padding:14px 16px; margin-bottom:16px">
+    {# header row: the two big numbers + tier/rank, no separate boxes #}
+    <div style="display:flex; gap:24px; align-items:flex-start; margin-bottom:{% if has_curve %}8{% else %}0{% endif %}px">
+      <div style="flex:1">
+        <div style="color:#4caf50; font-size:11px; text-transform:uppercase; letter-spacing:1px">● Now</div>
+        <div style="font-size:30px; font-weight:700; line-height:1.1"><span class="ovr-color" data-g="{{ p.composite_score }}">{{ p.composite_score }}</span></div>
+        {% if p.mlb_context %}
+        {% set ctx = p.mlb_context %}
+        <div style="font-size:12px; color:var(--text-dim)">#{{ ctx.comp_rank }} of {{ ctx.n }} MLB {{ bk }} · {{ ctx.comp_tier }}</div>
+        {% endif %}
+        {% if p.two_way_scores %}
+        <div style="font-size:11px; margin-top:2px; color:var(--text-dim)">P {{ p.two_way_scores.pitcher_composite }} · H {{ p.two_way_scores.hitter_composite }} · Comb <span style="color:var(--text); font-weight:600">{{ p.two_way_scores.combined_value }}</span></div>
+        {% endif %}
+      </div>
+      <div style="flex:1; text-align:right">
+        <div style="color:#e9c46a; font-size:11px; text-transform:uppercase; letter-spacing:1px">Ceiling ○</div>
+        <div style="font-size:30px; font-weight:700; line-height:1.1"><span class="ovr-color" data-g="{{ ceil_val }}">{{ ceil_val }}</span></div>
+        {% if p.mlb_context %}
+        <div style="font-size:12px; color:var(--text-dim)">#{{ ctx.ceil_rank }} of {{ ctx.n }} · {{ ctx.ceil_tier }}</div>
+        {% endif %}
+      </div>
     </div>
-    <svg viewBox="0 0 {{ cv.vb_w }} {{ cv.vb_h }}" width="100%" height="90" preserveAspectRatio="none" style="display:block">
+
+    {% if has_curve %}
+    {% set cv = p.mlb_context.curve %}
+    <div style="font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:1px; margin:2px 0 4px">
+      vs MLB {{ bk }}s
+    </div>
+    <svg viewBox="0 0 {{ cv.vb_w }} {{ cv.vb_h }}" width="100%" style="display:block; height:auto">
+      {# SD gridlines (±1, ±2) + average — lines indicate spread, no σ values #}
+      {% for g in cv.grid %}
+      <line x1="{{ g.x }}" y1="{{ cv.top_y }}" x2="{{ g.x }}" y2="{{ cv.base_y }}"
+            stroke="var(--border)" stroke-width="{% if g.avg %}1{% else %}0.75{% endif %}"
+            {% if not g.avg %}stroke-dasharray="3 3"{% endif %}/>
+      <text x="{{ g.x }}" y="{{ cv.vb_h - 1 }}" fill="var(--text-dim)" font-size="8" text-anchor="middle">{{ g.label }}</text>
+      {% endfor %}
       {# right-side shaded area the player already exceeds #}
-      <polygon points="{{ cv.beats }}" fill="#4caf50" opacity="0.16"/>
+      <polygon points="{{ cv.beats }}" fill="#4caf50" opacity="0.15"/>
       {# room-to-grow band between current and ceiling #}
       {% if cv.gap %}<polygon points="{{ cv.gap }}" fill="#e9c46a" opacity="0.22"/>{% endif %}
-      {# average tick #}
-      <line x1="{{ cv.avg_x }}" y1="2" x2="{{ cv.avg_x }}" y2="{{ cv.base_y }}" stroke="var(--border)" stroke-width="0.4"/>
       {# the bell outline #}
-      <polyline points="{{ cv.line }}" fill="none" stroke="#5aa9e6" stroke-width="0.8"/>
+      <polyline points="{{ cv.line }}" fill="none" stroke="#5aa9e6" stroke-width="2"/>
       {# baseline #}
-      <line x1="0" y1="{{ cv.base_y }}" x2="{{ cv.vb_w }}" y2="{{ cv.base_y }}" stroke="var(--border)" stroke-width="0.4"/>
-      {# ceiling marker (hollow gold) — drawn first so current sits on top #}
+      <line x1="0" y1="{{ cv.base_y }}" x2="{{ cv.vb_w }}" y2="{{ cv.base_y }}" stroke="var(--border)" stroke-width="1"/>
+      {# ceiling marker (hollow gold) #}
       {% if cv.ceil_x is defined %}
-      <line x1="{{ cv.ceil_x }}" y1="{{ cv.ceil_y }}" x2="{{ cv.ceil_x }}" y2="{{ cv.base_y }}" stroke="#e9c46a" stroke-width="0.8"/>
-      <circle cx="{{ cv.ceil_x }}" cy="{{ cv.ceil_y }}" r="1.4" fill="var(--surface)" stroke="#e9c46a" stroke-width="0.8"/>
+      <line x1="{{ cv.ceil_x }}" y1="{{ cv.ceil_y }}" x2="{{ cv.ceil_x }}" y2="{{ cv.base_y }}" stroke="#e9c46a" stroke-width="2"/>
+      <circle cx="{{ cv.ceil_x }}" cy="{{ cv.ceil_y }}" r="4" fill="var(--surface)" stroke="#e9c46a" stroke-width="2"/>
       {% endif %}
       {# current marker (solid green) #}
-      <line x1="{{ cv.cur_x }}" y1="{{ cv.cur_y }}" x2="{{ cv.cur_x }}" y2="{{ cv.base_y }}" stroke="#4caf50" stroke-width="0.8"/>
-      <circle cx="{{ cv.cur_x }}" cy="{{ cv.cur_y }}" r="1.4" fill="#4caf50"/>
+      <line x1="{{ cv.cur_x }}" y1="{{ cv.cur_y }}" x2="{{ cv.cur_x }}" y2="{{ cv.base_y }}" stroke="#4caf50" stroke-width="2"/>
+      <circle cx="{{ cv.cur_x }}" cy="{{ cv.cur_y }}" r="4" fill="#4caf50"/>
     </svg>
-    <div style="position:relative; height:12px; font-size:10px; color:var(--text-dim)">
-      <span style="position:absolute; left:50%; transform:translateX(-50%)">Avg</span>
-    </div>
     <div style="font-size:11px; color:var(--text-dim); margin-top:4px">
-      <span style="color:#4caf50">●</span> now
-      {% if cv.ceil_x is defined %}· <span style="color:#e9c46a">○</span> ceiling{% else %}<span style="color:var(--text-dim)"> (at ceiling)</span>{% endif %}
-      · better than ~{{ cv.cur_pct }}% of MLB {{ bk }}s
+      better than ~{{ cv.cur_pct }}% of MLB {{ bk }}s{% if not cv.same %} · ceiling ~{{ cv.ceil_pct }}%{% endif %}
     </div>
+    {% endif %}
   </div>
-  {% endif %}
 
   {# ── Component bars ── #}
   {% if p.offensive_grade %}
