@@ -353,6 +353,13 @@
         <span style="color:#4caf50">●</span> {{ my_abbr }} &nbsp; <span style="color:#5aa9e6">●</span> league
       </span>
     </div>
+    <div id="adv-posrow" style="display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-bottom:10px; font-size:12px">
+      <span style="color:var(--text-dim)">Positions:</span>
+      <span id="adv-poschips" style="display:inline-flex; gap:5px; flex-wrap:wrap"></span>
+      <span style="color:var(--text-dim)">·</span>
+      <span class="adv-poschip" onclick="advPosAll(true)" style="opacity:0.8">All</span>
+      <span class="adv-poschip" onclick="advPosAll(false)" style="opacity:0.8">None</span>
+    </div>
     <div id="adv-wrap" style="position:relative; width:100%; max-width:1100px">
       <svg id="adv-chart" width="100%" style="display:block; height:auto"></svg>
       <div id="adv-tip" style="position:absolute; pointer-events:none; background:#000; border:1px solid var(--border); border-radius:5px; padding:6px 9px; font-size:12px; display:none; z-index:20; white-space:nowrap"></div>
@@ -361,7 +368,9 @@
     <div id="adv-note" style="font-size:12px; color:var(--text-dim); margin-top:2px"></div>
   </div>
 </div>
-<style>.adv-side{color:var(--text-dim)} .adv-side.active{background:var(--surface); color:var(--text)}</style>
+<style>.adv-side{color:var(--text-dim)} .adv-side.active{background:var(--surface); color:var(--text)}
+.adv-poschip{padding:3px 9px; border:1px solid var(--border); border-radius:12px; cursor:pointer; color:var(--text-dim); user-select:none}
+.adv-poschip.on{background:var(--surface); color:var(--text); border-color:#5aa9e6}</style>
 <script>
 (function(){
   const SC = {{ scatter|tojson }};
@@ -370,13 +379,28 @@
         yw=document.getElementById('adv-ywrap'), addb=document.getElementById('adv-add'),
         rmb=document.getElementById('adv-rm'), note=document.getElementById('adv-note'),
         corr=document.getElementById('adv-corr'),
-        thr=document.getElementById('adv-thresh'), thrlab=document.getElementById('adv-thlabel');
-  let side='bat', mode2d=false, thresh=0;
+        thr=document.getElementById('adv-thresh'), thrlab=document.getElementById('adv-thlabel'),
+        poschips=document.getElementById('adv-poschips');
+  let side='bat', mode2d=false, thresh=0, posOn=new Set();
   // Larger logical canvas; the SVG scales to the panel width via viewBox.
   const W=1000, PAD_L=70, PAD_R=24;
   function pool(){ return side==='bat'?SC.hitters:SC.pitchers; }
   function stats(){ return side==='bat'?SC.hitter_stats:SC.pitcher_stats; }
-  function shown(){ return pool().filter(d=>(d.pt||0) >= thresh); }  // slider-filtered
+  function posList(){ return side==='bat'?SC.hitter_pos:SC.pitcher_pos; }
+  function shown(){ return pool().filter(d=>(d.pt||0)>=thresh && posOn.has(d.pos)); }
+  function buildChips(){
+    posOn=new Set(posList());  // all on by default
+    poschips.innerHTML='';
+    posList().forEach(pz=>{
+      const el=document.createElement('span');
+      el.className='adv-poschip on'; el.textContent=pz; el.dataset.pos=pz;
+      el.onclick=()=>{ if(posOn.has(pz)){posOn.delete(pz); el.classList.remove('on');}
+                       else {posOn.add(pz); el.classList.add('on');} draw(); };
+      poschips.appendChild(el);
+    });
+  }
+  window.advPosAll=function(on){ posOn=on?new Set(posList()):new Set();
+    poschips.querySelectorAll('.adv-poschip').forEach(el=>el.classList.toggle('on', on)); draw(); };
   function setupSlider(){
     // span the server floor → ~1.5× the qualified mark; default at qualified.
     const qual = side==='bat'?SC.pa_qual:SC.ip_qual;
@@ -413,7 +437,7 @@
   function draw(){
     const P=pool(), xk=xs.value;
     // shown items carry their index in the full pool (for tooltip lookup)
-    const data=P.map((d,i)=>({d,i})).filter(o=>(o.d.pt||0)>=thresh);
+    const data=P.map((d,i)=>({d,i})).filter(o=>(o.d.pt||0)>=thresh && posOn.has(o.d.pos));
     const unit = side==='bat'?'PA':'IP';
     thrlab.textContent = 'min '+thresh+' '+unit;
     corr.textContent='';
@@ -490,13 +514,13 @@
       tip.style.left=(e.clientX-w.left+12)+'px'; tip.style.top=(e.clientY-w.top+12)+'px';
     } else tip.style.display='none'; });
   svg.addEventListener('mouseleave',()=>tip.style.display='none');
-  window.advSide=function(sd,el){ side=sd; document.querySelectorAll('.adv-side').forEach(x=>x.classList.remove('active')); el.classList.add('active'); fillSel(); setupSlider(); draw(); };
+  window.advSide=function(sd,el){ side=sd; document.querySelectorAll('.adv-side').forEach(x=>x.classList.remove('active')); el.classList.add('active'); fillSel(); setupSlider(); buildChips(); draw(); };
   addb.onclick=()=>{ mode2d=true; yw.style.display=''; addb.style.display='none'; rmb.style.display=''; draw(); };
   rmb.onclick=()=>{ mode2d=false; yw.style.display='none'; addb.style.display=''; rmb.style.display='none'; draw(); };
   thr.oninput=()=>{ thresh=+thr.value; draw(); };
   xs.onchange=draw; ys.onchange=draw;
   // init when the Advanced tab is first shown (data is small, so just init now)
-  fillSel(); setupSlider(); draw();
+  fillSel(); setupSlider(); buildChips(); draw();
 })();
 </script>
 

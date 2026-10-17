@@ -302,8 +302,9 @@ def get_scatter_data(yr=None):
     # Hitters — aggregate per player (SUM across stints so a mid-season trade is
     # one row with full-season totals, not one row per team). Rates are recomputed
     # from the summed components, not averaged across stints.
+    _POS = {1: 'P', 2: 'C', 3: '1B', 4: '2B', 5: '3B', 6: 'SS', 7: 'LF', 8: 'CF', 9: 'RF', 10: 'DH'}
     hrows = conn.execute("""
-        SELECT p.name, p.team_id,
+        SELECT p.name, p.team_id, p.pos,
                COALESCE(NULLIF(p.organization_id,0), NULLIF(p.parent_team_id,0), p.team_id) AS org,
                SUM(b.pa) pa, SUM(b.ab) ab, SUM(b.h) h, SUM(b.d) d, SUM(b.t) t,
                SUM(b.hr) hr, SUM(b.bb) bb, SUM(b.k) k, SUM(b.sb) sb,
@@ -330,6 +331,7 @@ def get_scatter_data(yr=None):
         slg = tb / ab
         hitters.append({
             "name": r["name"], "team": _abbr.get(r["team_id"], "?"),
+            "pos": _POS.get(r["pos"], "?"),
             "mine": 1 if r["org"] == my_tid else 0, "pt": pa,
             "OPS": round(obp + slg, 3),
             "AVG": round(avg, 3), "OBP": round(obp, 3), "SLG": round(slg, 3),
@@ -346,10 +348,11 @@ def get_scatter_data(yr=None):
     # recomputed from summed er/outs/ip, not averaged. FIP C ~3.10.
     FIP_C = 3.10
     prows = conn.execute("""
-        SELECT p.name, p.team_id,
+        SELECT p.name, p.team_id, p.role,
                COALESCE(NULLIF(p.organization_id,0), NULLIF(p.parent_team_id,0), p.team_id) AS org,
                SUM(ps.ip) ip, SUM(ps.outs) outs, SUM(ps.er) er, SUM(ps.k) k,
                SUM(ps.bb) bb, SUM(ps.ha) ha, SUM(ps.hra) hra,
+               SUM(ps.gs) gs, SUM(ps.g) g,
                SUM(ps.war) war, SUM(ps.ra9war) ra9war, pe.composite
         FROM mlb_pitching_stats ps
         JOIN players p ON p.player_id = ps.player_id
@@ -365,6 +368,10 @@ def get_scatter_data(yr=None):
         ip = (outs / 3.0) if outs else (r["ip"] or 0)
         if ip < 1:
             continue
+        g = r["g"] or 0
+        gs = r["gs"] or 0
+        # SP = starts a majority of appearances (usage split, not raw role).
+        is_sp = (gs > 0 and gs / g > 0.5) if g > 0 else (str(r["role"]) == '11')
         k = r["k"] or 0
         bb = r["bb"] or 0
         hra = r["hra"] or 0
@@ -375,6 +382,7 @@ def get_scatter_data(yr=None):
         era = (er * 9.0 / ip) if ip else 0
         pitchers.append({
             "name": r["name"], "team": _abbr.get(r["team_id"], "?"),
+            "pos": "SP" if is_sp else "RP",
             "mine": 1 if r["org"] == my_tid else 0, "pt": round(ip, 1),
             "ERA": round(era, 2),
             "FIP": round((13 * hra + 3 * bb - 2 * k) / ip + FIP_C, 2),
@@ -389,6 +397,8 @@ def get_scatter_data(yr=None):
     return {
         "hitters": hitters, "pitchers": pitchers,
         "hitter_stats": SCATTER_HITTER_STATS, "pitcher_stats": SCATTER_PITCHER_STATS,
+        "hitter_pos": ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"],
+        "pitcher_pos": ["SP", "RP"],
         "pa_qual": pa_qual, "ip_qual": ip_qual,
         "pa_floor": pa_floor, "ip_floor": ip_floor,
     }
