@@ -378,6 +378,8 @@ def league():
 
     h2h = queries.get_head_to_head_matrix()
 
+    scatter = queries.get_scatter_data()
+
     return render_template("league.html", league_groups=league_groups,
                            prospects=prospects, all_prospects=all_prospects,
                            bat_leaders=bat_leaders,
@@ -388,6 +390,7 @@ def league():
                            draft_pool=draft_pool, draft_depth=draft_depth,
                            pos_rankings=pos_rankings,
                            standings=standings, h2h=h2h,
+                           scatter=scatter,
                            num_teams=len(cfg.mlb_team_ids))
 
 

@@ -259,6 +259,107 @@ def get_pitching_leaders(yr=None):
     return result
 
 
+# Stat sets offered by the Advanced (scatter/distribution) tab. Order defines the
+# dropdown order; the first entry is the default stat shown in the 1D view.
+SCATTER_HITTER_STATS = ["OPS", "AVG", "OBP", "SLG", "ISO", "HR", "SB",
+                        "BB%", "K%", "WAR", "Comp", "Surplus"]
+SCATTER_PITCHER_STATS = ["ERA", "FIP", "WHIP", "K/9", "BB/9", "HR/9", "K/BB",
+                         "IP", "WAR", "Comp"]
+
+
+def get_scatter_data(yr=None):
+    """League-wide per-player stat points for the Advanced scatter/distribution tab.
+
+    Returns ``{"hitters": [...], "pitchers": [...], "hitter_stats": [...],
+    "pitcher_stats": [...]}`` where each player point is a dict of the stat
+    values (keys match the *_STATS lists) plus name/team/mine. Only MLB-level
+    players who clear the same games-scaled qualifier used by the leaders panels
+    are included (hitters 3.1 PA/team-game, pitchers 1.0 IP/team-game). "mine" is
+    1 when the player's org matches ``my_team_id``. Pure display data — no eval.
+    """
+    yr = yr or year()
+    conn = get_db()
+    _abbr = team_abbr_map()
+    my_tid = get_my_team_id()
+    tip = conn.execute(
+        "SELECT AVG(ip) FROM team_pitching_stats WHERE year=? AND split_id=1", (yr,)
+    ).fetchone()
+    team_g = round(tip[0] / 9) if tip and tip[0] else 0
+    pa_qual = max(1, round(3.1 * team_g))
+    ip_qual = max(1, round(1.0 * team_g))
+
+    # Hitters
+    hrows = conn.execute("""
+        SELECT p.name, p.team_id,
+               COALESCE(NULLIF(p.organization_id,0), NULLIF(p.parent_team_id,0), p.team_id) AS org,
+               b.pa, b.ab, b.h, b.d, b.t, b.hr, b.bb, b.k, b.sb,
+               b.avg, b.obp, b.slg, b.war, pe.composite, pe.surplus
+        FROM mlb_batting_stats b
+        JOIN players p ON p.player_id = b.player_id
+        LEFT JOIN player_evaluation pe ON pe.player_id = b.player_id
+        WHERE b.year=? AND b.split_id=1 AND p.level='1' AND b.pa >= ?
+    """, (yr, pa_qual)).fetchall()
+    hitters = []
+    for r in hrows:
+        pa = r["pa"] or 0
+        if pa < 1:
+            continue
+        hitters.append({
+            "name": r["name"], "team": _abbr.get(r["team_id"], "?"),
+            "mine": 1 if r["org"] == my_tid else 0,
+            "OPS": round((r["obp"] or 0) + (r["slg"] or 0), 3),
+            "AVG": round(r["avg"] or 0, 3), "OBP": round(r["obp"] or 0, 3),
+            "SLG": round(r["slg"] or 0, 3),
+            "ISO": round((r["slg"] or 0) - (r["avg"] or 0), 3),
+            "HR": r["hr"] or 0, "SB": r["sb"] or 0,
+            "BB%": round(100 * (r["bb"] or 0) / pa, 1),
+            "K%": round(100 * (r["k"] or 0) / pa, 1),
+            "WAR": round(r["war"] or 0, 1),
+            "Comp": r["composite"],
+            "Surplus": round((r["surplus"] or 0) / 1e6, 1) if r["surplus"] is not None else None,
+        })
+
+    # Pitchers (FIP constant ~3.10; standard 13·HR + 3·BB − 2·K per IP + C)
+    FIP_C = 3.10
+    prows = conn.execute("""
+        SELECT p.name, p.team_id,
+               COALESCE(NULLIF(p.organization_id,0), NULLIF(p.parent_team_id,0), p.team_id) AS org,
+               ps.ip, ps.era, ps.k, ps.bb, ps.ha, ps.hra, ps.war, ps.ra9war, pe.composite
+        FROM mlb_pitching_stats ps
+        JOIN players p ON p.player_id = ps.player_id
+        LEFT JOIN player_evaluation pe ON pe.player_id = ps.player_id
+        WHERE ps.year=? AND ps.split_id=1 AND p.level='1' AND ps.ip >= ?
+    """, (yr, ip_qual)).fetchall()
+    pitchers = []
+    for r in prows:
+        ip = r["ip"] or 0
+        if ip < 1:
+            continue
+        k = r["k"] or 0
+        bb = r["bb"] or 0
+        hra = r["hra"] or 0
+        war = r["war"] or 0
+        if r["ra9war"] is not None:
+            war = (war + r["ra9war"]) / 2
+        pitchers.append({
+            "name": r["name"], "team": _abbr.get(r["team_id"], "?"),
+            "mine": 1 if r["org"] == my_tid else 0,
+            "ERA": round(r["era"] or 0, 2),
+            "FIP": round((13 * hra + 3 * bb - 2 * k) / ip + FIP_C, 2),
+            "WHIP": round(((r["ha"] or 0) + bb) / ip, 2),
+            "K/9": round(9 * k / ip, 1), "BB/9": round(9 * bb / ip, 1),
+            "HR/9": round(9 * hra / ip, 1),
+            "K/BB": round(k / bb, 1) if bb else round(float(k), 1),
+            "IP": round(ip, 1), "WAR": round(war, 1),
+            "Comp": r["composite"],
+        })
+
+    return {
+        "hitters": hitters, "pitchers": pitchers,
+        "hitter_stats": SCATTER_HITTER_STATS, "pitcher_stats": SCATTER_PITCHER_STATS,
+    }
+
+
 def search_players(query):
     """League-wide player search. Returns up to 15 matches (MLB first, then prospects)."""
     if not query or len(query) < 2:
