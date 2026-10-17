@@ -299,29 +299,41 @@ def get_scatter_data(yr=None):
     pa_floor = max(1, round(0.5 * team_g))   # ~ half the qualified PA
     ip_floor = max(1, round(0.2 * team_g))   # ~ a fifth of the qualified IP
 
-    # Hitters
+    # Hitters — aggregate per player (SUM across stints so a mid-season trade is
+    # one row with full-season totals, not one row per team). Rates are recomputed
+    # from the summed components, not averaged across stints.
     hrows = conn.execute("""
         SELECT p.name, p.team_id,
                COALESCE(NULLIF(p.organization_id,0), NULLIF(p.parent_team_id,0), p.team_id) AS org,
-               b.pa, b.ab, b.h, b.d, b.t, b.hr, b.bb, b.k, b.sb,
-               b.avg, b.obp, b.slg, b.war, pe.composite, pe.surplus
+               SUM(b.pa) pa, SUM(b.ab) ab, SUM(b.h) h, SUM(b.d) d, SUM(b.t) t,
+               SUM(b.hr) hr, SUM(b.bb) bb, SUM(b.k) k, SUM(b.sb) sb,
+               SUM(b.hbp) hbp, SUM(b.sf) sf, SUM(b.war) war,
+               pe.composite, pe.surplus
         FROM mlb_batting_stats b
         JOIN players p ON p.player_id = b.player_id
         LEFT JOIN player_evaluation pe ON pe.player_id = b.player_id
-        WHERE b.year=? AND b.split_id=1 AND p.level='1' AND b.pa >= ?
+        WHERE b.year=? AND b.split_id=1 AND p.level='1'
+        GROUP BY b.player_id
+        HAVING SUM(b.pa) >= ?
     """, (stat_bat_yr, pa_floor)).fetchall()
     hitters = []
     for r in hrows:
         pa = r["pa"] or 0
-        if pa < 1:
+        ab = r["ab"] or 0
+        if pa < 1 or ab < 1:
             continue
+        h = r["h"] or 0
+        s1 = h - (r["d"] or 0) - (r["t"] or 0) - (r["hr"] or 0)
+        tb = s1 + 2*(r["d"] or 0) + 3*(r["t"] or 0) + 4*(r["hr"] or 0)
+        avg = h / ab
+        obp = (h + (r["bb"] or 0) + (r["hbp"] or 0)) / pa
+        slg = tb / ab
         hitters.append({
             "name": r["name"], "team": _abbr.get(r["team_id"], "?"),
             "mine": 1 if r["org"] == my_tid else 0, "pt": pa,
-            "OPS": round((r["obp"] or 0) + (r["slg"] or 0), 3),
-            "AVG": round(r["avg"] or 0, 3), "OBP": round(r["obp"] or 0, 3),
-            "SLG": round(r["slg"] or 0, 3),
-            "ISO": round((r["slg"] or 0) - (r["avg"] or 0), 3),
+            "OPS": round(obp + slg, 3),
+            "AVG": round(avg, 3), "OBP": round(obp, 3), "SLG": round(slg, 3),
+            "ISO": round(slg - avg, 3),
             "HR": r["hr"] or 0, "SB": r["sb"] or 0,
             "BB%": round(100 * (r["bb"] or 0) / pa, 1),
             "K%": round(100 * (r["k"] or 0) / pa, 1),
@@ -330,32 +342,41 @@ def get_scatter_data(yr=None):
             "Surplus": round((r["surplus"] or 0) / 1e6, 1) if r["surplus"] is not None else None,
         })
 
-    # Pitchers (FIP constant ~3.10; standard 13·HR + 3·BB − 2·K per IP + C)
+    # Pitchers — aggregate per player (SUM across stints); ERA and all rates
+    # recomputed from summed er/outs/ip, not averaged. FIP C ~3.10.
     FIP_C = 3.10
     prows = conn.execute("""
         SELECT p.name, p.team_id,
                COALESCE(NULLIF(p.organization_id,0), NULLIF(p.parent_team_id,0), p.team_id) AS org,
-               ps.ip, ps.era, ps.k, ps.bb, ps.ha, ps.hra, ps.war, ps.ra9war, pe.composite
+               SUM(ps.ip) ip, SUM(ps.outs) outs, SUM(ps.er) er, SUM(ps.k) k,
+               SUM(ps.bb) bb, SUM(ps.ha) ha, SUM(ps.hra) hra,
+               SUM(ps.war) war, SUM(ps.ra9war) ra9war, pe.composite
         FROM mlb_pitching_stats ps
         JOIN players p ON p.player_id = ps.player_id
         LEFT JOIN player_evaluation pe ON pe.player_id = ps.player_id
-        WHERE ps.year=? AND ps.split_id=1 AND p.level='1' AND ps.ip >= ?
+        WHERE ps.year=? AND ps.split_id=1 AND p.level='1'
+        GROUP BY ps.player_id
+        HAVING SUM(ps.ip) >= ?
     """, (stat_pit_yr, ip_floor)).fetchall()
     pitchers = []
     for r in prows:
-        ip = r["ip"] or 0
+        # Prefer precise innings from outs; fall back to stored ip.
+        outs = r["outs"] or 0
+        ip = (outs / 3.0) if outs else (r["ip"] or 0)
         if ip < 1:
             continue
         k = r["k"] or 0
         bb = r["bb"] or 0
         hra = r["hra"] or 0
+        er = r["er"] or 0
         war = r["war"] or 0
         if r["ra9war"] is not None:
             war = (war + r["ra9war"]) / 2
+        era = (er * 9.0 / ip) if ip else 0
         pitchers.append({
             "name": r["name"], "team": _abbr.get(r["team_id"], "?"),
             "mine": 1 if r["org"] == my_tid else 0, "pt": round(ip, 1),
-            "ERA": round(r["era"] or 0, 2),
+            "ERA": round(era, 2),
             "FIP": round((13 * hra + 3 * bb - 2 * k) / ip + FIP_C, 2),
             "WHIP": round(((r["ha"] or 0) + bb) / ip, 2),
             "K/9": round(9 * k / ip, 1), "BB/9": round(9 * bb / ip, 1),

@@ -392,7 +392,12 @@
   }
   function range(k){ const v=shown().map(d=>d[k]).filter(x=>x!=null);
     if(!v.length) return [0,1];
-    let lo=Math.min(...v), hi=Math.max(...v); const p=(hi-lo)*0.06||1; return [lo-p,hi+p]; }
+    let lo=Math.min(...v), hi=Math.max(...v); const p=(hi-lo)*0.06||1;
+    let loPad=lo-p; const hiPad=hi+p;
+    // Don't pad below a natural floor of 0 when all values are non-negative
+    // (e.g. HR, ERA, rate stats can't go negative — avoid an axis minimum of -2.3).
+    if(lo>=0 && loPad<0) loPad=0;
+    return [loPad,hiPad]; }
   function mean(k){ const v=shown().map(d=>d[k]).filter(x=>x!=null);
     return v.length? v.reduce((a,b)=>a+b,0)/v.length : null; }
   function fmt(v){ return +(+v).toFixed(3); }
