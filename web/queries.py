@@ -294,6 +294,10 @@ def get_scatter_data(yr=None):
     team_g = round(tip[0] / 9) if tip and tip[0] else 0
     pa_qual = max(1, round(3.1 * team_g))
     ip_qual = max(1, round(1.0 * team_g))
+    # Server sends a LOWER floor than the qualified mark so the client slider can
+    # loosen the threshold (show part-time players) or tighten it to qualified.
+    pa_floor = max(1, round(0.5 * team_g))   # ~ half the qualified PA
+    ip_floor = max(1, round(0.2 * team_g))   # ~ a fifth of the qualified IP
 
     # Hitters
     hrows = conn.execute("""
@@ -305,7 +309,7 @@ def get_scatter_data(yr=None):
         JOIN players p ON p.player_id = b.player_id
         LEFT JOIN player_evaluation pe ON pe.player_id = b.player_id
         WHERE b.year=? AND b.split_id=1 AND p.level='1' AND b.pa >= ?
-    """, (stat_bat_yr, pa_qual)).fetchall()
+    """, (stat_bat_yr, pa_floor)).fetchall()
     hitters = []
     for r in hrows:
         pa = r["pa"] or 0
@@ -313,7 +317,7 @@ def get_scatter_data(yr=None):
             continue
         hitters.append({
             "name": r["name"], "team": _abbr.get(r["team_id"], "?"),
-            "mine": 1 if r["org"] == my_tid else 0,
+            "mine": 1 if r["org"] == my_tid else 0, "pt": pa,
             "OPS": round((r["obp"] or 0) + (r["slg"] or 0), 3),
             "AVG": round(r["avg"] or 0, 3), "OBP": round(r["obp"] or 0, 3),
             "SLG": round(r["slg"] or 0, 3),
@@ -336,7 +340,7 @@ def get_scatter_data(yr=None):
         JOIN players p ON p.player_id = ps.player_id
         LEFT JOIN player_evaluation pe ON pe.player_id = ps.player_id
         WHERE ps.year=? AND ps.split_id=1 AND p.level='1' AND ps.ip >= ?
-    """, (stat_pit_yr, ip_qual)).fetchall()
+    """, (stat_pit_yr, ip_floor)).fetchall()
     pitchers = []
     for r in prows:
         ip = r["ip"] or 0
@@ -350,7 +354,7 @@ def get_scatter_data(yr=None):
             war = (war + r["ra9war"]) / 2
         pitchers.append({
             "name": r["name"], "team": _abbr.get(r["team_id"], "?"),
-            "mine": 1 if r["org"] == my_tid else 0,
+            "mine": 1 if r["org"] == my_tid else 0, "pt": round(ip, 1),
             "ERA": round(r["era"] or 0, 2),
             "FIP": round((13 * hra + 3 * bb - 2 * k) / ip + FIP_C, 2),
             "WHIP": round(((r["ha"] or 0) + bb) / ip, 2),
@@ -364,6 +368,8 @@ def get_scatter_data(yr=None):
     return {
         "hitters": hitters, "pitchers": pitchers,
         "hitter_stats": SCATTER_HITTER_STATS, "pitcher_stats": SCATTER_PITCHER_STATS,
+        "pa_qual": pa_qual, "ip_qual": ip_qual,
+        "pa_floor": pa_floor, "ip_floor": ip_floor,
     }
 
 
