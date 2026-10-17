@@ -393,19 +393,37 @@
     const data=pool(), xk=xs.value;
     corr.textContent='';
     note.textContent = data.length+' qualified '+(side==='bat'?'hitters':'pitchers')+
-      (mode2d?' · each dot a player, hover for detail':' · league distribution (jittered); add a metric to compare two');
+      (mode2d?' · each dot a player, hover for detail':' · league distribution; vertical thickness = how many players share that value');
     let s='';
     if(!mode2d){
-      const Hh=240; svg.setAttribute('viewBox',`0 0 ${W} ${Hh}`);
-      const T=24,B=50,[x0,x1]=range(xk), px=v=>PAD_L+(v-x0)/(x1-x0)*(W-PAD_L-PAD_R);
+      const Hh=360; svg.setAttribute('viewBox',`0 0 ${W} ${Hh}`);
+      const T=24,B=50,[x0,x1]=range(xk);
+      const px=v=>PAD_L+(v-x0)/(x1-x0)*(W-PAD_L-PAD_R);
+      const midY=T+(Hh-T-B)/2;
       for(let i=0;i<=6;i++){ const gx=x0+(x1-x0)*i/6;
         s+=`<line x1="${px(gx)}" y1="${T}" x2="${px(gx)}" y2="${Hh-B}" stroke="#262626"/>`;
         s+=`<text x="${px(gx)}" y="${Hh-B+18}" fill="#999" font-size="14" text-anchor="middle">${fmt(gx)}</text>`; }
+      s+=`<line x1="${PAD_L}" y1="${midY}" x2="${W-PAD_R}" y2="${midY}" stroke="#333"/>`;
       s+=`<text x="${(PAD_L+W-PAD_R)/2}" y="${Hh-6}" fill="#ccc" font-size="16" text-anchor="middle">${xk}</text>`;
-      [...data].sort((a,b)=>a.mine-b.mine).forEach(d=>{
-        const i=data.indexOf(d); if(d[xk]==null)return;
-        const cy=T+10+jit(i)*(Hh-B-T-20);
-        s+=`<circle class="advdot" data-i="${i}" cx="${px(d[xk])}" cy="${cy}" r="${d.mine?6:4}" fill="${d.mine?'#4caf50':'#5aa9e6'}" fill-opacity="${d.mine?0.95:0.5}" stroke="${d.mine?'#fff':'none'}" stroke-width="0.8"/>`; });
+      // Beeswarm: bin by pixel column, stack dots symmetrically outward from the
+      // center line so denser x-values radiate wider (violin silhouette).
+      const DOT=5, SP=10, COLW=11;        // dot radius-ish spacing / column width
+      const pts=data.map((d,i)=>({d,i,v:d[xk]})).filter(p=>p.v!=null)
+                    .sort((a,b)=>a.v-b.v);
+      const colCount={};                   // column index -> how many placed
+      const placed=[];
+      for(const p of pts){
+        const xpix=px(p.v);
+        const col=Math.round(xpix/COLW);
+        const k=(colCount[col]||0); colCount[col]=k+1;
+        // slot 0 -> center, 1 -> +1, 2 -> -1, 3 -> +2 ... symmetric fan-out
+        const step=Math.ceil(k/2)*(k%2===1?1:-1);
+        const cy=Math.max(T+DOT, Math.min(Hh-B-DOT, midY + step*SP));
+        placed.push({...p, cx:xpix, cy});
+      }
+      // draw non-mine first, mine on top
+      placed.sort((a,b)=>a.d.mine-b.d.mine).forEach(p=>{
+        s+=`<circle class="advdot" data-i="${p.i}" cx="${p.cx.toFixed(1)}" cy="${p.cy.toFixed(1)}" r="${p.d.mine?6:4}" fill="${p.d.mine?'#4caf50':'#5aa9e6'}" fill-opacity="${p.d.mine?0.95:0.55}" stroke="${p.d.mine?'#fff':'none'}" stroke-width="0.8"/>`; });
     } else {
       const Hh=620; svg.setAttribute('viewBox',`0 0 ${W} ${Hh}`);
       const yk=ys.value, T=20,B=54,[x0,x1]=range(xk),[y0,y1]=range(yk);
