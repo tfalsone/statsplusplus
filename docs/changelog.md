@@ -4,7 +4,84 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
-## Session 100 (2026-10-17)
+## Session 101 (2026-10-18)
+
+Offseason arbitration-board correctness cluster (three confirmed bugs), HR/FB%
+surfaced as a pitcher metric across the app, and a substantial build-out of the
+league **Advanced-stats** tab (ratings axes, goodness-oriented correlation, a
+good-zone gradient, and a toggleable indicator suite). All display/query-layer and
+pure-evaluation work — no calibration or engine changes. Full offseason + arb +
+evaluation test surface green (238 relevant tests), web smoke green.
+
+### Arbitration board — three correctness fixes (`web/offseason_queries.py`, `src/statsplusplus/evaluation/arb.py`)
+
+- **`contract_team_id` staleness → current-org attribution.** The StatsPlus
+  `/contract` payload keeps the original signing team in `contract_team_id` after
+  a mid-season trade (no salary-retention field exists in the payload — confirmed
+  against `client_reference.md`), so filtering on it mis-attributed traded players
+  to their former team. `get_arbitration`, `get_extension_candidates`, and
+  `get_option_decisions` now attribute by the player's current org (`ORG_ID_SQL`),
+  matching the documented convention (`system_overview.md`) and the rest of the
+  file. Non-destructive (the column is left intact). Regression test:
+  `test_traded_player_attributed_by_current_org_not_contract_team`.
+- **First-arb branch could project a pay CUT.** `arb_salary`'s `arb_year == 1`
+  path returned a pure OVR-curve estimate ignoring `prior_salary`, re-pricing an
+  already-above-curve player DOWN. Added a floor at `prior_salary` when it exceeds
+  the minimum — but **only in the standard-arb function**: perpetual/indefinite-arb
+  leagues (where arb CAN decrease on performance) route through
+  `arb_salary_perpetual` and are unaffected; internal surplus/value projections
+  pass `min_sal` as the prior so the floor is inert there. Tests:
+  `test_arb_year1_never_cuts_below_prior`, `_curve_unchanged_for_true_first_timer`.
+- **Arb eligibility now keys on SERVICE TIME, not salary.** The old
+  `sal <= min_sal: continue` wrongly skipped min-salary players with 3+ service
+  years (the Danny-Haas case). Standard-arb now gates on completed service years
+  (3 = eligible, 6 = graduated to FA) and derives `arb_year` from service
+  (`completed_years − 2`) so a veteran hits the raise path, not the first-arb
+  curve. Perpetual-arb leagues skip the service gate entirely (no FA; every
+  expiring controlled deal is an arb decision). Tests:
+  `test_arb_board_includes_min_salary_eligible_player`,
+  `_excludes_free_agent_eligible`. (Super Two remains a tracked, deferred item.)
+
+### HR/FB% as a key pitcher metric
+
+HR/FB% (`hra / fb`, a mean-reverting luck/regression signal) added across four
+surfaces, all from `pitching_stats` columns already stored (`hra`, `fb`):
+- **Player page pitcher stat table** (`web/player_queries.py`) — season, per-team
+  stint, and career rows; MiLB rows show `-` (batted-ball data unreliable at MiLB).
+- **Player page percentile panel** (`web/percentiles.py`) — plain percentile (no
+  ratings-based expected model exists, so no lucky/unlucky tag), gated on
+  batted-ball data availability.
+- **League Advanced-stats scatter** — selectable pitcher stat.
+
+### League Advanced-stats tab — analytics build-out (`web/queries.py`, `web/templates/league.html`)
+
+Extends the Session-100 scatter/distribution tab. All display-only, driven by new
+metadata from `get_scatter_data` (single source of truth); points now carry
+`player_id`.
+- **Current-ratings axes.** Tool ratings (hitters: Contact/Power/Eye/Gap/Speed;
+  pitchers: Stuff/Movement/Control/Stamina), normalized to 20-80, offered as
+  selectable axes in a grouped **`<optgroup>`** ("Stats" / "Ratings"). Enables the
+  ratings-vs-stats view (e.g. Stuff × K/9) where the 2D regression + r² shows how
+  well a tool tracks production and the off-line dots are the over/under-performers.
+- **Click a dot → player page** (points carry `pid`).
+- **Whole-number axis ticks** for integer-valued axes (ratings, HR, Comp, IP) —
+  `isIntAxis`/`fmtAxis`; rate stats keep decimals. Also cleaned up fractional ticks
+  on integer stats generally.
+- **Goodness-oriented correlation.** When both axes have a better-direction, the
+  displayed `r` sign is flipped so POSITIVE always means "runs toward better"
+  (Stuff↑ × ERA↓ shows +, not −), with a `(+ = toward better)` hint; r² unchanged;
+  neutral axes show the raw signed r.
+- **Good-zone gradient.** A subtle green wash toward the better end (1D) / corner
+  (2D), axes left in natural units (nothing inverted). Driven by a per-stat
+  `SCATTER_STAT_DIRECTION` map (high/low/neutral).
+- **Toggleable indicator suite** (localStorage-persisted): regression line,
+  ±1-SEE confidence band, residual **outliers** (rings the 6 largest residuals +
+  residual-on-hover), quadrant labels, mean lines, good-zone shading, and a
+  **league-average** reference line (from `league_averages.json`; only for the 9
+  stats it carries). Small-n guard suppresses the line below n=10 with an
+  explanatory note.
+
+
 
 Three hitter-evaluation model corrections, each diagnosed from data and validated
 cross-league (vMLB/eMLB/PPL). Full suite green (468 evaluation/engine tests); all

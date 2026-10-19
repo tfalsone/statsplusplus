@@ -1,7 +1,7 @@
 # EMLB Analytics Platform — System Overview
 
 > **Status:** Living · **Owns:** architecture, data flow, DB tables, routes, query functions, design decisions
-> **Writing standard:** prose · **Last verified against code:** Session 100
+> **Writing standard:** prose · **Last verified against code:** Session 101
 
 ## Purpose
 
@@ -411,7 +411,7 @@ Local Flask app at `web/`. Dark theme, monospace font, no CSS/JS frameworks.
 | `/` | redirect | Redirects to `/team/<my_team_id>` |
 | `/dashboard` | redirect | Redirects to `/team/<my_team_id>` |
 | `/team/<id>` | `team.html` or `team_minor.html` | MLB team page (roster, depth chart, contracts, farm) or minor league team page (notables, full roster). Detected by player level. |
-| `/league` | `league.html` | League overview (vitals KPIs, 2×3 division standings grid with WC badges, scrollable power rankings with score heatmap, hero leader cards with MLB/AL/NL toggle), top 100 prospects with side panel, Advanced stats tab (1D distribution / 2D scatter with regression + r/R², position/threshold filters), trade builder tab, draft tab with sim/upload |
+| `/league` | `league.html` | League overview (vitals KPIs, 2×3 division standings grid with WC badges, scrollable power rankings with score heatmap, hero leader cards with MLB/AL/NL toggle), top 100 prospects with side panel, Advanced stats tab (1D distribution / 2D scatter; stat OR current-rating axes via grouped optgroup; HR/FB% selectable; regression + goodness-oriented r/R², good-zone gradient, position/threshold filters, and a toggleable indicator suite — line/confidence band/outliers/quadrants/mean/good-zone/league-avg; click a point → player page), trade builder tab, draft tab with sim/upload |
 | `/player/<id>` | `player.html` | Player detail — ratings, stats, percentiles, contract, surplus projection |
 | `/settings` | `settings.html` | Team selector (`my_team_id` in `config/state.json`) |
 | `/refresh` | JSON | POST — starts background refresh (`refresh.py`). Returns 409 if already running. |

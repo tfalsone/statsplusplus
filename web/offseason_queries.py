@@ -583,14 +583,18 @@ def get_arbitration(team_id):
     # a win or more; anything positive is at least a marginal tender.
     strong_tender = 1.0 * dpw  # ~1 WAR of surplus
 
-    rows = conn.execute("""
+    # Attribute by the player's CURRENT org (ORG_ID_SQL), not c.contract_team_id:
+    # the API retains the original signing team's ID in contract_team_id even
+    # after a mid-season trade (documented unreliability — see system_overview.md),
+    # so filtering on it mis-attributes traded players to their former team.
+    rows = conn.execute(f"""
         SELECT c.player_id, p.name, p.age, c.salary_0, c.years, c.current_year,
                pe.surplus, pe.composite, pe.ceiling, pe.bucket,
                pe.peak_war, pe.stat_war
         FROM contracts c
         JOIN players p ON p.player_id = c.player_id
         JOIN player_evaluation pe ON pe.player_id = c.player_id AND pe.eval_date = ?
-        WHERE c.contract_team_id = ? AND c.is_major = 1
+        WHERE {ORG_ID_SQL} = ? AND c.is_major = 1
           AND p.level IN ('1', 1)
           AND (c.years - c.current_year) <= 1
     """, (ed, team_id)).fetchall()
@@ -599,12 +603,23 @@ def get_arbitration(team_id):
     for r in rows:
         pid, name, age, sal = r[0], r[1], r[2], r[3] or 0
         bucket = r[9] or "?"
-        # Only above-minimum, controllable, not yet FA — i.e. arb-eligible.
         st = service_time(conn, pid)
-        if st.is_free_agent_eligible:
-            continue
-        if sal <= min_sal:
-            continue  # pre-arb (min salary) — not an arb tender decision
+
+        # Eligibility is a SERVICE-TIME property, not a salary one — a player
+        # can be arb-eligible while still paid the league minimum (e.g. svc
+        # 3.029 on a $0.67M deal). The old `sal <= min_sal: continue` wrongly
+        # skipped those.
+        #
+        # Perpetual/indefinite-arb leagues (PPL) have NO free agency and every
+        # controlled player is perpetually in arb, so the standard 3-year / 6-year
+        # service gates don't apply — the SQL's "contract expiring this year"
+        # clause already scopes to the decisions that need making. For standard
+        # arb, gate on completed service years (3 = eligible, 6 = graduated to FA).
+        if not perp:
+            if st.is_free_agent_eligible:
+                continue                       # 6+ completed years → FA, not arb
+            if st.completed_years < 3:
+                continue                       # not yet arb-eligible
 
         # Projected next-year salary
         try:
@@ -614,7 +629,12 @@ def get_arbitration(team_id):
                     age, war or 0, dpw, min_sal,
                     career_war=_career_war(conn, pid), model=perp_model)
             else:
-                proj_sal = arb_salary(r[7] or 50, bucket, 1, sal, min_sal)
+                # Derive the arb year from service (first arb at 3 completed
+                # years) rather than hardcoding 1 — a 4th/5th-year player hits
+                # the raise path, not the first-arb curve. (Super Two, which can
+                # grant an early 4th arb year, is not yet modeled — see below.)
+                arb_year = max(1, st.completed_years - 2)
+                proj_sal = arb_salary(r[7] or 50, bucket, arb_year, sal, min_sal)
         except Exception:
             proj_sal = sal
 
@@ -871,13 +891,14 @@ def get_extension_candidates(team_id):
     from statsplusplus.config.league_config import dollars_per_war
     cfg = get_cfg()
     threshold = 0.75 * dollars_per_war(cfg.league_dir)  # ~0.75 WAR of surplus, league-scaled
-    rows = conn.execute("""
+    # Current-org attribution (not stale c.contract_team_id) — see get_arbitration.
+    rows = conn.execute(f"""
         SELECT c.player_id, p.name, p.age, c.years, c.current_year,
                pe.surplus, pe.composite, pe.ceiling, pe.bucket
         FROM contracts c
         JOIN players p ON p.player_id = c.player_id
         JOIN player_evaluation pe ON pe.player_id = c.player_id AND pe.eval_date = ?
-        WHERE c.contract_team_id = ? AND c.is_major = 1 AND p.level IN ('1', 1)
+        WHERE {ORG_ID_SQL} = ? AND c.is_major = 1 AND p.level IN ('1', 1)
           AND (c.years - c.current_year) BETWEEN 1 AND 2
     """, (ed, team_id)).fetchall()
 
@@ -964,7 +985,8 @@ def get_option_decisions(team_id):
     dpw = dollars_per_war(cfg.league_dir)
     min_sal = league_minimum(cfg.league_dir)
 
-    rows = conn.execute("""
+    # Current-org attribution (not stale c.contract_team_id) — see get_arbitration.
+    rows = conn.execute(f"""
         SELECT c.player_id, p.name, p.age, c.years, c.current_year, c.season_year,
                c.salary_0, c.salary_1, c.salary_2, c.salary_3, c.salary_4,
                c.salary_5, c.salary_6, c.salary_7, c.salary_8, c.salary_9,
@@ -977,7 +999,7 @@ def get_option_decisions(team_id):
         FROM contracts c
         JOIN players p ON p.player_id = c.player_id
         JOIN player_evaluation pe ON pe.player_id = c.player_id AND pe.eval_date = ?
-        WHERE c.contract_team_id = ? AND c.is_major = 1 AND p.level IN ('1', 1)
+        WHERE {ORG_ID_SQL} = ? AND c.is_major = 1 AND p.level IN ('1', 1)
           AND (c.last_year_team_option = 1 OR c.last_year_player_option = 1
                OR c.last_year_vesting_option = 1
                OR c.next_last_year_team_option = 1 OR c.next_last_year_player_option = 1
