@@ -1,7 +1,7 @@
 # Player Evaluation System — High-Level Overview
 
 > **Status:** Living · **Owns:** evaluation pipeline (`src/statsplusplus/evaluation/`, `src/statsplusplus/data/{evaluation_engine,fv_calc,calibrate}.py`)
-> **Writing standard:** ASD-STE100 · **Last verified against code:** Session 100
+> **Writing standard:** ASD-STE100 · **Last verified against code:** Session 102
 
 This document explains how the evaluation system works today. It is the single
 entry point for the evaluation pipeline. It replaces the out-of-date
@@ -378,6 +378,12 @@ Key rules:
 - **The surplus floor is zero.** A player's talent can project below replacement
   (a negative WAR for the FV grade). But the trade value cannot go below zero. You
   do not pay a negative price. You release the player instead.
+- **Free agents have zero team control, hence zero controlled surplus.** An
+  unsigned free agent (`team_id = 0`, `free_agent = 1`) is tagged `ctrl_type = "fa"`
+  with `years_control = 0`, so his stored surplus is $0 and he gets no prospect FV
+  grade — a controlled-asset valuation is meaningless for a player no team controls.
+  His WAR projection is still computed; the offseason open-market board derives a
+  value-based recommended contract from it separately.
 
 This is a deliberate split: the WAR can be negative for the FV grade, but it is
 floored at zero for the dollar value.

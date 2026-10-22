@@ -227,16 +227,20 @@ def test_need_flag_requires_upgrade(q):
 
 def test_market_board_carries_recommended_contract(q):
     """Each FA row has a value-based recommended contract for the cart draw-down
-    (aav/years/total), aav == max(proj_war,0) × $/WAR."""
+    (aav/years/total). The AAV is priced off the player's *average aged WAR
+    across the term* (recommended_contract owns the aging), not his peak — so
+    for an aging FA it lands at or below the flat peak × $/WAR figure, while
+    staying coherent (aav × years == total, non-negative)."""
     from statsplusplus.config.league_config import dollars_per_war
     from statsplusplus.config.league_context import get_league_dir
     dpw = dollars_per_war(get_league_dir(_SLUG))
     frank = {p["name"]: p for p in q.get_market_board(TEAM_ID, limit=100)}["Frank Freeagent"]
     assert "rec_aav" in frank and "rec_years" in frank and "rec_total" in frank
-    expected_aav = round(max(frank["proj_war"] or 0, 0) * dpw)
-    assert frank["rec_aav"] == expected_aav
+    # Term-average aging can only shave value off the year-one projection for a
+    # player at/past peak, never inflate it above the flat peak estimate.
+    peak_aav = round(max(frank["proj_war"] or 0, 0) * dpw)
+    assert 0 <= frank["rec_aav"] <= peak_aav
     assert frank["rec_total"] == frank["rec_aav"] * frank["rec_years"]
-    assert frank["rec_aav"] >= 0
 
 
 # ---------------------------------------------------------------------------

@@ -855,10 +855,12 @@ def get_market_board(team_id, limit=60):
         # (shared compute_player_value; single source of truth).
         proj_war = _proj_next_war(conn, r[0], r[2], bucket, comp, r[4], r[5],
                                   r[11], dpw, min_sal, weights)
-        # Recommended contract — a simple value-based cost estimate the FA cart
-        # draws down against fa_budget (aav). Not the player's real demand.
+        # Recommended contract — a value-based cost estimate the FA cart draws
+        # down against fa_budget (aav). Priced off average aged WAR across the
+        # term (recommended_contract owns the aging), so pass peak_war + bucket
+        # rather than the already-aged next-season figure. Not the real demand.
         from statsplusplus.config.finance_settings import recommended_contract
-        rec = recommended_contract(proj_war, dpw, r[2], min_sal)
+        rec = recommended_contract(r[5], dpw, r[2], min_sal, bucket=bucket, weights=weights)
         out.append({
             "pid": r[0], "name": r[1], "age": r[2],
             "pos": pos,

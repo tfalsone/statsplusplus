@@ -4,6 +4,81 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 102 (2026-10-19)
+
+### Free agents no longer valued as cost-controlled prospects (`src/statsplusplus/data/fv_calc.py`)
+
+Fixed a valuation bug (reported in vMLB): free agents were showing pre-arbitration
+surplus projections and prospect FV grades. A veteran free agent like Jeff Miller
+(29, 3,300+ career AB, unsigned) read on the player page as a cheap, cost-controlled
+youngster with a $53M surplus and an FV 50.
+
+Root cause: `fv_calc` never consulted `free_agent` status. A free agent
+(`team_id = 0`, `free_agent = 1`) has **zero years of team control** — he is an
+unsigned player on the open market, not a farm-system prospect and not a controlled
+asset. But the control-estimation logic defaulted any player with no career MLB
+stats *in this DB* + no active contract to `pre-arb` / 6-year control, and the FV
+loop graded every non-MLB-level player below the rookie-stat threshold as a prospect.
+Because most free agents have no in-league career-stat rows (their MLB history lives
+in prior leagues/seasons not pulled), the whole FA pool fell through to `pre-arb` with
+an FV grade and a large phantom surplus.
+
+Fix (both in `fv_calc`):
+- Threaded `players.free_agent` into `RATINGS_SQL`.
+- **FV loop:** free agents are skipped — no prospect FV grade for an unsigned player.
+- **Surplus pass:** free agents are tagged `ctrl_type = "fa"`, `years_control = 0`,
+  which yields a surplus of $0 (you can't acquire control years you don't have).
+  `peak_war` / composite / ceiling are still computed, so the offseason open-market
+  board (`get_market_board`) — which already requires in-league stats and computes
+  its own value-based recommended contract — is unaffected.
+
+The fix is precisely scoped to genuinely unsigned players (`free_agent=1 AND team_id=0`):
+no rostered player is suppressed, and non-FA MLB players / prospects are unchanged.
+Verified across all three local leagues (vMLB/eMLB/PPL): every free agent now has no
+FV grade and no controlled surplus. FV/surplus-only change (composite/ceiling
+untouched), so a plain `fv_calc` re-run applies it; it also self-heals on each
+league's next refresh. Regression test: `tests/test_fv_calc_free_agents.py`. Full
+suite green (984 passed / 1 skipped).
+
+### Free-agent year-by-year value projection on the player page (`web/player_queries.py`, `web/templates/player.html`)
+
+The player-page Surplus Projection panel now shows a full year-by-year projection
+over the proposed recommended contract for free agents, not just a headline AAV.
+Each contract year gets an aging-adjusted WAR (via the existing value engine run
+as an established MLB player off `peak_war`), a projected market value, the
+recommended AAV as the salary, and a per-year surplus = **projected value − AAV**.
+
+The surplus deliberately bypasses the engine's development / certainty / scarcity
+multipliers — those are controlled-asset *trade-value* risk adjustments that don't
+apply to signing a player at market price (and were zeroing the rows for a
+low-ceiling corner bat via `scarcity = 0`). The total is the true signed net over
+the deal and can be negative — an overpay is the whole signal for an aging FA. A
+one-line caption clarifies that the Salary column is the recommended AAV, not a
+known contract. Web-layer display change; no pipeline re-run.
+
+### Recommended FA contract priced off average aged WAR, not peak (`src/statsplusplus/config/finance_settings.py`)
+
+`recommended_contract` priced the AAV off a player's *peak* WAR with no aging, then
+set a length by age. For a player already at/past peak this systematically overpaid:
+a 32-yo 2.4-WAR 2B (Estiven Machado) got a $26.7M AAV against a real in-game ask of
+$16M, and the year-by-year projection showed value below that AAV every year.
+
+Fix: when a `bucket` is supplied, `recommended_contract` now ages the (peak) input
+WAR across the chosen term and prices the AAV off the **term-average aged WAR ×
+$/WAR** (floored at `min_sal`) — you pay for what the player will produce on the deal,
+not a peak he won't reach again. Without a bucket it falls back to the flat peak
+estimate (back-compat). All four runtime callers updated to pass `bucket` + `weights`
+(two player-page sites, the FA market board, the FA cart): for established FAs the
+market board's next-season `proj_war` equals `peak_war × aging_mult(age)` exactly, so
+passing `peak_war + bucket` unifies the aging in one place without moving the board.
+Machado now recommends 3yr/$19.2M AAV (per-year surplus straddling zero); the residual
+gap vs the $16M ask is the market-tax/demand side the API doesn't expose (tracked under
+"recommended contract refinement"). Regression tests in `tests/test_finance_settings.py`
+(aging path matches the explicit term-average) and an updated market-board assertion.
+Full suite green (986 passed / 1 skipped).
+
+---
+
 ## Session 101 (2026-10-18)
 
 Offseason arbitration-board correctness cluster (three confirmed bugs), HR/FB%

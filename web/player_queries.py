@@ -1546,7 +1546,9 @@ def get_player(pid):
                 if is_free_agent:
                     from statsplusplus.config.finance_settings import recommended_contract as _rec_fn
                     _pw = (_pe["peak_war"] if _pe else None)
-                    surplus_detail["recommended"] = _rec_fn(_pw, _dpw, age, _lm)
+                    surplus_detail["recommended"] = _rec_fn(
+                        _pw, _dpw, age, _lm,
+                        bucket=valuation.get("bucket", ""), weights=_mw)
         elif valuation.get("type") == "prospect":
             from statsplusplus.evaluation.player_value import compute_player_value as _compute_player_value
             from statsplusplus.evaluation.constants import load_model_weights as _load_mw
@@ -2162,11 +2164,58 @@ def get_player(pid):
             from statsplusplus.config.finance_settings import recommended_contract as _rec_fa
             from statsplusplus.config.league_config import (
                 dollars_per_war as _dpw_fa, league_minimum as _lm_fa)
+            from statsplusplus.evaluation.player_value import compute_player_value as _cpv_fa
+            from statsplusplus.evaluation.constants import load_model_weights as _mw_fa
             _ld_fa = get_cfg().league_dir
-            _rec = _rec_fa(unified_row["peak_war"], _dpw_fa(_ld_fa), age, _lm_fa(_ld_fa))
+            _dpw_v = _dpw_fa(_ld_fa)
+            _lm_v = _lm_fa(_ld_fa)
+            _wt_fa = _mw_fa(_ld_fa)
+            _pw_fa = unified_row["peak_war"]
+            _bkt_fa = unified_row["bucket"] or ""
+            _rec = _rec_fa(_pw_fa, _dpw_v, age, _lm_v, bucket=_bkt_fa, weights=_wt_fa)
             if surplus_detail is None:
                 surplus_detail = {"rows": [], "total": {"base": 0}, "flags": []}
             surplus_detail.setdefault("recommended", _rec)
+
+            # Project WAR/value/surplus over the life of the proposed contract.
+            # An FA has no team control, so there is no arb/pre-arb schedule —
+            # we price every year at the recommended AAV and let the existing
+            # value engine age the player's peak WAR across the deal. The engine
+            # runs as an established MLB player (stat_confidence 1.0 via the
+            # peak_war path), so only the aging curve shapes the yearly WAR.
+            _rec_years = int(_rec.get("years") or 0)
+            _rec_aav = int(_rec.get("aav") or 0)
+            if _rec_years > 0 and not surplus_detail.get("rows"):
+                _cv_fa = _cpv_fa(
+                    fv_continuous=0.0,
+                    bucket=_bkt_fa,
+                    age=age, level="MLB",
+                    composite=unified_row["composite"] or 50,
+                    ceiling=unified_row["ceiling"] or 50,
+                    career_pa=1000, career_ip=0.0,  # force full stat confidence
+                    stat_war=_pw_fa,
+                    years_control=_rec_years,
+                    salaries=[_rec_aav] * _rec_years,
+                    dpw=_dpw_v, min_sal=_lm_v, weights=_wt_fa,
+                )
+                if _cv_fa and _cv_fa.get("breakdown"):
+                    game_year = int(get_cfg().year)
+                    # Surplus for a signing is simply projected value minus the
+                    # AAV we'd pay — NOT the engine's trade-value number, which
+                    # discounts for development/certainty/scarcity (controlled-
+                    # asset risk adjustments that don't apply to signing an FA at
+                    # market price). We reuse the engine's WAR aging + market
+                    # value, then recompute surplus = value − salary per year.
+                    _rows_fa = [
+                        {"year": game_year + b["control_year"] - 1,
+                         "age": b["player_age"], "war": round(b["war"], 1),
+                         "value": b["market_value"], "salary": b["salary"],
+                         "surplus": b["market_value"] - b["salary"]}
+                        for b in _cv_fa["breakdown"]
+                    ]
+                    surplus_detail["rows"] = _rows_fa
+                    surplus_detail["total"] = {"base": sum(r["surplus"] for r in _rows_fa)}
+                    surplus_detail["fa_projection"] = True
         except Exception:
             pass
 

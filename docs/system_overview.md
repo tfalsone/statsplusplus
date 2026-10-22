@@ -1,7 +1,7 @@
 # EMLB Analytics Platform — System Overview
 
 > **Status:** Living · **Owns:** architecture, data flow, DB tables, routes, query functions, design decisions
-> **Writing standard:** prose · **Last verified against code:** Session 101
+> **Writing standard:** prose · **Last verified against code:** Session 102
 
 ## Purpose
 
@@ -131,12 +131,15 @@ for free agents" (`fa_budget`). The standalone budget panel was removed (Session
 draw-down happens. The FA cart draws down from `fa_budget`
 (`finance_settings.available_for_fa`, pure). Each FA row carries a
 **recommended contract** (`finance_settings.recommended_contract` — value-based
-`aav = max(proj_war × $/WAR, min_salary)`, age-curve length; a cost *estimate*,
-not the player's demand, which the API doesn't expose). The same recommended
-contract shows on the **player page** Surplus Projection panel for free agents
-(single source of truth). A **localStorage per-league
-targets cart** (`spp_fa_targets_<slug>`) draws down `fa_budget` by each target's
-AAV (single-offseason money), with per-target AAV/years override. Endpoints:
+`aav = max(avg_aged_war × $/WAR, min_salary)`, where the peak WAR is aged across
+the chosen term so an aging FA is priced for what he'll produce on the deal, not a
+peak he won't reach again; age-curve length; a cost *estimate*, not the player's
+demand, which the API doesn't expose). The same recommended contract shows on the
+**player page** Surplus Projection panel for free agents, alongside a per-year
+WAR/value/surplus projection over the proposed deal (single source of truth). A
+**localStorage per-league targets cart** (`spp_fa_targets_<slug>`) draws down
+`fa_budget` by each target's AAV (single-offseason money), with per-target
+AAV/years override. Endpoints:
 `GET`/`POST /api/finance-settings` (shared `finance_payload`). The
 pipeline-aware length / market-tax refinement of the estimate and a needs-first
 positional-grid front door are deferred.

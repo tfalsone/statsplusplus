@@ -28,6 +28,7 @@ LEVEL_INT_LABEL = {0: "Draft", 1: "MLB", 2: "AAA", 3: "AA", 4: "A", 5: "A-Short"
 RATINGS_SQL = """
     SELECT r.player_id AS ID,
            p.name AS Name, p.age AS Age, p.team_id, p.parent_team_id, p.organization_id, p.level, p.pos, p.role,
+           p.free_agent AS free_agent,
            r.ovr AS Ovr, r.pot AS Pot,
            r.composite_score, r.ceiling_score, r.secondary_composite, r.tool_only_score AS ToolOnly,
            r.cntct AS Cntct, r.gap AS Gap, r.pow AS Pow, r.eye AS Eye, r.ks AS Ks,
@@ -210,6 +211,15 @@ def run(league_dir: Path | None = None) -> None:
 
         # Skip foreign/independent league players
         if str(level) in ("7", "8"):
+            continue
+
+        # Free agents are not prospects. A free agent (team_id=0, free_agent=1)
+        # is an unsigned player on the open market, not a farm-system prospect,
+        # so he gets no prospect FV grade. (A genuinely young FA prospect still
+        # surfaces on the open-market board, which computes its own projection.)
+        # Without this, veteran FAs with no career stats in this DB fell into the
+        # minor-leaguer branch below and were graded as prospects.
+        if p.get("free_agent") and (p.get("team_id") or 0) == 0:
             continue
 
         if int(level) == 1:
@@ -581,7 +591,14 @@ def _compute_and_store_player_values(
         # Estimate control period
         ab = career_ab.get(pid, 0) or 0
         ip_career = career_ip.get(pid, 0) or 0
-        if ab < 130 and ip_career < 50:
+        if p.get("free_agent") and (p.get("team_id") or 0) == 0:
+            # Free agent: unsigned, zero years of team control. A controlled-asset
+            # surplus projection is meaningless for an FA (you can't acquire the
+            # control years), so he gets no surplus here. The open-market board
+            # (get_market_board) computes its own value-based cost estimate.
+            years_ctrl = 0
+            ctrl_type = "fa"
+        elif ab < 130 and ip_career < 50:
             years_ctrl = 6
             ctrl_type = "pre-arb"
         else:

@@ -493,6 +493,12 @@
     </span>
   </div>
   {% endif %}
+  {% if p.surplus_detail.fa_projection %}
+  <p style="margin:4px 0 2px; font-size:11px; color:var(--text-dim)">
+    Projected over the proposed deal — Salary is the recommended AAV, Surplus is
+    value above that price (what the team gains if he signs here and ages as modeled).
+  </p>
+  {% endif %}
   {% if p.surplus_detail.rows %}
   <table>
     <thead><tr><th>{% if p.surplus_detail.discount_note %}Year (est.){% else %}Year{% endif %}</th><th>Age</th><th>WAR</th><th>Value</th><th>Salary</th><th>Surplus</th></tr></thead>
