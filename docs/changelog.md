@@ -4,6 +4,24 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## v1.21.1 (2026-10-23) — CI test-hermeticity fix
+
+Patch release. No production-code or behavior change; the v1.21.0 release zip was
+unaffected and users did not need to act.
+
+The five render-cache tests added in v1.21.0 (`tests/test_ratings_reexport.py`)
+called `client._get()`, which builds its URL via `_base_url()` → `_resolve_creds()`
+and **raises `RuntimeError: StatsPlus credentials not configured`** in a
+credential-less environment. They passed locally (creds resolvable from
+`app_config.json`/env) but failed on **all four** Python legs in CI's hermetic
+`pip install -e ".[dev]"` run. The `_count_fetch` test helper patched `_fetch` but
+not `_resolve_creds` — unlike the render-pacing tests, which stub both. Fix: the
+helper now also stubs `_resolve_creds`, making the tests independent of any local
+configuration. Reproduced and verified in a clean-checkout fresh-venv (CI-equivalent)
+run: 1003 passed, 1 skipped.
+
+---
+
 ## Session 103 (2026-10-22)
 
 ### Refresh reliability + speed: timeout, render-payload cache, offseason skips, per-league lock (`src/statsplusplus/client/statsplus.py`, `src/statsplusplus/data/refresh.py`)

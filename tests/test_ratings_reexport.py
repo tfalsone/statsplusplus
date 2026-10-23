@@ -153,7 +153,14 @@ def test_persistent_stall_raises_after_retries(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def _count_fetch(monkeypatch):
-    """Patch _fetch to count calls and return a stable payload per URL."""
+    """Patch _fetch to count calls and return a stable payload per URL.
+
+    Also stubs credential resolution: _get() builds its URL via _base_url() ->
+    _resolve_creds(), which raises RuntimeError when no credentials are
+    configured (exactly the hermetic CI environment). Stubbing it keeps these
+    tests independent of any local app_config.json / env / .env, matching the
+    render-pacing tests above.
+    """
     calls = {"n": 0, "urls": []}
 
     def fake_fetch(url, _retries=cl._RATE_LIMIT_MAX_RETRIES):
@@ -161,6 +168,7 @@ def _count_fetch(monkeypatch):
         calls["urls"].append(url)
         return f"payload::{url}"
 
+    monkeypatch.setattr(cl, "_resolve_creds", lambda: ("base", "cookie", "tok"))
     monkeypatch.setattr(cl, "_fetch", fake_fetch)
     return calls
 
