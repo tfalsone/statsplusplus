@@ -381,6 +381,15 @@ CREATE TABLE IF NOT EXISTS league_meta (
 -- league_id NULL and would otherwise leak into "MLB". Scope to primary-league
 -- players via league_meta. Backward compatible: when no primary_league_id is
 -- set (single-top-league DBs), the NOT EXISTS branch makes this a no-op.
+--
+-- The player_league_id allow-list is {NULL, 0, primary}: NULL = older/single-
+-- league data where the field isn't populated; 0 = the API's free-agent/retired
+-- sentinel (an unsigned player's league id is 0, NOT the league he last played
+-- in) — without it the ENTIRE domestic free-agent pool is dropped from every
+-- mlb_* view, since every FA carries player_league_id 0. Rostered foreign-league
+-- players keep their real non-zero league id (e.g. NPB = 228) and stay excluded;
+-- a foreign player who becomes a FA (id → 0) is still excluded by the
+-- league_id IS NULL stat check (he has no stats in our top-level league).
 CREATE VIEW IF NOT EXISTS mlb_batting_stats AS
     SELECT b.* FROM batting_stats b
     WHERE b.league_id IS NULL
@@ -389,6 +398,7 @@ CREATE VIEW IF NOT EXISTS mlb_batting_stats AS
         OR b.player_id IN (
             SELECT p.player_id FROM players p
             WHERE p.player_league_id IS NULL
+               OR p.player_league_id = 0
                OR p.player_league_id = (SELECT primary_league_id FROM league_meta WHERE id = 1)
         )
       );
@@ -401,6 +411,7 @@ CREATE VIEW IF NOT EXISTS mlb_pitching_stats AS
         OR ps.player_id IN (
             SELECT p.player_id FROM players p
             WHERE p.player_league_id IS NULL
+               OR p.player_league_id = 0
                OR p.player_league_id = (SELECT primary_league_id FROM league_meta WHERE id = 1)
         )
       );
@@ -413,6 +424,7 @@ CREATE VIEW IF NOT EXISTS mlb_fielding_stats AS
         OR fs.player_id IN (
             SELECT p.player_id FROM players p
             WHERE p.player_league_id IS NULL
+               OR p.player_league_id = 0
                OR p.player_league_id = (SELECT primary_league_id FROM league_meta WHERE id = 1)
         )
       );
@@ -443,14 +455,17 @@ def primary_league_predicate(primary_league_id, alias: str = "p"):
     - ``primary_league_id is None`` (single-top-league universe / older DB) →
       ``("1=1", [])`` — an always-true no-op, so non-multi-league leagues
       (eMLB/vMLB) are completely unaffected.
-    - Otherwise → keep players whose league id IS the primary OR IS NULL. The
-      NULL allowance preserves backward compat (older data / single-league DBs
-      where the field isn't populated). See task_list: revisit the NULL
-      allowance (a handful of level-1 players with NULL league id slip through).
+    - Otherwise → keep players whose league id IS the primary, IS 0 (the API's
+      free-agent/retired sentinel — an unsigned player's league id is 0, not the
+      league he last played in), OR IS NULL. The NULL allowance preserves
+      backward compat (older data / single-league DBs where the field isn't
+      populated). See task_list: revisit the NULL allowance (a handful of
+      level-1 players with NULL league id slip through).
     """
     if primary_league_id is None:
         return "1=1", []
-    return (f"({alias}.player_league_id = ? OR {alias}.player_league_id IS NULL)",
+    return (f"({alias}.player_league_id = ? OR {alias}.player_league_id = 0 "
+            f"OR {alias}.player_league_id IS NULL)",
             [primary_league_id])
 
 

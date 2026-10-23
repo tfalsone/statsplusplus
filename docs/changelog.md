@@ -4,6 +4,88 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 103 (2026-10-22)
+
+### Refresh reliability + speed: timeout, render-payload cache, offseason skips, per-league lock (`src/statsplusplus/client/statsplus.py`, `src/statsplusplus/data/refresh.py`)
+
+Prompted by two beta-tester reports on one large league (OHBL): a refresh that
+"wasn't refreshing" (the site stayed on a stale snapshot) and a general question
+about why large-league and offseason refreshes are slow.
+
+**Silent-hang fix (the "not refreshing" report).** `_fetch` called
+`urllib.request.urlopen(req)` with **no timeout**, so a stalled render request
+blocked the whole pipeline forever — no error, no log line, no completion, leaving
+the site on the last good snapshot. Every request is now bounded by a
+`_FETCH_TIMEOUT = 180s` socket timeout (above the 62s render-pacing window so a
+legitimately slow render isn't cut off), and a `(TimeoutError, socket.timeout,
+URLError)` catch retries a stalled request like a transient failure instead of
+hanging. `HTTPError` (a `URLError` subclass) is still caught first, so 429s keep
+routing to the existing rate-limit handler. The `tokencheck` call got the same
+guard.
+
+**Render-payload cache (speed).** Only three endpoints are render-paced at the
+account-wide 1/min limit (`/teambatstats`, `/teampitchstats`, `/gamehistory`); every
+other pull is an already-rendered copy and is cheap. The current-year team-stats
+render was being requested in **three** places (`_upsert_team_stats`,
+`_detect_league_structure`, `_refresh_league_averages`), each a fresh paced call for
+the identical payload. A per-refresh render-payload cache (`begin_render_cache()` /
+`clear_render_cache()`, wired into `_get`, keyed on the token-free path+params URL,
+caching ONLY render paths and ONLY while a scope is active) collapses those to **one**
+render and dedups the offseason year-N→N-1 fallback. `refresh_league`'s body is
+wrapped in `begin … try/finally clear` so a stale payload can't bleed into the next
+run.
+
+**Offseason game-history skip.** `_should_skip_game_history(conn, year)` skips the
+current-year game-history render when the season is unplayed (no current-year team
+stats) and stored history already exists. In-season always renders; first refresh
+never skips. Removes one 62s window from offseason runs with no backfill cost.
+
+**`/lgdata` dedup.** The MiLB-stats and standings steps each fetched `/lgdata`
+independently; it's now fetched once and reused, each step tolerating a fetch failure
+on its own.
+
+**Per-league refresh lock.** `acquire_refresh_lock(league_dir, force=False)` /
+`release_refresh_lock` write `<league_dir>/.refresh.lock` (JSON: pid, started_at,
+host) atomically. On live contention it **refuses and exits** with a clear message
+naming the holding PID and start time (the OHBL log showed 5 refreshes stacked
+seconds apart — retries of a wedged run); it **reclaims** a lock whose holder PID is
+dead, that exceeds a 1-hour age ceiling, or when `--force` is passed. Release is
+PID-scoped (a process whose lock was reclaimed never deletes the new holder's). The
+lock wraps the entire pipeline (refresh + calibrate + engine + fv_calc) and lives
+under gitignored `data/<lg>/`. Per-league, not global — OHBL and a second league
+refresh concurrently (they share only the per-account render budget, which already
+paces independently).
+
+**Note on observed speed.** Because the 1/min render limit is **per-account across
+all render endpoints**, the payload cache is near the render-count floor: deduping
+redundant renders frees windows that the next distinct paced call reabsorbs, so
+wall-clock moved modestly. The genuine next lever — pre-warming the paced renders at
+`refresh_league` start so their 62s windows overlap the heavy unpaced work (ratings
+CSV parse, MiLB stats, the calibrate→engine→fv tail that dominates large leagues) —
+is researched and parked in `task_list.md` under Performance & Code Quality.
+
+15 new regression tests (render-cache serving + scope isolation in
+`tests/test_ratings_reexport.py`; game-history-skip SQL predicate + the full lock
+lifecycle — contention refusal, PID-scoped release, dead-PID/stale-age/corrupt
+reclaim, `--force` — in `tests/test_refresh_date_gate.py`). Full hermetic suite:
+1003 passed / 1 skipped.
+
+### Domestic free agents restored to the MLB stat views (`src/statsplusplus/data/db.py`)
+
+Companion to the Session-102 free-agent valuation work. The `mlb_batting_stats` /
+`mlb_pitching_stats` / `mlb_fielding_stats` views and `primary_league_predicate`
+excluded any player whose `player_league_id` wasn't the primary league or NULL — but
+the StatsPlus API reports an unsigned player's league id as **0** (a free-agent/
+retired sentinel, not the league he last played in), so the entire domestic
+free-agent pool was being dropped from every `mlb_*` view. The allow-list is now
+`{NULL, 0, primary}`. Rostered foreign-league players keep their real non-zero id
+(e.g. NPB = 228) and stay excluded; a foreign player who becomes a FA (id → 0) is
+still excluded by the `league_id IS NULL` stat check (he has no stats in our
+top-level league). Backward compatible — single-top-league DBs (eMLB/vMLB) hit the
+NULL/no-op branch and are unaffected.
+
+---
+
 ## Session 102 (2026-10-19)
 
 ### Free agents no longer valued as cost-controlled prospects (`src/statsplusplus/data/fv_calc.py`)
