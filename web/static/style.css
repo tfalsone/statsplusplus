@@ -1692,3 +1692,41 @@ td.stat-bad  { color: var(--red); }
 .h2h-none { color: var(--dim); font-size: 10px; }
 .h2h-matrix tr.highlight td { background: rgba(80, 140, 255, 0.06); }
 .h2h-matrix tr.highlight .h2h-self { background: var(--bg2); }
+
+/* ── Update indicator, footer, What's New modal (Stage 1 update UX) ── */
+.nav-update {
+  color: var(--green) !important;
+  font-weight: 600;
+  border: 1px solid var(--green);
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+.nav-update:hover { background: rgba(78, 204, 163, 0.12); }
+.nav-update.hidden { display: none; }
+
+.app-footer {
+  margin-top: 40px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.app-footer a { color: var(--text-dim); text-decoration: none; }
+.app-footer a:hover { color: var(--text); }
+.app-footer .footer-sep { opacity: 0.5; }
+
+.whats-new-modal {
+  text-align: left;
+  max-width: 460px;
+  white-space: normal;
+}
+.whats-new-modal h2 { font-size: 18px; margin-bottom: 14px; text-align: center; }
+.whats-new-modal .modal-ok { display: block; margin: 18px auto 0; }
+.wn-entry { margin-bottom: 14px; }
+.wn-entry:last-child { margin-bottom: 0; }
+.wn-ver { font-weight: 700; font-size: 13px; margin-bottom: 4px; color: var(--green); }
+.wn-entry ul { margin: 0; padding-left: 18px; }
+.wn-entry li { font-size: 13px; color: var(--text); margin: 4px 0; line-height: 1.45; }

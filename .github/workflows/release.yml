@@ -48,13 +48,22 @@ jobs:
           body: |
             ## Stats++ ${{ env.VERSION }}
 
-            ### Quick Start
+            ### Quick Start (new install)
             1. Download `${{ env.ZIPNAME }}` below
             2. Extract to a folder
             3. Run the launcher:
                - **Windows:** Double-click `start.bat`
                - **Mac/Linux:** Run `./start.sh`
             4. Your browser will open to the onboarding wizard
+
+            ### Updating an existing install
+            Your leagues and settings are preserved — updating only replaces the app's code.
+            1. **Stop the app** (press `Ctrl+C` in the launcher window). This matters on Windows, where running files can't be overwritten.
+            2. **Download `${{ env.ZIPNAME }}`** below.
+            3. **Extract it over your existing install folder** (the one containing `start.sh` / `start.bat`), choosing *replace / merge*. Keeping the same folder is what preserves your `data/`.
+            4. **Re-run the launcher.** It reinstalls the updated code, prunes old files, and relaunches — and prints `Updated: vOLD -> vNEW` so you know it took.
+
+            > Tip: if your unzip tool creates a nested `statsplusplus-${{ env.VERSION }}/` folder, move its contents up so `start.sh`/`start.bat` sits at the top level.
 
             **Requires:** [Python 3.10+](https://www.python.org/downloads/)
           files: ${{ env.ZIPNAME }}

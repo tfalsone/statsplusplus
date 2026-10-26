@@ -35,7 +35,7 @@ APP_CONFIG_PATH: Path = _project_root() / "data" / "app_config.json"
 
 
 def _read_app_config() -> dict[str, str]:
-    """Read the global app config (active league, cookie)."""
+    """Read the global app config (active league, token)."""
     if APP_CONFIG_PATH.exists():
         try:
             data = json.loads(APP_CONFIG_PATH.read_text())
@@ -118,82 +118,14 @@ def _global_league_dir() -> Path:
     return get_league_dir(get_active_league_slug())
 
 
-def get_statsplus_cookie(league_dir: Path | None = None) -> str:
-    """Get the StatsPlus session cookie for a league.
-
-    Priority:
-      1. Per-league state.json (statsplus_cookie key)
-      2. Global app_config.json (legacy single-league installs)
-      3. statsplus/.env file (oldest legacy format)
-
-    Args:
-        league_dir: League data directory. If None, resolves from active league.
-
-    Returns:
-        Cookie string, or empty string if not configured.
-    """
-    if league_dir is None:
-        league_dir = _global_league_dir()
-    # Per-league cookie
-    state_path = league_dir / "config" / "state.json"
-    if state_path.exists():
-        try:
-            state = json.loads(state_path.read_text())
-            cookie = str(state.get("statsplus_cookie", ""))
-            if cookie:
-                return cookie
-        except (json.JSONDecodeError, OSError):
-            pass
-    # Global fallback
-    cfg = _read_app_config()
-    cookie = cfg.get("statsplus_cookie", "")
-    if cookie:
-        return str(cookie)
-    # Legacy .env fallback
-    root = _project_root()
-    env_path = root / "statsplus" / ".env"
-    if env_path.exists():
-        try:
-            for line in env_path.read_text().splitlines():
-                if line.startswith("STATSPLUS_COOKIE="):
-                    return line.split("=", 1)[1].strip()
-        except OSError:
-            pass
-    return ""
-
-
-def set_statsplus_cookie(cookie: str, league_dir: Path | None = None) -> None:
-    """Persist the StatsPlus cookie for a specific league.
-
-    Stores in the league's state.json file.
-
-    Args:
-        cookie: Session cookie string.
-        league_dir: Target league directory. If None, uses active league.
-    """
-    if league_dir is None:
-        league_dir = _global_league_dir()
-    config_dir = league_dir / "config"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    state_path = config_dir / "state.json"
-    state: dict[str, object] = {}
-    if state_path.exists():
-        try:
-            state = json.loads(state_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-    state["statsplus_cookie"] = cookie
-    state_path.write_text(json.dumps(state, indent=2) + "\n")
-
-
 def get_statsplus_token(league_dir: Path | None = None) -> str:
     """Get the StatsPlus team API token for a league.
 
     The token is the sanctioned authentication method for scripts/tools
     (see https://wiki.statsplus.net/web-tools/statsplus-api): a per-team token
     from that league's User Settings (Prefs) page on the StatsPlus site, passed
-    as a ``?token=`` query param. Preferred over the session cookie when set;
-    the cookie remains the fallback for leagues that haven't configured a token.
+    as a ``?token=`` query param. It is the only supported auth method —
+    StatsPlus discontinued session-cookie authentication.
 
     Note: StatsPlus tokens expire 90 days after creation. An expired token is
     reported by the API (see the client's content-type guard), and the user
@@ -224,8 +156,7 @@ def get_statsplus_token(league_dir: Path | None = None) -> str:
 def set_statsplus_token(token: str, league_dir: Path | None = None) -> None:
     """Persist the StatsPlus team API token for a specific league.
 
-    Stores in the league's state.json file, same pattern as
-    ``set_statsplus_cookie``.
+    Stores in the league's state.json file.
 
     Args:
         token: Per-team API token string.

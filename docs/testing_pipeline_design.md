@@ -17,7 +17,7 @@ push to and promote between environments. Stats++ doesn't fit that shape:
 - It's a **locally-installed Flask app** (`localhost:5001`), distributed as a
   **release zip** users extract and run via `start.sh` / `start.bat`.
 - There is **no prod environment we control**. "Prod" is the user's machine —
-  their OS, their Python version, their StatsPlus cookie, their league's data
+  their OS, their Python version, their StatsPlus API token, their league's data
   quirks (OVR/POT-less leagues like PPL, different rating scales, sparse data).
 - The **StatsPlus API is a third-party dependency** we don't control and can't
   run repeatable tests against (rate limits, live data, auth).
@@ -63,8 +63,8 @@ smoke tests miss.
 
 ### Stage 4 — "Prod": live-integration canary (manual / scheduled, non-blocking)
 Validates the StatsPlus API **contract** — the thing that broke this week.
-Can't run in public CI (cookie, live third party, rate limits). A scheduled or
-`make canary` job using a real cookie from a secret, hitting the live API
+Can't run in public CI (token, live third party, rate limits). A scheduled or
+`make canary` job using a real token from a secret, hitting the live API
 read-only, asserting: ratings CSV column count is a known format, `/date`
 responds, endpoints return expected shapes. Alerts when the external contract
 drifts *before* a user's refresh silently corrupts data.

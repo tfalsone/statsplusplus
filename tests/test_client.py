@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from statsplusplus.client import statsplus as client
 
-# Every test here hits the real StatsPlus API (needs a configured cookie/token
+# Every test here hits the real StatsPlus API (needs a configured API token
 # and is subject to live rate limits). Marked so CI can deselect with
 # `-m "not live_api"`; run manually as a contract canary.
 pytestmark = pytest.mark.live_api

@@ -1,7 +1,7 @@
 # EMLB Analytics Platform — System Overview
 
 > **Status:** Living · **Owns:** architecture, data flow, DB tables, routes, query functions, design decisions
-> **Writing standard:** prose · **Last verified against code:** Session 102
+> **Writing standard:** prose · **Last verified against code:** Session 104
 
 ## Purpose
 
@@ -65,9 +65,20 @@ fv_calc.py ───────────────────────
                     │  web/app.py (Flask)                                      │
                     │  Reads: all DB tables via queries.py (read-only)         │
                     │  Routes: /, /team/<id>, /league, /player/<id>, /settings, │
-                    │          /offseason (phase-aware, manual toggle)          │
+                    │          /offseason (phase-aware, manual toggle),         │
+                    │          /changelog (version history)                    │
                     └──────────────────────────────────────────────────────────┘
 ```
+
+**In-app update experience (Stage 1):** the nav shows a green "⬆ Update" link and
+a dismissible "What's New" popup when a newer release exists. A single version
+source (`statsplusplus.version.current_version` — source-tree `pyproject.toml`,
+then installed metadata) feeds a cached GitHub-releases check
+(`statsplusplus.updates`, `/api/update-check`, cached ~6h in `app_config.json`).
+The popup surfaces curated highlights from `docs/whats_new.json` for versions newer
+than `updates.last_seen_version` (`/api/whats-new` + `/api/whats-new/dismiss`); a
+`/changelog` page and a site footer show the running version. The one-click
+self-installer is deferred (Stage 2, gated on the external-data-directory refactor).
 
 **Dynamic pages:** `/offseason` is a phase-aware page (behind a manual toggle in
 Settings → Dynamic Pages, stored as `offseason_mode` in `state.json`). A sub-phase

@@ -84,7 +84,7 @@ def test_fetch_sends_user_agent(monkeypatch):
         captured["headers"] = req.headers
         return _FakeResp("ok")
 
-    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "sessionid=x", ""))
+    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "TOK"))
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     body = client._fetch("https://example/test")
     assert body == "ok"
@@ -100,7 +100,7 @@ def test_fetch_retries_on_wait_message(monkeypatch):
         _FakeResp("real-data"),
     ])
 
-    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "sessionid=x", ""))
+    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "TOK"))
     monkeypatch.setattr(urllib.request, "urlopen", lambda req, *a, **k: next(responses))
     monkeypatch.setattr(client.time, "sleep", lambda s: None)
     body = client._fetch("https://example/test")
@@ -117,7 +117,7 @@ def test_fetch_uses_token_as_query_param(monkeypatch):
         captured["headers"] = req.headers
         return _FakeResp("ID,Name\n1,x")
 
-    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "sessionid=x", "TOK123"))
+    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "TOK123"))
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     client._fetch("https://statsplus.net/ppl/api/players")
     assert "token=TOK123" in captured["url"]
@@ -129,7 +129,7 @@ def test_fetch_appends_token_with_existing_query(monkeypatch):
     def fake_urlopen(req, *a, **k):
         fake_urlopen.url = req.full_url
         return _FakeResp("ok", content_type="text/csv")
-    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "", "TOK"))
+    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "TOK"))
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     client._fetch("https://statsplus.net/ppl/api/ratings?year=2034")
     assert "?year=2034&token=TOK" in fake_urlopen.url
@@ -137,7 +137,7 @@ def test_fetch_appends_token_with_existing_query(monkeypatch):
 
 def test_fetch_raises_on_expired_token(monkeypatch):
     """An HTTP-200 'API token has expired' body must raise, not be returned as data."""
-    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "", "TOK"))
+    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "TOK"))
     monkeypatch.setattr(
         urllib.request, "urlopen",
         lambda req, *a, **k: _FakeResp("API token has expired. Log in to refresh.",
@@ -148,7 +148,7 @@ def test_fetch_raises_on_expired_token(monkeypatch):
 
 
 def test_fetch_raises_on_invalid_token(monkeypatch):
-    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "", "BAD"))
+    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "BAD"))
     monkeypatch.setattr(
         urllib.request, "urlopen",
         lambda req, *a, **k: _FakeResp("Invalid or unknown API token",
@@ -161,7 +161,7 @@ def test_fetch_raises_on_invalid_token(monkeypatch):
 def test_csv_content_type_not_treated_as_message(monkeypatch):
     """Real CSV data (text/csv) is returned even if a keyword appears — the
     content-type guard skips message classification for data responses."""
-    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "c", ""))
+    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "c"))
     body = "ID,Note\n1,wait 5 seconds for the throw"
     monkeypatch.setattr(urllib.request, "urlopen",
                         lambda req, *a, **k: _FakeResp(body, content_type="text/csv"))
@@ -171,7 +171,7 @@ def test_csv_content_type_not_treated_as_message(monkeypatch):
 def test_start_ratings_export_raises_on_long_cooldown(monkeypatch):
     """A multi-minute /ratings cooldown surfaces as RateLimitedError rather than
     blocking the refresh for minutes."""
-    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "c", ""))
+    monkeypatch.setattr(client, "_resolve_creds", lambda: ("ppl", "c"))
     monkeypatch.setattr(client, "_base_url", lambda: "https://statsplus.net/ppl/api")
     monkeypatch.setattr(
         urllib.request, "urlopen",

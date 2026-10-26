@@ -55,7 +55,7 @@ Full draft pool with position filters, tool thresholds, simulation, auto-draft l
 
 - Python 3.10+
 - A [StatsPlus](https://statsplus.net/) league with API access
-- Your StatsPlus session cookie (see [Getting Your Cookie](#getting-your-statsplus-cookie) below)
+- Your StatsPlus API token (see [Getting Your StatsPlus API Token](#getting-your-statsplus-api-token) below)
 
 ## Quick Start
 
@@ -102,7 +102,7 @@ The server starts on `http://localhost:5001`. You'll be redirected to the onboar
 
 The wizard walks you through:
 
-1. **Connect** — Paste your StatsPlus session cookie and league slug (e.g. `emlb`, `vmlb`)
+1. **Connect** — Paste your StatsPlus API token and league slug (e.g. `emlb`, `vmlb`)
 2. **Configure** — Select your team, confirm league structure (divisions auto-detected)
 3. **Refresh** — Pull all league data (rosters, stats, ratings, contracts). Takes 2-3 minutes.
 
@@ -146,7 +146,7 @@ statsplusplus/
 │   └── ...                     # Additional CLI tools (see CLI Tools below)
 │
 ├── data/                   # Runtime data (gitignored)
-│   ├── app_config.json         # Active league, session cookie
+│   ├── app_config.json         # Active league, API token
 │   └── <league>/               # Per-league: league.db, config/, history/, reports/
 │
 └── docs/                   # Design docs, analysis guides, changelog
@@ -256,7 +256,7 @@ League data lives in `data/<league>/config/`:
 Global config in `data/app_config.json`:
 
 - **`active_league`** — Which league slug is currently selected
-- **`statsplus_cookie`** — Session cookie for API access
+- **`statsplus_token`** — Per-team API token for API access
 
 ## Tech Stack
 
@@ -271,7 +271,7 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 ## Getting Your StatsPlus API Token
 
-The recommended way to authenticate is with a StatsPlus **API token** — the [sanctioned method for tools](https://wiki.statsplus.net/web-tools/statsplus-api). It's more stable than a session cookie (which expires frequently). To get yours:
+Authenticate with a StatsPlus **API token** — the [sanctioned method for tools](https://wiki.statsplus.net/web-tools/statsplus-api) and the only supported authentication method (StatsPlus discontinued session-cookie auth). To get yours:
 
 1. Log in to [statsplus.net](https://statsplus.net/) and make sure you're linked to your team in the league.
 2. Click **Prefs** (top-right of the page, next to Logout) to open your User Settings page.
@@ -280,26 +280,13 @@ The recommended way to authenticate is with a StatsPlus **API token** — the [s
 
 A token is valid for **one team in one league** — set it separately for each league you manage. Tokens **expire 90 days** after creation; if refreshes start failing with a token error, log in on StatsPlus to refresh your token and paste the new one. The token is stored locally and only sent to the StatsPlus API.
 
-## Getting Your StatsPlus Cookie
-
-If you prefer (or as a fallback), the app also supports authenticating with a browser **session cookie**. To get yours:
-
-1. Log in to [statsplus.net](https://statsplus.net/) in your browser
-2. Open Developer Tools (F12) → Application tab → Cookies → `statsplus.net`
-3. Copy the values for `sessionid` and `csrftoken`
-4. Format as: `sessionid=<value>;csrftoken=<value>`
-
-Paste this into the onboarding wizard when prompted. The cookie is stored locally in `data/app_config.json` and never transmitted anywhere except to the StatsPlus API.
-
-Cookies expire periodically — if refreshes start failing with authentication errors, grab a fresh cookie from your browser.
-
 ## Troubleshooting
 
 **"No module named flask"** — Run `.venv/bin/pip install -e .` from the project root.
 
 **"No module named 'statsplusplus'"** — The package isn't installed. Run `.venv/bin/pip install -e .` from the project root (`pip install -r requirements.txt` alone installs Flask but not the package). The launcher (`start.sh`/`start.bat`) does this automatically.
 
-**Refresh fails or times out** — The StatsPlus API can be slow. Ratings exports in particular may take 45+ seconds. The refresh will retry automatically. If it consistently fails, check that your session cookie is still valid.
+**Refresh fails or times out** — The StatsPlus API can be slow. Ratings exports in particular may take 45+ seconds. The refresh will retry automatically. If it consistently fails, check that your API token is still valid (tokens expire 90 days after creation).
 
 **Empty data after refresh** — Some StatsPlus leagues don't expose minor league stats via the API. MLB-level stats should always populate. Check the DB validation counts in the Settings page.
 

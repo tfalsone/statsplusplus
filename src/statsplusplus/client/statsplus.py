@@ -7,7 +7,7 @@ This module is self-contained: no dependency on DB, config, or evaluation layers
 Credentials are resolved lazily or set explicitly via configure().
 
 Public API:
-    configure(league_url, cookie) -> None
+    configure(league_url, token) -> None
     get_players() -> list[dict]
     get_player_batting_stats(year, pid, split, lid) -> list[dict]
     get_player_pitching_stats(year, pid, split, lid) -> list[dict]
@@ -47,20 +47,15 @@ log = logging.getLogger("statspp.client")
 
 # Deferred credential resolution — no module-level env reads.
 _league_url: Optional[str] = None
-_cookie: Optional[str] = None
 _token: Optional[str] = None
-
-
-class CookieExpiredError(Exception):
-    """Raised when StatsPlus returns a login-required response."""
-    pass
 
 
 class TokenExpiredError(Exception):
     """Raised when StatsPlus reports an expired or invalid API token.
 
     Tokens are valid for 90 days; the user must log in on the StatsPlus site
-    to refresh the token, then update it in Settings.
+    to refresh the token, then update it in Settings. (StatsPlus discontinued
+    session-cookie auth — the per-team API token is the only supported method.)
     """
     pass
 
@@ -73,55 +68,50 @@ class RateLimitedError(Exception):
         super().__init__(message or f"Rate limited — try again in {seconds} seconds.")
 
 
-def configure(league_url: str, cookie: str, token: str = "") -> None:
+def configure(league_url: str, token: str = "") -> None:
     """Set credentials explicitly (used by onboarding, tests, etc.)."""
-    global _league_url, _cookie, _token
+    global _league_url, _token
     _league_url = league_url
-    _cookie = cookie
     _token = token
 
 
-def _resolve_creds() -> tuple[str, str, str]:
+def _resolve_creds() -> tuple[str, str]:
     """Resolve credentials lazily.
 
     Priority: configure() > league_context > environment > .env file.
-    Returns ``(league_url, cookie, token)``. The token is the sanctioned
-    per-team API token (https://wiki.statsplus.net/web-tools/statsplus-api),
-    preferred over the session cookie when set; the cookie remains the fallback.
+    Returns ``(league_url, token)``. The token is the sanctioned per-team API
+    token (https://wiki.statsplus.net/web-tools/statsplus-api) — the only
+    supported auth method since StatsPlus discontinued session-cookie auth.
     """
-    global _league_url, _cookie, _token
-    if _league_url and (_cookie or _token):
-        return _league_url, _cookie or "", _token or ""
+    global _league_url, _token
+    if _league_url and _token:
+        return _league_url, _token
 
     # Try league_context (multi-league path)
     try:
         from statsplusplus.config.league_context import (
-            get_league_dir, get_statsplus_cookie, get_statsplus_token,
+            get_league_dir, get_statsplus_token,
         )
-        cookie = get_statsplus_cookie()
         token = get_statsplus_token()
         league_dir = get_league_dir()
         settings_path = league_dir / "config" / "league_settings.json"
         if settings_path.exists():
             settings = json.loads(settings_path.read_text())
             slug = settings.get("statsplus_slug", "")
-            if slug and (cookie or token):
+            if slug and token:
                 _league_url = str(slug)
-                _cookie = str(cookie)
                 _token = str(token)
-                return _league_url, _cookie, _token
+                return _league_url, _token
     except Exception:
         pass
 
     # Environment variables
     env_url = os.environ.get("STATSPLUS_LEAGUE_URL", "")
-    env_cookie = os.environ.get("STATSPLUS_COOKIE", "")
     env_token = os.environ.get("STATSPLUS_TOKEN", "")
-    if env_url and (env_cookie or env_token):
+    if env_url and env_token:
         _league_url = env_url
-        _cookie = env_cookie
         _token = env_token
-        return _league_url, _cookie, _token
+        return _league_url, _token
 
     # Legacy .env file
     env_path = Path(__file__).parent.parent.parent.parent / "statsplus" / ".env"
@@ -135,19 +125,19 @@ def _resolve_creds() -> tuple[str, str, str]:
         except OSError:
             pass
         _league_url = os.environ.get("STATSPLUS_LEAGUE_URL", "")
-        _cookie = os.environ.get("STATSPLUS_COOKIE", "")
         _token = os.environ.get("STATSPLUS_TOKEN", "")
-        if _league_url and (_cookie or _token):
-            return _league_url, _cookie, _token
+        if _league_url and _token:
+            return _league_url, _token
 
     raise RuntimeError(
-        "StatsPlus credentials not configured. "
-        "Set via configure(), app_config.json, or environment variables."
+        "StatsPlus API token not configured. "
+        "Add your per-team token via Settings, app_config.json, or "
+        "the STATSPLUS_TOKEN environment variable."
     )
 
 
 def _base_url() -> str:
-    slug, _, _ = _resolve_creds()
+    slug, _ = _resolve_creds()
     return f"https://statsplus.net/{slug}/api"
 
 
@@ -225,14 +215,14 @@ _MSG_RATINGS_UPDATING = "ratings are being updated"
 
 
 def _classify_message(body: str) -> str:
-    """Classify an API response body: auth_token / auth_cookie / wait /
-    transient / data. Only documented human messages are recognized; the
-    ratings-poll 'still in progress' body is left as data for the poll loop."""
+    """Classify an API response body: auth_token / wait / transient / data.
+    Only documented human messages are recognized; the ratings-poll 'still in
+    progress' body is left as data for the poll loop. A 'requires login'
+    response now maps to auth_token — session-cookie auth was discontinued, so
+    login-required means the token is missing or invalid."""
     low = body.lower()
-    if _MSG_TOKEN_EXPIRED in low or _MSG_TOKEN_INVALID in low:
+    if _MSG_TOKEN_EXPIRED in low or _MSG_TOKEN_INVALID in low or _MSG_LOGIN_REQUIRED in low:
         return "auth_token"
-    if _MSG_LOGIN_REQUIRED in low:
-        return "auth_cookie"
     if _WAIT_RE.search(body):
         return "wait"
     if _MSG_RATINGS_UPDATING in low:
@@ -242,13 +232,10 @@ def _classify_message(body: str) -> str:
 
 def _fetch(url: str, _retries: int = _RATE_LIMIT_MAX_RETRIES) -> str:
     global _last_render_ts
-    _, cookie, token = _resolve_creds()
+    _, token = _resolve_creds()
     headers = {"Accept": "application/json", "User-Agent": _USER_AGENT}
-    if token:
-        sep = "&" if "?" in url else "?"
-        url = f"{url}{sep}token={token}"
-    else:
-        headers["Cookie"] = cookie
+    sep = "&" if "?" in url else "?"
+    url = f"{url}{sep}token={token}"
     body: str = ""
     is_render = _render_path(url)
     if is_render:
@@ -305,11 +292,9 @@ def _fetch(url: str, _retries: int = _RATE_LIMIT_MAX_RETRIES) -> str:
             decision = _classify_message(body)
             if decision == "auth_token":
                 raise TokenExpiredError(
-                    "StatsPlus API token expired or invalid — log in on the "
-                    "StatsPlus site to refresh it, then update it in Settings.")
-            if decision == "auth_cookie":
-                raise CookieExpiredError(
-                    "StatsPlus session expired — update your cookie in Settings.")
+                    "StatsPlus API token missing, expired, or invalid — log in "
+                    "on the StatsPlus site to get your per-team token, then add "
+                    "it in Settings.")
             if decision == "wait" and attempt < _retries:
                 m = _WAIT_RE.search(body)
                 wait = int(m.group(1)) if m else 30

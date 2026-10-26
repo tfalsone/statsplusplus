@@ -12,6 +12,8 @@ statsplusplus/
 ├── .github/workflows/          # CI (ci.yml — pytest+mypy matrix) + release (release.yml — tag→zip)
 │
 ├── src/statsplusplus/          # Core package (all logic lives here)
+│   ├── version.py                  # Single version source (reads pyproject/metadata) + semver compare
+│   ├── updates.py                  # GitHub update check (cached) + "What's New" highlights gating
 │   ├── models/                     # Typed dataclasses (contracts between layers)
 │   ├── evaluation/                 # Pure computation (no I/O, no global state)
 │   │   ├── composite.py               # Composite scores, tool transforms, defensive scoring (run-space + grade-space fallback)
@@ -29,7 +31,7 @@ statsplusplus/
 │   │   └── constants.py                # All model constants, weight loaders
 │   ├── config/                     # League resolution, ratings normalization
 │   │   ├── league_config.py            # LeagueConfig class, dollars_per_war, league_minimum
-│   │   ├── league_context.py           # Active league resolution, cookie management
+│   │   ├── league_context.py           # Active league resolution, token management
 │   │   ├── finance_settings.py         # Per-league offseason budget pools + available-to-spend calc
 │   │   └── ratings.py                  # norm(), norm_continuous(), norm_floor() (pure, explicit scale)
 │   ├── client/                     # StatsPlus API client

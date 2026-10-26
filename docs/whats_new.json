@@ -1,0 +1,34 @@
+{
+  "_comment": "Curated, user-facing release highlights for the in-app 'What's New' popup and the changelog page's highlights column. Keyed by version (no leading v). Newest entries are shown first; the popup surfaces every entry newer than the user's last-seen version. Tone mirrors the Discord patch notes: short, friendly, one line per highlight. Maintain alongside each release (see the release checklist in .kiro/steering/dev-agent.md). Keep the raw per-session technical detail in docs/changelog.md; this file is the curated highlights only.",
+  "versions": [
+    {
+      "version": "1.21.1",
+      "date": "2026-10-23",
+      "title": "Stability fix",
+      "highlights": [
+        "Internal test-reliability fix — no change to the app itself."
+      ]
+    },
+    {
+      "version": "1.21.0",
+      "date": "2026-10-23",
+      "title": "Faster, more reliable refreshes",
+      "highlights": [
+        "Refreshes no longer hang silently on a stalled request — every pull is now time-bounded and retried.",
+        "Large-league and offseason refreshes are quicker: redundant data renders are cached and skipped.",
+        "A per-league lock prevents overlapping refreshes from stacking up on the same league."
+      ]
+    },
+    {
+      "version": "1.19.0",
+      "date": "2026-10-17",
+      "title": "Hitter evaluation fixes & league analytics",
+      "highlights": [
+        "Hitter grades re-centered on offense — weak-hitting catchers no longer float up and strong-hitting center fielders no longer sink.",
+        "Prospect value now keeps a player's already-developed ability as a floor instead of discounting the whole projection.",
+        "New player-page positional bell curve shows where a player ranks among his position's peers.",
+        "The league Advanced-stats tab adds single-stat distributions and customizable scatter views."
+      ]
+    }
+  ]
+}

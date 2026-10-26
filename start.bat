@@ -39,6 +39,25 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+:: Guard the most common mis-extract: the unzip tool created a nested
+:: statsplusplus-vX.Y.Z\ folder, so the real files sit one level down and the
+:: launcher is running in the wrong place. Give a clear fix instead of a
+:: cryptic "No module named statsplusplus" later.
+if not exist "pyproject.toml" goto :misextract
+if not exist "web\app.py" goto :misextract
+goto :files_ok
+:misextract
+echo.
+echo  [ERROR] Stats++ files aren't where the launcher expects them.
+echo          It looks like the zip may have extracted into a subfolder.
+echo          Move everything from that subfolder up into THIS folder
+echo          (so start.bat sits next to pyproject.toml and the web folder),
+echo          then re-run start.bat.
+echo.
+pause
+exit /b 1
+:files_ok
+
 :: Create virtual environment if it doesn't exist
 if not exist ".venv" (
     echo  Creating virtual environment...
@@ -53,15 +72,35 @@ if not exist ".venv" (
 :: Install/update the package (editable). Installs Flask AND puts the
 :: statsplusplus package (src/ layout) on the path — required, or the app
 :: fails with "No module named 'statsplusplus'".
+::
+:: Version-aware: pip skips reinstalling an editable package it thinks is
+:: already satisfied, so after extracting a new zip the registered metadata can
+:: lag the shipped code. Compare the version pip last registered against the
+:: freshly-extracted pyproject.toml and force a clean reinstall when they differ.
 echo  Checking dependencies...
-.venv\Scripts\pip install -q -e . 2>nul
-if %errorlevel% neq 0 (
-    echo  Installing dependencies...
-    .venv\Scripts\pip install -e .
+set "INSTALLED_VER=none"
+for /f "delims=" %%v in ('.venv\Scripts\python -c "from importlib.metadata import version; print(version('statsplusplus'))" 2^>nul') do set "INSTALLED_VER=%%v"
+set "SHIPPED_VER="
+for /f "tokens=2 delims== " %%v in ('findstr /r /c:"^ *version *=" pyproject.toml') do if not defined SHIPPED_VER set "SHIPPED_VER=%%~v"
+
+if "%INSTALLED_VER%"=="%SHIPPED_VER%" (
+    .venv\Scripts\pip install -q -e . >nul 2>nul
+    echo  Already up to date: v%SHIPPED_VER%
+) else (
+    .venv\Scripts\pip install -e . >"%TEMP%\spp_install.log" 2>&1
     if %errorlevel% neq 0 (
-        echo  [ERROR] Failed to install dependencies.
+        echo.
+        echo  [ERROR] Update install failed. The extracted files may be incomplete.
+        echo          Try re-extracting the release zip over this folder, then re-run.
+        echo          Details: %TEMP%\spp_install.log
+        echo.
         pause
         exit /b 1
+    )
+    if "%INSTALLED_VER%"=="none" (
+        echo  Installed Stats++ v%SHIPPED_VER%.
+    ) else (
+        echo  Updated: v%INSTALLED_VER% -^> v%SHIPPED_VER%
     )
 )
 

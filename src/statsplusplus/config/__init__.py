@@ -9,8 +9,8 @@ Provides:
 from statsplusplus.config.league_context import (
     get_active_league_slug,
     get_league_dir,
-    get_statsplus_cookie,
-    set_statsplus_cookie,
+    get_statsplus_token,
+    set_statsplus_token,
     APP_CONFIG_PATH,
 )
 from statsplusplus.config.ratings import norm, norm_continuous, norm_floor
@@ -18,8 +18,8 @@ from statsplusplus.config.ratings import norm, norm_continuous, norm_floor
 __all__ = [
     "get_active_league_slug",
     "get_league_dir",
-    "get_statsplus_cookie",
-    "set_statsplus_cookie",
+    "get_statsplus_token",
+    "set_statsplus_token",
     "APP_CONFIG_PATH",
     "norm",
     "norm_continuous",

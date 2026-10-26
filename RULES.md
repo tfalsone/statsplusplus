@@ -39,7 +39,7 @@ Each league's data lives in `data/<league>/`:
 | `reports/<year>/` | Published analysis reports |
 | `tmp/` | Intermediate scaffolds (script output for report writing) |
 
-Global config: `data/app_config.json` — active league slug and StatsPlus session cookie.
+Global config: `data/app_config.json` — active league slug and StatsPlus API token.
 
 ---
 

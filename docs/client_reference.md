@@ -1,7 +1,7 @@
 # StatsPlus Client Reference
 
 > **Status:** Living · **Owns:** StatsPlus API client and stored fields (`src/statsplusplus/client/`, `src/statsplusplus/data/refresh.py`)
-> **Writing standard:** prose · **Last verified against code:** Session 95
+> **Writing standard:** prose · **Last verified against code:** Session 104
 
 Python API client at `src/statsplusplus/client/statsplus.py`. Credentials resolved
 from league context (`data/app_config.json` → per-league `state.json`) or explicit
@@ -9,8 +9,7 @@ from league context (`data/app_config.json` → per-league `state.json`) or expl
 
 Import: `from statsplusplus.client import statsplus` (then call `statsplus.get_players()`),
 or import specific helpers: `from statsplusplus.client.statsplus import get_players`.
-The package `__init__` re-exports `configure`, `CookieExpiredError`, `TokenExpiredError`,
-and `RateLimitedError`.
+The package `__init__` re-exports `configure`, `TokenExpiredError`, and `RateLimitedError`.
 
 Wiki source: https://wiki.statsplus.net/web-tools/statsplus-api (last updated 2026-07-14)
 
@@ -18,23 +17,21 @@ Wiki source: https://wiki.statsplus.net/web-tools/statsplus-api (last updated 20
 
 ## Authentication
 
-Two methods, resolved by `_resolve_creds()` per league context:
+The per-team **API token** is the only supported auth method — StatsPlus
+discontinued session-cookie authentication. `configure(league_url, token)` sets it
+explicitly; `_resolve_creds()` otherwise resolves it from league context.
 
-1. **Team token** (preferred) — `?token=XXXX` query parameter from the league's
-   User Settings (Prefs) page on StatsPlus. Valid for one team in one league.
-   Tokens expire 90 days after creation. Stored per league in `state.json`
-   (`statsplus_token`), with a global `app_config.json` fallback.
-2. **Session cookie** (fallback) — `sessionid=<value>;csrftoken=<value>` from the
-   browser. Stored per league in `state.json` (`statsplus_cookie`), global fallback
-   in `app_config.json`.
+**Team token** — `?token=XXXX` query parameter from the league's User Settings
+(Prefs) page on StatsPlus. Valid for one team in one league; expires 90 days after
+creation. Stored per league in `state.json` (`statsplus_token`), with a global
+`app_config.json` fallback.
 
 **Error classes** (raised by `_fetch` via a content-type / human-message guard, and
 re-exported from `statsplusplus.client`):
 
 | Exception | Meaning |
 |---|---|
-| `TokenExpiredError` | The team token is invalid or past its 90-day life. Refresh it on the site. |
-| `CookieExpiredError` | The session cookie expired. Re-copy it from the browser. |
+| `TokenExpiredError` | The token is missing, invalid, or past its 90-day life (also raised for a "login required" response, since cookie auth is gone). Refresh it on the site. |
 | `RateLimitedError` | A rate-limited endpoint (`/ratings`) is in cooldown. Carries the seconds to wait. |
 
 ---
@@ -332,7 +329,7 @@ data = statsplus.get_lgdata()
 ### `get_tradeblock() -> dict`
 
 Returns `{"player_ids": [...]}` — all player IDs currently on the trade block.
-Requires authentication (token or cookie). Refresh stores these in the
+Requires a valid API token. Refresh stores these in the
 `trade_block` table each run.
 
 ```python

@@ -63,7 +63,7 @@ def test_render_paths_are_paced(monkeypatch):
     fake_now = {"t": 1000.0}
     monkeypatch.setattr(cl.time, "monotonic", lambda: fake_now["t"])
     monkeypatch.setattr(cl.time, "sleep", lambda s: (slept.append(s), fake_now.__setitem__("t", fake_now["t"] + s)))
-    monkeypatch.setattr(cl, "_resolve_creds", lambda: ("base", "cookie", "tok"))
+    monkeypatch.setattr(cl, "_resolve_creds", lambda: ("base", "tok"))
 
     class _Resp:
         headers = {"Content-Type": "text/csv"}
@@ -86,7 +86,7 @@ def test_non_render_paths_not_paced(monkeypatch):
     slept = []
     monkeypatch.setattr(cl.time, "monotonic", lambda: 1000.0)
     monkeypatch.setattr(cl.time, "sleep", lambda s: slept.append(s))
-    monkeypatch.setattr(cl, "_resolve_creds", lambda: ("base", "cookie", "tok"))
+    monkeypatch.setattr(cl, "_resolve_creds", lambda: ("base", "tok"))
 
     class _Resp:
         headers = {"Content-Type": "application/json"}
@@ -108,7 +108,7 @@ def test_stalled_request_is_retried_not_fatal(monkeypatch):
     at league averages" bug: urlopen used to be called with no timeout, so a
     slow team-stats render froze the pipeline with no log line and no error."""
     monkeypatch.setattr(cl.time, "sleep", lambda *_: None)
-    monkeypatch.setattr(cl, "_resolve_creds", lambda: ("base", "cookie", "tok"))
+    monkeypatch.setattr(cl, "_resolve_creds", lambda: ("base", "tok"))
 
     class _Resp:
         headers = {"Content-Type": "application/json"}
@@ -137,7 +137,7 @@ def test_persistent_stall_raises_after_retries(monkeypatch):
     """If every attempt stalls, the timeout surfaces as an error after the
     retry budget is exhausted — loud failure, never an infinite hang."""
     monkeypatch.setattr(cl.time, "sleep", lambda *_: None)
-    monkeypatch.setattr(cl, "_resolve_creds", lambda: ("base", "cookie", "tok"))
+    monkeypatch.setattr(cl, "_resolve_creds", lambda: ("base", "tok"))
 
     def always_stall(req, **kw):
         raise TimeoutError("read timed out")
@@ -168,7 +168,7 @@ def _count_fetch(monkeypatch):
         calls["urls"].append(url)
         return f"payload::{url}"
 
-    monkeypatch.setattr(cl, "_resolve_creds", lambda: ("base", "cookie", "tok"))
+    monkeypatch.setattr(cl, "_resolve_creds", lambda: ("base", "tok"))
     monkeypatch.setattr(cl, "_fetch", fake_fetch)
     return calls
 

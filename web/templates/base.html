@@ -38,6 +38,7 @@
         <a href="/league">League</a>
         {% if offseason_mode %}<a href="/offseason" class="nav-offseason">❄ Offseason</a>{% endif %}
         <a href="/settings">Settings</a>
+        <a href="/changelog" id="update-link" class="nav-update hidden" title="A new version is available">⬆ Update</a>
         <div class="nav-search">
           <input id="player-search" type="text" placeholder="Search players…" autocomplete="off" aria-label="Search players">
           <div id="search-results" class="search-dropdown"></div>
@@ -49,19 +50,10 @@
             <span>StatsPlus Session</span>
             <span id="session-status" class="session-status"></span>
           </div>
-          <label class="session-label">API Token <span style="font-weight:400; color:var(--text-dim)">(recommended)</span>
+          <label class="session-label">API Token
             <input id="session-token-input" type="text" class="session-input" placeholder="Paste your team token" spellcheck="false">
           </label>
           <button id="token-save-btn" class="session-save">Save Token</button>
-          <div style="border-top:1px solid var(--border, #333); margin:10px 0 6px"></div>
-          <div style="font-size:11px; color:var(--text-dim); margin-bottom:4px">Session cookie (fallback — used only if no token)</div>
-          <label class="session-label">Session ID
-            <input id="session-id-input" type="text" class="session-input" placeholder="e.g. mr3vtazqsj7k7xa1..." spellcheck="false">
-          </label>
-          <label class="session-label">CSRF Token <span style="font-weight:400; color:var(--text-dim)">(optional)</span>
-            <input id="session-csrf-input" type="text" class="session-input" placeholder="e.g. AsyNfceymN2c..." spellcheck="false">
-          </label>
-          <button id="session-save-btn" class="session-save">Save Cookie</button>
         </div>
       </nav>
     </div>
@@ -81,6 +73,21 @@
     {% endif %}
     {% block content %}{% endblock %}
   </main>
+
+  <footer class="app-footer">
+    <span>Stats<span class="app-pp">++</span></span>
+    <span class="footer-sep">·</span>
+    <a href="/changelog" id="footer-version">v<span id="footer-version-num">…</span></a>
+  </footer>
+
+  <div id="whats-new-modal" class="modal-overlay hidden">
+    <div class="modal whats-new-modal">
+      <h2 id="whats-new-title">What's New</h2>
+      <div id="whats-new-body"></div>
+      <button id="whats-new-ok" class="modal-ok">Got it</button>
+    </div>
+  </div>
+
   {% block scripts %}{% endblock %}
   <script>
   (function() {
@@ -158,10 +165,7 @@
   (function() {
     const btn = document.getElementById('session-btn');
     const panel = document.getElementById('session-panel');
-    const sidInput = document.getElementById('session-id-input');
-    const csrfInput = document.getElementById('session-csrf-input');
     const tokenInput = document.getElementById('session-token-input');
-    const saveBtn = document.getElementById('session-save-btn');
     const tokenSaveBtn = document.getElementById('token-save-btn');
     const statusEl = document.getElementById('session-status');
 
@@ -181,9 +185,7 @@
     });
 
     function loadCurrent() {
-      fetch('/api/session-cookie').then(r => r.json()).then(d => {
-        sidInput.value = d.session_id || '';
-        csrfInput.value = d.csrf_token || '';
+      fetch('/api/session-token').then(r => r.json()).then(d => {
         tokenInput.value = d.token || '';
       });
     }
@@ -196,7 +198,7 @@
         .then(d => {
           if (d.ok) {
             statusEl.className = 'session-status ok';
-            statusEl.textContent = '✓ active' + (d.method ? ' (' + d.method + ')' : '');
+            statusEl.textContent = '✓ active';
           } else {
             statusEl.className = 'session-status expired';
             statusEl.textContent = '✗ ' + (d.error || 'invalid').substring(0, 30);
@@ -207,24 +209,6 @@
           statusEl.textContent = '✗ error';
         });
     }
-
-    saveBtn.addEventListener('click', function() {
-      const sid = sidInput.value.trim();
-      const csrf = csrfInput.value.trim();
-      saveBtn.textContent = 'Saving…';
-      fetch('/api/save-session-cookie', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({session_id: sid, csrf_token: csrf})
-      }).then(r => r.json()).then(d => {
-        saveBtn.textContent = d.ok ? '✓ Saved' : 'Error';
-        setTimeout(() => { saveBtn.textContent = 'Save Cookie'; }, 2000);
-        if (d.ok) verifySession();
-      }).catch(() => {
-        saveBtn.textContent = 'Error';
-        setTimeout(() => { saveBtn.textContent = 'Save Cookie'; }, 2000);
-      });
-    });
 
     tokenSaveBtn.addEventListener('click', function() {
       const token = tokenInput.value.trim();
@@ -475,6 +459,48 @@
   document.addEventListener('click', function() {
     document.querySelectorAll('.nav-dropdown-menu').forEach(function(m) { m.classList.remove('open'); });
   });
+
+  // ── Update check + footer version + What's New popup ──
+  (function() {
+    // Footer version + nav "Update" indicator (cached ~6h server-side).
+    fetch('/api/update-check').then(function(r){ return r.json(); }).then(function(d){
+      var vn = document.getElementById('footer-version-num');
+      if (vn && d.current) vn.textContent = d.current;
+      if (d.update_available) {
+        var link = document.getElementById('update-link');
+        if (link) {
+          link.classList.remove('hidden');
+          if (d.latest) link.title = 'Version ' + d.latest + ' is available (you have ' + d.current + ')';
+        }
+      }
+    }).catch(function(){});
+
+    // "What's New" popup — shows once after a genuine upgrade, then dismisses.
+    var modal = document.getElementById('whats-new-modal');
+    var body = document.getElementById('whats-new-body');
+    var title = document.getElementById('whats-new-title');
+    var ok = document.getElementById('whats-new-ok');
+    fetch('/api/whats-new').then(function(r){ return r.json(); }).then(function(d){
+      if (!d.show || !d.entries || !d.entries.length) return;
+      title.textContent = "What's New in v" + d.current;
+      var html = '';
+      d.entries.forEach(function(e){
+        html += '<div class="wn-entry"><div class="wn-ver">v' + e.version +
+          (e.title ? ' — ' + e.title : '') + '</div><ul>';
+        (e.highlights || []).forEach(function(h){ html += '<li>' + h + '</li>'; });
+        html += '</ul></div>';
+      });
+      body.innerHTML = html;
+      modal.classList.remove('hidden');
+    }).catch(function(){});
+
+    function dismiss() {
+      modal.classList.add('hidden');
+      fetch('/api/whats-new/dismiss', {method:'POST'}).catch(function(){});
+    }
+    if (ok) ok.addEventListener('click', dismiss);
+    modal.addEventListener('click', function(e){ if (e.target === modal) dismiss(); });
+  })();
   </script>
 </body>
 </html>

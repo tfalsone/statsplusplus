@@ -69,6 +69,8 @@ _ROUTES = [
     f"/api/prospect/{PROSPECT_ID}",
     f"/api/player-card/{MLB_HITTER_ID}",
     f"/api/player-percentiles/{MLB_HITTER_ID}",
+    "/api/log",
+    "/changelog",
 ]
 
 
@@ -93,3 +95,19 @@ def test_root_redirects(app_client):
     set_league("_web_ovr")
     resp = client.get("/")
     assert resp.status_code in (200, 302)
+
+
+@pytest.mark.real_web
+def test_log_endpoint_returns_tail_and_path(app_client):
+    """The bug-report log endpoint returns a tail + path, and serves a download."""
+    client, set_league = app_client
+    set_league("_web_ovr")
+    r = client.get("/api/log?lines=10")
+    assert r.status_code == 200
+    j = r.get_json()
+    assert j["ok"] is True
+    assert j["path"].endswith("statspp.log")
+    assert "tail" in j  # may be empty in a fresh test env — shape is what matters
+    # Download path returns either the file (200) or a clean 404 when no log exists.
+    rd = client.get("/api/log?download=1")
+    assert rd.status_code in (200, 404)

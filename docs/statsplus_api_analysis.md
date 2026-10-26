@@ -26,6 +26,12 @@ Two interchangeable ways to identify as a team:
 Stats++ is a script/tool, so the **token is the sanctioned path**; the cookie is
 the browser-session emulation. This confirms the premise of PR #11.
 
+> **Update (Session 101):** StatsPlus discontinued session-cookie authentication,
+> so Stats++ is now **token-only** — the client no longer resolves, stores, or
+> sends a cookie. The browser-session description above is retained for context,
+> but the only path the client exercises is `?token=`. Any "login required"
+> response is treated as a missing/invalid token.
+
 ### Which endpoints require auth (everything else is open)
 
 | Endpoint | Auth required? |
@@ -78,7 +84,7 @@ just the token PR.**
 HTTP-200 plain-text "human messages" include:
 
 - `Request too soon, wait N seconds before requesting again` (rate limit)
-- `This API requires user to be logged in...` (**expired/invalid cookie**)
+- `This API requires user to be logged in...` (now treated as a **missing/invalid token**, since cookie auth is gone)
 - `Invalid or unknown API token`
 - `API token has expired...`
 - `Ratings are not published for this league`

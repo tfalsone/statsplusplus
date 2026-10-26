@@ -14,8 +14,6 @@ from flask import Blueprint, g, jsonify, request, session
 
 from statsplusplus.config.league_context import (
     APP_CONFIG_PATH,
-    get_statsplus_cookie,
-    set_statsplus_cookie,
     get_statsplus_token,
     set_statsplus_token,
 )
@@ -34,6 +32,91 @@ def _get_cfg():
         return g.league_config
     from statsplusplus.config.league_config import LeagueConfig; config = LeagueConfig()
     return config
+
+
+# ── Update check + What's New ──
+
+
+@api_bp.route("/api/update-check")
+def api_update_check():
+    """Report whether a newer release is available (cached ~6h).
+
+    ``?force=1`` bypasses the cache. League-agnostic — safe before onboarding.
+    """
+    from statsplusplus import updates
+    force = request.args.get("force") in ("1", "true", "yes")
+    try:
+        return jsonify(updates.check_for_update(force=force))
+    except Exception as e:
+        log.error("update-check failed: %s", e)
+        # Degrade gracefully — the nav treats a failed check as "unknown".
+        from statsplusplus.version import current_version
+        return jsonify({"current": current_version(), "latest": None,
+                        "update_available": False, "checked_at": None,
+                        "release_url": "https://github.com/tfalsone/statsplusplus/releases/latest"})
+
+
+@api_bp.route("/api/whats-new")
+def api_whats_new():
+    """Return curated highlights for versions newer than the user's last-seen
+    version (for the post-upgrade popup). Shows nothing on a fresh install."""
+    from statsplusplus import updates
+    try:
+        return jsonify(updates.whats_new_unseen())
+    except Exception as e:
+        log.error("whats-new failed: %s", e)
+        from statsplusplus.version import current_version
+        return jsonify({"show": False, "current": current_version(), "entries": []})
+
+
+@api_bp.route("/api/whats-new/dismiss", methods=["POST"])
+def api_whats_new_dismiss():
+    """Mark the current version's What's New as seen so the popup stops showing."""
+    from statsplusplus import updates
+    try:
+        updates.mark_seen()
+        return jsonify({"ok": True})
+    except Exception as e:
+        log.error("whats-new dismiss failed: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+def _log_path():
+    """Resolve the app log file path (data/logs/statspp.log)."""
+    root = Path(__file__).resolve().parent.parent
+    return root / "data" / "logs" / "statspp.log"
+
+
+@api_bp.route("/api/log")
+def api_log():
+    """Return the app log for bug reports.
+
+    Default: a JSON payload with the recent tail (for a copy-to-clipboard button)
+    and the file path. ``?download=1`` serves the full file as a download.
+    ``?lines=N`` controls the tail length (default 400, capped at 5000).
+    """
+    from flask import send_file
+    path = _log_path()
+    if request.args.get("download") in ("1", "true", "yes"):
+        if not path.exists():
+            return jsonify({"ok": False, "error": "No log file yet."}), 404
+        return send_file(str(path), as_attachment=True, download_name="statspp.log",
+                         mimetype="text/plain")
+    lines = request.args.get("lines", default=400, type=int) or 400
+    lines = max(1, min(lines, 5000))
+    if not path.exists():
+        return jsonify({"ok": True, "exists": False, "path": str(path),
+                        "tail": "", "truncated": False})
+    try:
+        # Read the tail without loading a huge file fully into memory.
+        all_lines = path.read_text(errors="replace").splitlines()
+        tail_lines = all_lines[-lines:]
+        truncated = len(all_lines) > len(tail_lines)
+        return jsonify({"ok": True, "exists": True, "path": str(path),
+                        "tail": "\n".join(tail_lines), "truncated": truncated,
+                        "total_lines": len(all_lines)})
+    except OSError as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 # ── Simple data endpoints ──
@@ -466,10 +549,9 @@ def api_draft_picks():
         from statsplusplus.client import statsplus as client
         cfg = _get_cfg()
         slug = cfg.settings.get("statsplus_slug", "")
-        cookie = get_statsplus_cookie(cfg.league_dir)
         token = get_statsplus_token(cfg.league_dir)
-        if slug and (cookie or token):
-            client.configure(slug, cookie, token)
+        if slug and token:
+            client.configure(slug, token)
         raw = client.get_draft()
         picks = [{"pid": d["ID"], "name": d["Player Name"], "team": d["Team"],
                   "tid": d["Team ID"], "pos": d["Position"], "age": d["Age"],
@@ -656,7 +738,7 @@ def api_draft_settings_copy():
 # ── Refresh ──
 
 
-def _run_refresh(slug, league_dir, statsplus_slug, cookie, token=""):
+def _run_refresh(slug, league_dir, statsplus_slug, token=""):
     """Run refresh.py in background thread."""
     _log = get_logger("web")
     _log.info("=== dashboard refresh started (league=%s) ===", slug)
@@ -665,7 +747,7 @@ def _run_refresh(slug, league_dir, statsplus_slug, cookie, token=""):
         from statsplusplus.config.league_config import LeagueConfig
         bg_cfg = LeagueConfig(base_dir=league_dir)
         script = Path(__file__).parent.parent / "src" / "statsplusplus" / "data" / "refresh.py"
-        env = {**os.environ, "STATSPP_LEAGUE": slug, "STATSPLUS_COOKIE": cookie}
+        env = {**os.environ, "STATSPP_LEAGUE": slug}
         if token:
             env["STATSPLUS_TOKEN"] = token
         if statsplus_slug:
@@ -703,10 +785,10 @@ def _run_refresh(slug, league_dir, statsplus_slug, cookie, token=""):
             _log.error("refresh failed (rc=%d):\n%s", result.returncode, err)
             lines = err.splitlines()
             last = lines[-1] if lines else "Unknown error"
-            if "CookieExpiredError" in err or "requires user to be logged in" in err:
-                last = "StatsPlus session expired — update your cookie in Settings."
-            elif "TokenExpiredError" in err or "API token has expired" in err or "Invalid or unknown API token" in err:
-                last = "StatsPlus API token expired or invalid — log in on StatsPlus to refresh it, then update it in Settings."
+            if ("TokenExpiredError" in err or "API token" in err
+                    or "requires user to be logged in" in err):
+                last = ("StatsPlus API token missing, expired, or invalid — log in "
+                        "on StatsPlus to get your per-team token, then add it in Settings.")
             elif "RateLimitedError" in err or "once per 5 minutes" in err or "Request too soon" in err:
                 # Surface the wait time if present.
                 import re as _re
@@ -737,12 +819,11 @@ def refresh():
     slug = g.league_slug
     league_dir = g.league_dir
     statsplus_slug = cfg.settings.get("statsplus_slug", "")
-    cookie = get_statsplus_cookie(league_dir)
     token = get_statsplus_token(league_dir)
     _refresh_status["running"] = True
     _refresh_status["result"] = None
     _refresh_status["message"] = ""
-    threading.Thread(target=_run_refresh, args=(slug, league_dir, statsplus_slug, cookie, token), daemon=True).start()
+    threading.Thread(target=_run_refresh, args=(slug, league_dir, statsplus_slug, token), daemon=True).start()
     return jsonify({"status": "started"})
 
 
@@ -767,47 +848,20 @@ def api_game_date():
         from statsplusplus.client import statsplus as client
         cfg = _get_cfg()
         slug = cfg.settings.get("statsplus_slug", "")
-        cookie = get_statsplus_cookie(cfg.league_dir)
         token = get_statsplus_token(cfg.league_dir)
-        if slug and (cookie or token):
-            client.configure(slug, cookie, token)
+        if slug and token:
+            client.configure(slug, token)
         remote_date = client.get_date().strip()
     except Exception:
         remote_date = None
     return jsonify({"local": local_date, "remote": remote_date})
 
 
-@api_bp.route("/api/session-cookie")
-def api_session_cookie():
-    """Return current session cookie components + API token for the active league."""
-    league_dir = _get_cfg().league_dir
-    cookie = get_statsplus_cookie(league_dir) or ""
-    sid = ""
-    csrf = ""
-    for part in cookie.split(";"):
-        part = part.strip()
-        if part.startswith("sessionid="):
-            sid = part[len("sessionid="):]
-        elif part.startswith("csrftoken="):
-            csrf = part[len("csrftoken="):]
-    token = get_statsplus_token(league_dir) or ""
-    return jsonify({"session_id": sid, "csrf_token": csrf, "token": token})
-
-
-@api_bp.route("/api/save-session-cookie", methods=["POST"])
-def api_save_session_cookie():
-    """Save a new session cookie for the active league."""
-    data = request.get_json(silent=True) or {}
-    sid = data.get("session_id", "").strip()
-    csrf = data.get("csrf_token", "").strip()
-    cookie = f"sessionid={sid}" if sid else ""
-    if cookie and csrf:
-        cookie += f";csrftoken={csrf}"
-    try:
-        set_statsplus_cookie(cookie, _get_cfg().league_dir)
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
+@api_bp.route("/api/session-token")
+def api_session_token():
+    """Return the API token for the active league (for the Settings/session panel)."""
+    token = get_statsplus_token(_get_cfg().league_dir) or ""
+    return jsonify({"token": token})
 
 
 @api_bp.route("/api/save-token", methods=["POST"])
@@ -826,45 +880,27 @@ def api_save_token():
 def api_test_connection():
     """Test the StatsPlus API connection.
 
-    Accepts either a ``token`` or a ``cookie`` in the JSON body (falling back to
-    the saved credentials). A token is validated via the documented
-    /tokencheck endpoint (returns the team it maps to); a cookie is tested by
-    fetching the game date.
+    Validates the per-team API token via the documented /tokencheck endpoint
+    (returns the team it maps to). Accepts a ``token`` in the JSON body, falling
+    back to the saved token. Session-cookie auth was discontinued by StatsPlus.
     """
     cfg = _get_cfg()
     slug = cfg.settings.get("statsplus_slug", "")
     data = request.get_json(silent=True) or {}
     from statsplusplus.client import statsplus as client
 
-    # Token path (preferred) — validate via /tokencheck.
     token = (data.get("token") or "").strip()
-    if not token and "cookie" not in data:
+    if not token:
         token = get_statsplus_token(cfg.league_dir)
-    if token:
-        ok, detail = client.tokencheck(slug, token)
-        if not ok:
-            return jsonify({"ok": False, "error": f"Token check failed: {detail}"})
-        # Token is valid; also report the game date for a friendly confirmation.
-        try:
-            client.configure(slug, "", token)
-            date = client.get_date()
-        except Exception:
-            date = None
-        return jsonify({"ok": True, "method": "token", "team_id": detail, "game_date": date})
-
-    # Cookie path (fallback).
-    cookie = (data.get("cookie") or "").strip()
-    if not cookie:
-        cookie = get_statsplus_cookie(cfg.league_dir)
-    if not cookie:
-        return jsonify({"ok": False, "error": "No token or cookie configured"})
+    if not token:
+        return jsonify({"ok": False, "error": "No API token configured — add your per-team token."})
+    ok, detail = client.tokencheck(slug, token)
+    if not ok:
+        return jsonify({"ok": False, "error": f"Token check failed: {detail}"})
+    # Token is valid; also report the game date for a friendly confirmation.
     try:
-        client.configure(slug, cookie, "")
-        date = client.get_date()  # cheap, non-rate-limited — do not spend /ratings budget on a test
-        return jsonify({"ok": True, "method": "cookie", "game_date": date})
-    except client.TokenExpiredError:
-        return jsonify({"ok": False, "error": "Token expired or invalid — log in on StatsPlus to refresh it."})
-    except client.CookieExpiredError:
-        return jsonify({"ok": False, "error": "Cookie expired or invalid — see instructions below to get a fresh one."})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)[:200]})
+        client.configure(slug, token)
+        date = client.get_date()
+    except Exception:
+        date = None
+    return jsonify({"ok": True, "method": "token", "team_id": detail, "game_date": date})

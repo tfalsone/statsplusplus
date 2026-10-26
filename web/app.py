@@ -19,7 +19,13 @@ import werkzeug.exceptions
 import queries
 from statsplusplus.config.league_config import LeagueConfig
 from statsplusplus.config.league_context import get_league_dir, get_active_league_slug, APP_CONFIG_PATH
-from statsplusplus.utils.logging import get_logger
+from statsplusplus.utils.logging import get_logger, setup_logging
+
+# Configure file logging so the web app's own errors land in data/logs/statspp.log
+# (previously only CLI refresh/calibrate wrote the file; web request errors went to
+# the console only). This is what makes the Settings "copy log for a bug report"
+# affordance actually capture web bugs. Idempotent — safe if already configured.
+setup_logging(Path(_PROJECT_ROOT) / "data" / "logs")
 
 log = get_logger("web")
 
@@ -56,7 +62,8 @@ except Exception:
 
 _EXEMPT_PREFIXES = ("/settings", "/onboard", "/switch-league", "/refresh",
                     "/static", "/api/test-connection", "/api/game-date",
-                    "/api/wipe-league")
+                    "/api/wipe-league", "/api/update-check", "/api/whats-new",
+                    "/changelog")
 
 
 @app.before_request
@@ -449,6 +456,23 @@ def offseason():
         season_review=season_review,
         phases=phases, current_phase=phase, show=show,
         finance=finance,
+    )
+
+
+@app.route("/changelog")
+def changelog():
+    """Version history — curated per-release highlights."""
+    from statsplusplus import updates
+    from statsplusplus.version import current_version
+    cfg = _get_cfg()
+    return render_template(
+        "changelog.html",
+        breadcrumbs=[{"label": cfg.settings.get("league", "League"), "url": "/league"},
+                     {"label": "Version History", "url": "/changelog"}],
+        versions=updates.all_highlights(),
+        current_version=current_version(),
+        full_changelog_url="https://github.com/tfalsone/statsplusplus/blob/main/docs/changelog.md",
+        release_url="https://github.com/tfalsone/statsplusplus/releases/latest",
     )
 
 

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Version History</h1>
+  <div style="color:var(--text-dim); font-size:13px; margin-top:4px">
+    You're running <strong>v{{ current_version }}</strong>.
+    See the <a href="{{ full_changelog_url }}" target="_blank" rel="noopener">full technical changelog</a> for complete details.
+  </div>
+</div>
+
+<div id="update-callout" class="panel update-callout hidden">
+  <strong>⬆ A new version is available<span id="update-callout-ver"></span>.</strong>
+  Follow the steps below to update.
+</div>
+
+<div class="panel update-howto">
+  <h2>How to update</h2>
+  <p class="howto-intro">Stats++ updates by downloading a new release and re-running the launcher. Your league data, settings, and connection are preserved — updating only replaces the app's code.</p>
+  <ol class="howto-steps">
+    <li><strong>Stop the app.</strong> Close this server (press <code>Ctrl+C</code> in the window running the launcher). This matters on Windows, where running files can't be overwritten.</li>
+    <li><strong>Download the latest release.</strong> Open the <a href="{{ release_url }}" target="_blank" rel="noopener">Releases page</a> and download the <code>statsplusplus-vX.Y.Z.zip</code> under the newest release.</li>
+    <li><strong>Extract it over your existing install folder</strong> — the same folder that contains <code>start.sh</code> / <code>start.bat</code> — and choose <em>replace / merge</em> when prompted. Keeping the same folder is what preserves your <code>data/</code> (leagues, settings).</li>
+    <li><strong>Re-run the launcher</strong> (<code>start.bat</code> on Windows, <code>./start.sh</code> on Mac/Linux). It reinstalls the updated code, cleans up any old files, and relaunches. Your browser reopens to the app.</li>
+  </ol>
+  <p class="howto-note">After relaunching, a “What's New” note confirms the update landed. Tip: if your unzip tool creates a nested <code>statsplusplus-vX.Y.Z/</code> folder, move the contents up into your install folder so <code>start.sh</code>/<code>start.bat</code> sits at the top level.</p>
+</div>
+
+{% if versions %}
+<div class="panel">
+  <div class="changelog-list">
+    {% for v in versions %}
+    <div class="changelog-entry{% if v.version == current_version %} changelog-current{% endif %}">
+      <div class="changelog-head">
+        <span class="changelog-version">v{{ v.version }}</span>
+        {% if v.title %}<span class="changelog-title">{{ v.title }}</span>{% endif %}
+        {% if v.date %}<span class="changelog-date">{{ v.date }}</span>{% endif %}
+        {% if v.version == current_version %}<span class="changelog-badge">current</span>{% endif %}
+      </div>
+      {% if v.highlights %}
+      <ul class="changelog-highlights">
+        {% for h in v.highlights %}<li>{{ h }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<div class="panel">
+  <p style="color:var(--text-dim)">No release highlights available.</p>
+</div>
+{% endif %}
+
+<style>
+.changelog-list { display:flex; flex-direction:column; gap:18px; }
+.changelog-entry { border-left:3px solid var(--border); padding:4px 0 4px 14px; }
+.changelog-entry.changelog-current { border-left-color:var(--accent, #4ecca3); }
+.changelog-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:6px; }
+.changelog-version { font-weight:700; font-size:15px; }
+.changelog-title { font-size:14px; color:var(--text); }
+.changelog-date { font-size:12px; color:var(--text-dim); }
+.changelog-badge { font-size:10px; text-transform:uppercase; letter-spacing:.04em;
+  background:var(--accent, #4ecca3); color:#0a0a0a; border-radius:3px; padding:1px 6px; font-weight:700; }
+.changelog-highlights { margin:0; padding-left:18px; }
+.changelog-highlights li { font-size:13px; color:var(--text-dim); margin:3px 0; line-height:1.45; }
+
+.update-callout { border-left:3px solid var(--green, #4ecca3); font-size:13px; }
+.update-callout.hidden { display:none; }
+.update-howto h2 { font-size:15px; margin-bottom:8px; }
+.howto-intro { font-size:13px; color:var(--text-dim); margin-bottom:12px; line-height:1.5; }
+.howto-steps { margin:0 0 12px; padding-left:20px; }
+.howto-steps li { font-size:13px; margin:7px 0; line-height:1.5; }
+.howto-steps code, .howto-note code { background:var(--bg); border:1px solid var(--border);
+  border-radius:3px; padding:0 4px; font-size:12px; }
+.howto-note { font-size:12px; color:var(--text-dim); line-height:1.5; }
+</style>
+
+<script>
+(function() {
+  fetch('/api/update-check').then(function(r){ return r.json(); }).then(function(d){
+    if (d.update_available) {
+      var c = document.getElementById('update-callout');
+      if (c) {
+        c.classList.remove('hidden');
+        if (d.latest) {
+          var v = document.getElementById('update-callout-ver');
+          if (v) v.textContent = ' (v' + d.latest + ')';
+        }
+      }
+    }
+  }).catch(function(){});
+})();
+</script>
+
+{% endblock %}

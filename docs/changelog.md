@@ -4,6 +4,135 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 105 (2026-10-26) — Token-only auth (cookie support removed)
+
+StatsPlus is discontinuing browser session-cookie authentication in favor of the
+per-team API token, so cookie support is removed from Stats++ entirely. Hard
+removal — token or nothing, no migration heads-up (the token has been the
+sanctioned, recommended method since Session 83). A user with only a saved cookie
+and no token must paste a token in Settings before their next refresh.
+
+**Client (`src/statsplusplus/client/statsplus.py`).** `configure(league_url, token)`
+is now two-arg (was `configure(league_url, cookie, token="")`). `_resolve_creds()`
+returns `(url, token)` and no longer reads `STATSPLUS_COOKIE` or a stored cookie.
+`_fetch` always appends `?token=` and never sets a `Cookie` header; a token is
+required. `CookieExpiredError` is removed — a "login required" plaintext response now
+maps to `TokenExpiredError` (the only remaining auth-failure class), since under
+token-only auth that response means the token is missing or invalid.
+
+**Config (`config/league_context.py`, `config/__init__.py`).** `get_statsplus_cookie`
+/ `set_statsplus_cookie` removed; the token getter/setter are the only credential
+helpers. The `statsplus_cookie` key in `state.json` / `app_config.json` is no longer
+read or written.
+
+**Web (`api_routes.py`, `settings_routes.py`, templates).** Removed the
+`/api/session-cookie` and `/api/save-session-cookie` endpoints and the cookie UI (the
+Session ID / CSRF inputs and "Save Cookie" control in the `base.html` session panel,
+the cookie section in `settings.html`, and the cookie fallback fields in
+`onboard.html`). Test Connection and the onboarding/bootstrap credential copy are
+token-only. The background refresh thread no longer passes a `STATSPLUS_COOKIE` env
+var.
+
+**Docs.** `README.md` (dropped the "Getting Your StatsPlus Cookie" section, token-only
+setup + troubleshooting), `client_reference.md`, `statsplus_api_analysis.md`,
+`testing_pipeline_design.md`, `RULES.md`, `STRUCTURE.md` updated to token-only.
+
+Tests: the `_resolve_creds` stubs in `test_ratings_header.py` / `test_ratings_reexport.py`
+updated to the two-value `(url, token)` shape; no 3-arg `configure` call remains. Full
+hermetic suite 1021 passed / 1 skipped; web smoke 26/26. A codebase-wide search
+confirms no live reference to any removed cookie symbol survives.
+
+---
+
+## Session 104 (2026-10-25) — In-app update experience (Stage 1)
+
+First stage of the backlog item for surfacing updates in the app (the one-click
+self-installer is deferred to Stage 2, gated on the external-data-directory
+refactor — see `task_list.md`). All additive, low-risk, no change to league data
+or evaluation.
+
+**Single version source (`src/statsplusplus/version.py`, `__init__.py`).** Retired
+the hand-maintained `__version__ = "1.0.0"` string (stale vs pyproject's real
+version). `current_version()` now reads the source-tree `pyproject.toml` when
+present (authoritative for the code actually running — avoids a long-lived editable
+install's lagging metadata), falling back to installed package metadata, then
+`0.0.0`. Adds `parse_version` / `is_newer` for semantic comparison (tolerant of a
+leading `v` and pre-release suffixes). `pyproject.toml` ships in the release zip, so
+launcher installs resolve correctly too.
+
+**Background update check (`src/statsplusplus/updates.py`, `/api/update-check`).**
+A GET to the public GitHub Releases API compares the latest tag to the installed
+version, cached ~6h in `app_config.json` (`updates.cache`) so it never hammers the
+API or blocks page loads. Browser-like User-Agent (Cloudflare fronts GitHub and 403s
+the bare urllib UA) and an 8s timeout; any failure degrades to "unknown", never an
+error. The nav shows a green "⬆ Update" link only when a newer release exists.
+
+**"What's New" popup (`/api/whats-new`, `/api/whats-new/dismiss`).** On first page
+load after a genuine upgrade, a dismissible modal shows curated highlights for every
+version newer than the user's last-seen version (tracked in
+`updates.last_seen_version`). A fresh install establishes the baseline silently
+(never pops the whole history). Highlights come from a curated, version-keyed
+`docs/whats_new.json` (Discord-patch-note tone) — the raw per-session technical
+detail stays in this changelog.
+
+**Version history page + footer (`/changelog`, `web/templates/changelog.html`).** A
+new page renders the curated highlights newest-first with the running version marked
+"current" and a link to the full technical changelog on GitHub. The page also carries
+a plain-language **"How to update"** guide (stop the app → download the release zip →
+extract over the install folder → relaunch) with an update-available callout, so a
+user who clicks the "⬆ Update" nav link lands on actionable zip-install steps (the
+download/extract is still manual until the Stage 2 installer). A new site footer
+(first footer in `base.html`) shows the running version linked to `/changelog`.
+`/changelog` and the two read endpoints are exempt from the league-ready redirect so
+they work pre-onboarding.
+
+**Launcher update feedback + guards (`start.sh`, `start.bat`).** The launchers are
+the one component that always runs on an update, so they now (1) compare the version
+pip last registered against the freshly-extracted `pyproject.toml` and **force a
+clean reinstall when they differ** — fixing the case where pip skips reinstalling an
+editable package it thinks is satisfied, leaving `importlib.metadata` reporting the
+old version after a zip swap; (2) print `Updated: vOLD -> vNEW` (or
+`Already up to date: vX.Y.Z`) so the user knows the update landed even if the browser
+never opens; (3) **guard the most common mis-extract** — if `pyproject.toml`/`web/`
+aren't next to the launcher (the unzip tool made a nested
+`statsplusplus-vX.Y.Z/` folder), print a clear "move the files up" fix instead of a
+cryptic `No module named statsplusplus`; (4) fail loudly with a log path on a broken
+install. `statsplusplus.version` gained `installed_version()` (metadata-only, for the
+shipped-vs-installed comparison).
+
+**Settings "About & Updates" section (`web/templates/settings.html`).** Shows the
+running version, a **Check for updates** button (`/api/update-check?force=1`, bypasses
+the ~6h cache) with up-to-date / update-available state, a link to the `/changelog`
+update instructions, a **Copy for bug report** button (copies
+`Stats++ vX.Y.Z · league: <name>`), and **log-sharing affordances** for bug reports —
+**Download log**, **Copy recent log** (tail + version/league header, for a quick
+Discord paste), and **Open log folder** (reuses `/api/open-file-location`). Backed by
+`/api/log` (JSON tail with path + line counts; `?download=1` serves the full file as
+a text attachment; `?lines=N` controls the tail).
+
+**Web app now writes the log file (`web/app.py`, prerequisite for the above).** The
+web app used `get_logger` but never called `setup_logging` with a dir, so web request
+errors went to the console only — `data/logs/statspp.log` captured CLI
+refresh/calibrate runs but not the web bugs a user would report. `web/app.py` now
+calls `setup_logging(data/logs)` at startup (idempotent). Confirmed no credential
+(cookie/token) is ever logged, so the shareable log is safe.
+
+**Release body updating section (`.github/workflows/release.yml`).** The
+auto-generated GitHub release notes now include an "Updating an existing install"
+section (stop → download → extract over the folder → relaunch, with the nested-folder
+tip) alongside the existing new-install Quick Start — catching the user with the steps
+at the moment they download.
+
+Tests: `tests/test_updates.py` (13 — version parsing/comparison incl.
+`installed_version`, cached/forced/stale update check with the network stubbed,
+What's-New first-run baseline / post-upgrade surfacing / up-to-date / dismiss);
+`tests/test_web_smoke.py` adds `/api/log` + `/changelog` to the booted-app route
+coverage and a focused log-endpoint test (tail shape + download). Full hermetic suite
+1021 passed / 1 skipped. (`start.bat` logic mirrors `start.sh`; Windows path is
+write-and-reason — not shell-checkable on Linux.)
+
+---
+
 ## v1.21.1 (2026-10-23) — CI test-hermeticity fix
 
 Patch release. No production-code or behavior change; the v1.21.0 release zip was
