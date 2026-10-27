@@ -101,3 +101,106 @@ def test_free_agent_excluded_from_fv_and_controlled_surplus():
         conn.close()
     finally:
         remove_fixture(SLUG)
+
+
+def _seed_draft_amateur(league_dir: Path) -> None:
+    """Add a draft-eligible amateur: flagged unsigned exactly like a free agent
+    (team_id=0, free_agent=1, level='0') but draft_eligible=1, and with NO MLB
+    career stats. In the pre-draft window OOTP presents the amateur pool this
+    way, and the draft board needs these players graded — so the FA skip must
+    NOT swallow them."""
+    conn = get_connection(league_dir)
+
+    def _ins(table, **cols):
+        keys = ",".join(cols)
+        conn.execute(
+            f"INSERT OR REPLACE INTO {table} ({keys}) "
+            f"VALUES ({','.join('?' * len(cols))})",
+            list(cols.values()),
+        )
+
+    # 18-year-old draft-eligible SS, unsigned (looks like an FA), no pro stats.
+    # pro_service_years=0 is a REAL value (the game tracks his service) — this
+    # is what marks a current amateur apart from a post-draft veteran FA whose
+    # service is blank/NULL.
+    _ins("players", player_id=301, name="Amateur Prospect", age=18,
+         team_id=0, parent_team_id=0, level="0", pos=6, role=0,
+         free_agent=1, draft_eligible=1, pro_service_years=0)
+    _ins("ratings", player_id=301, snapshot_date="2033-04-01",
+         ovr=40, pot=60, composite_score=40, ceiling_score=60, league_id=1,
+         cntct=40, gap=45, pow=50, eye=45, ks=45, speed=60, steal=55,
+         pot_cntct=55, pot_gap=55, pot_pow=60, pot_eye=55, pot_ks=50,
+         c=20, ss=55, second_b=50, third_b=50, first_b=45, lf=45, cf=50, rf=45,
+         pot_ss=60, pot_second_b=55, pot_third_b=55,
+         ofr=48, ofa=50, ofe=50, ifr=55, ifa=55, ife=50, tdp=50,
+         acc="A", wrk_ethic="N", height=183, bats="R", throws="R")
+
+    # Post-draft veteran-FA shape: carries draft_eligible=1 but BLANK pro service
+    # (the game is no longer tracking him as a current amateur). Same unsigned
+    # flags as the amateur above, but he must NOT be graded as a prospect — this
+    # is the cohort the pro_service_years guard exists to exclude.
+    _ins("players", player_id=302, name="Stale Eligible Vet", age=33,
+         team_id=0, parent_team_id=0, level="0", pos=4, role=0,
+         free_agent=1, draft_eligible=1, pro_service_years=None)
+    _ins("ratings", player_id=302, snapshot_date="2033-04-01",
+         ovr=45, pot=45, composite_score=45, ceiling_score=45, league_id=1,
+         cntct=45, gap=45, pow=45, eye=45, ks=45, speed=45, steal=45,
+         pot_cntct=45, pot_gap=45, pot_pow=45, pot_eye=45, pot_ks=45,
+         c=20, ss=45, second_b=48, third_b=45, first_b=45, lf=45, cf=45, rf=45,
+         ofr=48, ofa=50, ofe=50, ifr=48, ifa=48, ife=50, tdp=50,
+         acc="A", wrk_ethic="N", height=183, bats="R", throws="R")
+    conn.commit()
+    conn.close()
+
+
+def test_draft_eligible_amateur_is_graded_not_skipped():
+    """A draft-eligible amateur carries the same unsigned flags as a free agent
+    (team_id=0, free_agent=1) but MUST receive a prospect FV and appear in
+    prospect_fv — otherwise the draft board (which inner-joins prospect_fv)
+    renders empty. Regression for the 'draft sims / team lists return nothing'
+    bug."""
+    league_dir = build_fixture(SLUG, with_ovr=True)
+    try:
+        _seed_draft_amateur(league_dir)
+        fv_calc_run(league_dir)
+
+        conn = get_connection(league_dir)
+        ed = conn.execute("SELECT MAX(eval_date) FROM player_evaluation").fetchone()[0]
+
+        row = conn.execute(
+            "SELECT fv, fv_str, level, surplus, years_control, ctrl_type "
+            "FROM player_evaluation WHERE player_id=301 AND eval_date=?", (ed,),
+        ).fetchone()
+        assert row is not None, "draft amateur missing from player_evaluation"
+        assert row["fv"] is not None, "draft amateur must receive an FV grade"
+        assert row["level"] == "Draft", f"expected level 'Draft', got {row['level']!r}"
+        # Surplus pass must also treat him as a controllable prospect, NOT an FA:
+        # a draft pick comes with a full pre-arb control period, which is what
+        # makes it valuable. An FA-typed row would zero his surplus.
+        assert row["ctrl_type"] != "fa", (
+            f"draft amateur must not be ctrl_type 'fa', got {row['ctrl_type']}"
+        )
+        assert (row["years_control"] or 0) > 0, "draft amateur must have team-control years"
+
+        # Must be visible in the prospect_fv view the draft board joins on.
+        pf = conn.execute(
+            "SELECT fv FROM prospect_fv WHERE player_id=301"
+        ).fetchone()
+        assert pf is not None, "draft amateur did not reach prospect_fv — board would be empty"
+
+        # The blank-service draft_eligible veteran must NOT be graded as a
+        # prospect: no FV grade, and absent from the prospect_fv view.
+        vet = conn.execute(
+            "SELECT fv FROM player_evaluation WHERE player_id=302 AND eval_date=?",
+            (ed,),
+        ).fetchone()
+        assert vet is None or vet["fv"] is None, (
+            "blank-service draft_eligible veteran must not receive an FV grade"
+        )
+        assert conn.execute(
+            "SELECT 1 FROM prospect_fv WHERE player_id=302"
+        ).fetchone() is None, "blank-service veteran leaked into prospect_fv"
+
+        conn.close()
+    finally:
+        remove_fixture(SLUG)

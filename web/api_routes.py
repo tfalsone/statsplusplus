@@ -614,6 +614,8 @@ def api_draft_sim():
         try:
             rows, adp, needs, num_teams, conn = load_board(league_dir)
         except StalePoolError as e:
+            log.warning("draft-sim blocked: stale pool (league=%s): %s | %s",
+                        league_dir, e, getattr(e, "report", {}))
             return jsonify({"error": str(e), "stale_pool": True}), 409
         pick_pos = data.get("pick", 30)
         num_rounds = data.get("rounds", 7)
@@ -636,6 +638,7 @@ def api_draft_sim():
         need_strs = [f"{b}(+{v})" for b, v in sorted(needs.items(), key=lambda x: -x[1])] if needs else []
         return jsonify({"picks": picks_out, "needs": need_strs, "num_teams": num_teams})
     except Exception as e:
+        log.exception("draft-sim failed: %s", e)
         return jsonify({"error": str(e)}), 500
 
 
@@ -657,6 +660,8 @@ def api_draft_upload_list():
         try:
             rows, adp, needs, num_teams, conn = load_board(league_dir)
         except StalePoolError as e:
+            log.warning("draft-upload-list blocked: stale pool (league=%s): %s | %s",
+                        league_dir, e, getattr(e, "report", {}))
             return jsonify({"ok": False, "error": str(e), "stale_pool": True}), 409
 
         if exclude_pids:
@@ -679,6 +684,7 @@ def api_draft_upload_list():
         return jsonify({"ok": True, "count": len(ranked_ids),
                         "path": str(out_path), "preview": preview})
     except Exception as e:
+        log.exception("draft-upload-list failed: %s", e)
         return jsonify({"ok": False, "error": str(e)}), 500
 
 

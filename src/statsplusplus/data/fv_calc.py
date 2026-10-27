@@ -25,10 +25,37 @@ logger = logging.getLogger(__name__)
 LEVEL_INT_KEY = {0: "draft", 2: "aaa", 3: "aa", 4: "a", 5: "a-short", 6: "usl", 8: "intl", 10: "draft", 11: "draft"}
 LEVEL_INT_LABEL = {0: "Draft", 1: "MLB", 2: "AAA", 3: "AA", 4: "A", 5: "A-Short", 6: "Rookie", 8: "International", 10: "College", 11: "HS"}
 
+
+def _is_draft_amateur(p: dict) -> bool:
+    """True if this player is a draft-eligible amateur rather than an
+    open-market free agent.
+
+    In the pre-draft window OOTP presents the amateur draft pool with the exact
+    same unsigned flags as a free agent (``free_agent=1``, ``team_id=0``,
+    ``level=0``), so those alone cannot tell them apart. Two signals do, and
+    both must hold:
+
+      - ``draft_eligible = 1`` — the game flags the player as draft-eligible; and
+      - ``pro_service_years`` is a real value (not blank/NULL) — the game is
+        tracking his professional service, i.e. he is a current amateur. A
+        retired/old free agent that still carries ``draft_eligible`` in a
+        post-draft league has BLANK service and is correctly excluded.
+
+    Validated across eMLB + PPL (pre-draft) and vMLB (post-draft): recalls the
+    full draft-eligible class in the pre-draft leagues and admits none of the
+    post-draft veteran-FA cohort.
+    """
+    if not p.get("draft_eligible"):
+        return False
+    psy = p.get("pro_service_years")
+    return psy is not None and not (isinstance(psy, str) and psy.strip() == "")
+
 RATINGS_SQL = """
     SELECT r.player_id AS ID,
            p.name AS Name, p.age AS Age, p.team_id, p.parent_team_id, p.organization_id, p.level, p.pos, p.role,
            p.free_agent AS free_agent,
+           p.draft_eligible AS draft_eligible,
+           p.pro_service_years AS pro_service_years,
            r.ovr AS Ovr, r.pot AS Pot,
            r.composite_score, r.ceiling_score, r.secondary_composite, r.tool_only_score AS ToolOnly,
            r.cntct AS Cntct, r.gap AS Gap, r.pow AS Pow, r.eye AS Eye, r.ks AS Ks,
@@ -219,7 +246,15 @@ def run(league_dir: Path | None = None) -> None:
         # surfaces on the open-market board, which computes its own projection.)
         # Without this, veteran FAs with no career stats in this DB fell into the
         # minor-leaguer branch below and were graded as prospects.
-        if p.get("free_agent") and (p.get("team_id") or 0) == 0:
+        #
+        # EXCEPTION: draft-eligible amateurs. In the pre-draft window OOTP moves
+        # the amateur draft pool onto level 0 and flags them unsigned
+        # (free_agent=1, team_id=0) — identical to open-market FAs. They ARE
+        # prospects (the draft board needs their FV), so a draft amateur is
+        # exempt from this skip and falls through to the level-0 "Draft" branch.
+        # See _is_draft_amateur for how an amateur is told from a veteran FA.
+        if (p.get("free_agent") and (p.get("team_id") or 0) == 0
+                and not _is_draft_amateur(p)):
             continue
 
         if int(level) == 1:
@@ -591,11 +626,17 @@ def _compute_and_store_player_values(
         # Estimate control period
         ab = career_ab.get(pid, 0) or 0
         ip_career = career_ip.get(pid, 0) or 0
-        if p.get("free_agent") and (p.get("team_id") or 0) == 0:
+        if (p.get("free_agent") and (p.get("team_id") or 0) == 0
+                and not _is_draft_amateur(p)):
             # Free agent: unsigned, zero years of team control. A controlled-asset
             # surplus projection is meaningless for an FA (you can't acquire the
             # control years), so he gets no surplus here. The open-market board
             # (get_market_board) computes its own value-based cost estimate.
+            #
+            # Draft-eligible amateurs are EXEMPT: once drafted and signed they
+            # come with a full pre-arb/arb control period, so their surplus is
+            # real and is exactly what makes a draft pick valuable. They fall
+            # through to the pre-arb branch below (ab/ip are 0 for an amateur).
             years_ctrl = 0
             ctrl_type = "fa"
         elif ab < 130 and ip_career < 50:

@@ -4,7 +4,61 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
-## Session 105 (2026-10-26) — Token-only auth (cookie support removed)
+## Session 106 (2026-10-26) — Draft board fix: eligible amateurs now graded & valued
+
+Draft simulations and team-based auto-draft lists silently returned nothing in the
+pre-draft window — the board came back empty (HTTP 200, zero rows), which rendered
+as a dead button with no error logged anywhere. Root cause: draft-eligible amateurs
+were being dropped from the evaluation pipeline, so the draft board's
+`JOIN prospect_fv` found none of them.
+
+**Root cause (`src/statsplusplus/data/fv_calc.py`).** In the pre-draft window OOTP
+moves the amateur draft pool onto level 0 and flags each player unsigned
+(`free_agent=1`, `team_id=0`) — indistinguishable by those flags alone from an
+open-market free agent. `fv_calc`'s free-agent skip (added so veteran FAs aren't
+graded as prospects) therefore swallowed the entire draft pool: no FV grade, no
+`player_evaluation` surplus row, nothing in the `prospect_fv` view the board joins
+on. A second, independent copy of the same skip in the surplus pass zeroed their
+surplus even once graded (every amateur came back `ctrl_type='fa'`, surplus $0),
+so the board and player page showed draft prospects with no value.
+
+**Fix.** A new `_is_draft_amateur(p)` helper distinguishes a draft amateur from a
+veteran FA by two signals that must both hold: `draft_eligible = 1` AND a non-blank
+`pro_service_years` (the game tracks a current amateur's service, even at 0; a
+retired/old FA that still carries `draft_eligible` in a post-draft league has blank
+service). Both FA skips (the FV pass and the surplus pass) now exempt a draft
+amateur, so he is graded and falls through to the pre-arb branch for a full
+six-year control-period surplus — which is what makes a draft pick valuable. The
+`age <= 25` cap on the `prospect_fv` view is unchanged and still backstops the
+view-facing surfaces.
+
+Validated against three leagues at the `player_evaluation` layer (not just the
+view): eMLB and PPL (pre-draft) recall their full draft-eligible class
+(`prospect_fv` +1670 and +3208, zero removals), while vMLB (post-draft) admits
+none of its 6,229 blank-service `draft_eligible` veterans. Draft sim and list
+regenerate correctly; the top amateur (FV 70) now shows a real control-period
+surplus instead of $0. Low-FV (≤40) amateurs still round to ~$0 surplus, as
+expected for depth prospects.
+
+**Draft endpoint logging (`web/api_routes.py`, `scripts/draft_board.py`).** The two
+draft endpoints (`/api/draft-sim`, `/api/draft-upload-list`) previously swallowed
+every failure into a JSON error with no log line, so a broken draft request left no
+trace. They now `log.warning` a blocked stale-pool 409 (with a `pool_staleness_report`
+diagnostic — resolved/amateur counts, fraction, per-level breakdown) and
+`log.exception` any 500, matching the logging precedent used by the other endpoints.
+
+Tests: `test_fv_calc_free_agents.py` gains a draft-eligible-amateur case (asserts a
+real FV grade, a non-FA control type and team-control years) and a blank-service
+`draft_eligible` veteran case (asserts exclusion), alongside the existing FA
+exclusion. Web smoke 26/26; evaluation/offseason/scripts/queries suites green.
+
+Known follow-up (tabled, see `task_list.md`): the draft board still greys
+prior-draft picks that returned to the pool because the live `get_draft()` API keeps
+returning the previous draft's picks with no draft-cycle field to filter on — a
+stale-API issue, not a client-state one, needing API investigation across a draft
+boundary.
+
+
 
 StatsPlus is discontinuing browser session-cookie authentication in favor of the
 per-team API token, so cookie support is removed from Stats++ entirely. Hard

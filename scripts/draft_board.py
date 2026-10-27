@@ -84,21 +84,40 @@ _AMATEUR_LEVELS = {"0", "10", "11"}
 _POOL_FRESH_MIN_AMATEUR_FRAC = 0.5
 
 
+def pool_staleness_report(conn, pool_ids):
+    """Diagnostic for the stale-pool guard. Returns a dict describing how the
+    uploaded pool resolves against the current DB, so a blocked draft request
+    can log *why* it was flagged (resolved/amateur counts, fraction, levels).
+    """
+    if not pool_ids:
+        return {"total": 0, "resolved": 0, "amateur": 0, "frac": None,
+                "levels": {}, "stale": False, "reason": "empty pool"}
+    sample = pool_ids if len(pool_ids) <= 300 else pool_ids[:300]
+    ph = ",".join("?" * len(sample))
+    rows = conn.execute(
+        f"SELECT level FROM players WHERE player_id IN ({ph})", sample).fetchall()
+    levels = {}
+    for r in rows:
+        lvl = str(r[0])
+        levels[lvl] = levels.get(lvl, 0) + 1
+    if not rows:
+        return {"total": len(sample), "resolved": 0, "amateur": 0, "frac": None,
+                "levels": {}, "stale": True, "reason": "none resolve in this DB"}
+    amateur = sum(c for lvl, c in levels.items() if lvl in _AMATEUR_LEVELS)
+    frac = amateur / len(rows)
+    stale = frac < _POOL_FRESH_MIN_AMATEUR_FRAC
+    return {"total": len(sample), "resolved": len(rows), "amateur": amateur,
+            "frac": round(frac, 3), "levels": levels, "stale": stale,
+            "reason": (f"amateur frac {frac:.2f} < {_POOL_FRESH_MIN_AMATEUR_FRAC}"
+                       if stale else "fresh")}
+
+
 def _pool_is_stale(conn, pool_ids):
     """True if the uploaded pool looks like a *prior* draft's pool — most of its
     players are no longer on amateur levels (they've been drafted). Conservative:
     empty pool → not stale; only flags when clearly so.
     """
-    if not pool_ids:
-        return False
-    sample = pool_ids if len(pool_ids) <= 300 else pool_ids[:300]
-    ph = ",".join("?" * len(sample))
-    rows = conn.execute(
-        f"SELECT level FROM players WHERE player_id IN ({ph})", sample).fetchall()
-    if not rows:
-        return True  # none resolve in this DB — stale/foreign
-    amateur = sum(1 for r in rows if str(r[0]) in _AMATEUR_LEVELS)
-    return (amateur / len(rows)) < _POOL_FRESH_MIN_AMATEUR_FRAC
+    return pool_staleness_report(conn, pool_ids)["stale"]
 
 
 def _query_board(conn, pids):
@@ -135,11 +154,14 @@ def load_board(league_dir=None):
     """
     conn = _connect(league_dir)
     pids = _load_pool_ids(league_dir)
-    if _pool_is_stale(conn, pids):
-        raise StalePoolError(
+    report = pool_staleness_report(conn, pids)
+    if report["stale"]:
+        err = StalePoolError(
             "The uploaded draft pool is from a previous draft (its players have "
             "already been drafted). Upload the current draft-eligible export via "
             "'Upload Pool' to generate an accurate list.")
+        err.report = report  # diagnostic for the web layer to log
+        raise err
     rows = _query_board(conn, pids)
     num_teams = _get_num_teams(league_dir)
     adp = compute_adp(rows, num_teams)
