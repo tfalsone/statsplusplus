@@ -4,6 +4,64 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 107 (2026-11-01) — SIERA fixed: real FanGraphs formula with net ground-ball rate
+
+Our pitcher SIERA did not match the game's and was off by as much as a full run on
+extreme pitchers (e.g. a high-K ground-ball ace). Root cause: the SIERA column was
+never real SIERA — it was a made-up strikeout/walk estimator wearing the SIERA label.
+
+**Root cause.** The old formula used only K% and BB% (plus a stray `+ 0.9` constant)
+and ignored batted balls entirely:
+
+```
+SIERA = 6.145 − 16.986·(K/PA) + 11.434·(BB/PA) + 7.653·(K/PA)² + 6.664·(BB/PA)² + 0.9
+```
+
+SIERA is a *skill-interactive* estimator whose whole premise is that strikeouts,
+walks, and net ground-ball rate combine nonlinearly. The old version dropped the
+ground-ball dimension and all three interaction terms, and every coefficient was
+wrong — so two pitchers with the same K/BB but opposite batted-ball profiles got the
+same number. The formula was also duplicated across four call sites, each free to
+drift.
+
+**Fix.** New shared helper `statsplusplus.utils.sabermetrics.siera()` implements the
+canonical FanGraphs regression (Swartz 2011), regressing on K/PA, BB/PA and net
+ground-ball rate with squared and interaction terms:
+
+```
+SIERA = const − 15.518·(SO/PA) + 9.146·(SO/PA)² + 8.648·(BB/PA) + 27.252·(BB/PA)²
+        − 2.298·(netGB/PA) ∓ 4.920·(netGB/PA)² − 4.036·(SO/PA)·(BB/PA)
+        + 5.155·(SO/PA)·(netGB/PA) + 4.546·(BB/PA)·(netGB/PA)
+```
+
+where `netGB = GB − FB`. StatsPlus reports batted balls in two buckets only (GB and
+FB), where FB is the air-ball bucket including pop-ups — so `netGB = gb − fb` is the
+correct net ground-ball count with no pop-up field being dropped. The netGB² term's
+sign flips with the sign of netGB (−4.920 for ground-ballers, +4.920 for fly-ballers),
+per the published formula. No schema or refresh change was needed: `gb`, `fb` and
+`bf` are already stored.
+
+The single helper now backs all four former call sites (`web/player_queries.py`
+per-row / aggregated-stint / career blocks, and `web/percentiles.py`). SIERA now
+returns a true "undefined" (`None`) when a pitcher has no batted-ball data to form
+netGB, rendering as `-` instead of a fabricated number; the pitcher-percentile pool
+excludes those `None` peers rather than ranking against a fake value.
+
+**Known limitation (model knowledge).** The constant is the published FanGraphs
+baseline (6.145), tuned to a major-league run environment. SIERA reads a few tenths
+high relative to the game's own SIERA, consistent with a run-environment offset in
+the constant rather than a structural error (the ordering and shape now track the
+game, and the large pre-fix divergence on extreme pitchers is gone). Left at 6.145
+by decision; a per-league constant calibration is the lever if the offset ever
+matters.
+
+Tests: new `tests/test_sabermetrics.py` pins the coefficients (ground-baller vs
+fly-baller sign flip), the `None` contracts (no batters faced, no batted-ball data),
+run-ordering, and the constant override. Full hermetic suite green (1028 passed,
+1 skipped).
+
+---
+
 ## Session 106 (2026-10-26) — Draft board fix: eligible amateurs now graded & valued
 
 Draft simulations and team-based auto-draft lists silently returned nothing in the
