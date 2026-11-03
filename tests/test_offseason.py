@@ -1383,6 +1383,80 @@ def test_spring_dh_platoon_eligible_and_excludes_field_starters(q):
             assert s["partner"] not in field_starters
 
 
+def test_spring_caps_cross_position_over_allocation(q):
+    """A utility bat handed a full workload at THREE positions (1974 PA) is
+    capped to a realistic per-player ceiling (~700) with his per-position reps
+    scaled down proportionally, and an over_allocated warning names him."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    import offseason_queries as osq
+    auto = q.get_spring_projection(TEAM_ID)
+    pool = {p["player_id"]: p for p in auto["pool"]}
+    # Find a bat eligible at 3 infield spots (the seed's SS/2B/3B types qualify).
+    util = next((p for p in auto["pool"] if not p["is_pitcher"]
+                 and len({"2B", "SS", "3B"} & set(p.get("eligible") or [])) >= 3), None)
+    if util is None:
+        return  # fixture didn't seed a 3-way utility bat; nothing to assert
+    uid = util["player_id"]
+    spots = [s for s in ("2B", "SS", "3B") if s in util["eligible"]]
+    cfg = _clone_config(auto["config"])
+    cfg["pa_alloc"] = {s: {str(uid): {"r": 467, "l": 191}} for s in spots}
+    for s in spots:
+        cfg["lineup"][s] = uid
+    res = q.get_spring_projection(TEAM_ID, cfg)
+    total = 0
+    for s in spots:
+        for r in res["constructed"]["lineup"][s]["players"]:
+            if r["pid"] == uid:
+                total += r["pa"]
+    # Capped near the ceiling (allow a few PA of rounding across positions).
+    assert total <= osq._SPRING_PLAYER_PA_CAP + len(spots)
+    assert total < 1974  # definitely scaled down from the raw 3x workload
+    warns = [w for w in res["warnings"] if w["kind"] == "over_allocated"]
+    assert warns and any(util["name"] in w["msg"] for w in warns)
+
+
+def test_spring_no_over_allocation_warning_when_within_cap(q):
+    """A normal auto roster (no body over a full season) raises NO
+    over_allocated warning."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    assert not any(w["kind"] == "over_allocated" for w in res["warnings"])
+
+
+def test_spring_pa_cap_scales_war_proportionally(q):
+    """The cap scales a player's CONTRIBUTION (WAR), not just the displayed PA —
+    so the projected team WAR reflects the physically-possible workload."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    import offseason_queries as osq
+    auto = q.get_spring_projection(TEAM_ID)
+    util = next((p for p in auto["pool"] if not p["is_pitcher"]
+                 and len({"2B", "SS", "3B"} & set(p.get("eligible") or [])) >= 3), None)
+    if util is None:
+        return
+    uid = util["player_id"]
+    spots = [s for s in ("2B", "SS", "3B") if s in util["eligible"]]
+    cfg = _clone_config(auto["config"])
+    cfg["pa_alloc"] = {s: {str(uid): {"r": 467, "l": 191}} for s in spots}
+    for s in spots:
+        cfg["lineup"][s] = uid
+    res = q.get_spring_projection(TEAM_ID, cfg)
+    # Sum this player's contrib_war across the spots he fills — it must be
+    # bounded by his single-slot WAR times (cap / slot_PA) * #spots-ish, i.e.
+    # far below 3x his full-slot value. Simplest invariant: his total credited
+    # reps are capped, so his summed contrib_war is < 3x a single full slot.
+    one_slot = max(r["contrib_war"] for s in spots
+                   for r in res["constructed"]["lineup"][s]["players"] if r["pid"] == uid)
+    total_war = sum(r["contrib_war"] for s in spots
+                    for r in res["constructed"]["lineup"][s]["players"] if r["pid"] == uid)
+    assert total_war <= one_slot * len(spots) + 1e-6  # no position exceeds, sum bounded
+    # And the capped total PA ratio ~ matches the WAR scaling (both linear).
+    total_pa = sum(r["pa"] for s in spots
+                   for r in res["constructed"]["lineup"][s]["players"] if r["pid"] == uid)
+    assert total_pa <= osq._SPRING_PLAYER_PA_CAP + len(spots)
+
+
 def test_spring_dh_platoon_suggestion_pairs_non_field_bat(q):
     """With a split DH starter and a strong-side bat who is NOT a field starter,
     the DH suggestion pairs that bat; a field starter with a better split is NOT

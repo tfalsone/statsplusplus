@@ -2062,6 +2062,14 @@ _SPRING_DEFAULT_START_SHARE = 0.75
 _SPRING_SLOT_PA = 658
 _SPRING_PA_VS_RHP = round(_SPRING_SLOT_PA * _SPRING_VS_RHP_FREQ)   # ~467
 _SPRING_PA_VS_LHP = round(_SPRING_SLOT_PA * _SPRING_VS_LHP_FREQ)   # ~191
+# Realistic per-PLAYER PA ceiling across ALL positions in a season. A position's
+# pie is balanced independently, so a multi-position utility man could be
+# allocated (e.g.) 250 PA at 2B + 250 at SS + 250 at 3B = 750 — physically
+# impossible for one body. When a player's total allocated PA exceeds this, his
+# per-position contributions are scaled DOWN proportionally (he plays everywhere,
+# just less) and an over-allocation warning names him + the positions. ~700 is a
+# shade above the single-slot budget (658) — a true everyday+ workload.
+_SPRING_PLAYER_PA_CAP = 700
 
 # Pitcher role → IP share of a staff slot (rotation slot for SP, bullpen for RP).
 _SPRING_PITCHER_ROLE_SHARE = {
@@ -2387,6 +2395,60 @@ def _spring_contributions(pool, config):
             "l_open": max(0, _SPRING_PA_VS_LHP - filled_l),
         }
 
+    # ── Per-player PA cap (prevents cross-position over-allocation) ──
+    # Each position's pie is balanced independently, so one body could be
+    # allocated > a full season of PA across multiple spots (e.g. a utility man
+    # at 2B + SS + 3B). Sum each hitter's TOTAL allocated PA across all
+    # positions; if it exceeds the realistic per-player ceiling, scale his
+    # per-position reps (and the WAR they generate) DOWN proportionally — he
+    # still plays everywhere, just less — so the projection stays physically
+    # possible. Record each capped player for an over-allocation warning.
+    pa_by_pid: dict = {}
+    rows_by_pid: dict = {}
+    for pos, entry in constructed_lineup.items():
+        for r in entry["players"]:
+            pid = r["pid"]
+            pa_by_pid[pid] = pa_by_pid.get(pid, 0) + (r.get("pa", 0) or 0)
+            rows_by_pid.setdefault(pid, []).append((pos, r))
+    overalloc = []
+    for pid, total_pa in pa_by_pid.items():
+        if total_pa <= _SPRING_PLAYER_PA_CAP:
+            continue
+        f = _SPRING_PLAYER_PA_CAP / total_pa
+        positions = [pos for pos, _r in rows_by_pid[pid]]
+        # Scale each of this player's position rows + the PA-pie wedge totals.
+        for pos, r in rows_by_pid[pid]:
+            r["pa_r"] = round((r.get("pa_r", 0) or 0) * f)
+            r["pa_l"] = round((r.get("pa_l", 0) or 0) * f)
+            r["pa"] = r["pa_r"] + r["pa_l"]
+            r["pt_pct"] = round(r["pa"] / _SPRING_SLOT_PA * 100)
+            r["contrib_war"] = round((r.get("contrib_war", 0.0) or 0.0) * f, 3)
+        # Scale every PlayerContribution for this pid by the same factor (WAR is
+        # linear in PA, so this is exactly "played proportionally fewer reps").
+        for c in contribs:
+            if (not c.is_pitcher) and c.player_id == pid:
+                c.war *= f
+        overalloc.append({
+            "pid": pid, "name": by_id[pid]["name"],
+            "total_pa": round(total_pa), "capped_pa": _SPRING_PLAYER_PA_CAP,
+            "positions": positions,
+        })
+    # Recompute each position's pos_war / pa_budget after any scaling.
+    if overalloc:
+        for pos, entry in constructed_lineup.items():
+            rows = entry["players"]
+            entry["pos_war"] = round(sum(r["contrib_war"] for r in rows), 1)
+            filled_r = sum(r.get("pa_r", 0) for r in rows)
+            filled_l = sum(r.get("pa_l", 0) for r in rows)
+            entry["pa_budget"].update({
+                "r_filled": filled_r, "l_filled": filled_l,
+                "r_open": max(0, _SPRING_PA_VS_RHP - filled_r),
+                "l_open": max(0, _SPRING_PA_VS_LHP - filled_l),
+            })
+            # Keep the starter top-level mirror fields in sync with row[0].
+            for k, v in rows[0].items():
+                entry[k] = v
+
     # Pitchers — IP share by role (rotation order 1-5, bullpen role). A per-pid
     # `roles` map in the config overrides the default position in the list.
     roles = config.get("roles") or {}
@@ -2426,7 +2488,7 @@ def _spring_contributions(pool, config):
         "lineup": constructed_lineup, "rotation": constructed_rotation,
         "bullpen": constructed_pen, "bench": bench_view,
     }
-    return contribs, constructed
+    return contribs, constructed, overalloc
 
 
 def _spring_league_mean_war(conn, ed, cfg, pyth_exp):
@@ -2446,7 +2508,7 @@ def _spring_league_mean_war(conn, ed, cfg, pyth_exp):
         if not pool:
             continue
         cfg_auto = _spring_auto_config(pool)
-        contribs, _ = _spring_contributions(pool, cfg_auto)
+        contribs, _, _ = _spring_contributions(pool, cfg_auto)
         totals.append(sum(c.war for c in contribs))
         hits.append(sum(c.war for c in contribs if not c.is_pitcher))
         pits.append(sum(c.war for c in contribs if c.is_pitcher))
@@ -2623,7 +2685,7 @@ def get_spring_projection(team_id, config=None, out_of_options=None):
         config = _spring_auto_config(pool, out_of_options)
     must_expose = config.get("_must_expose", [])
 
-    contribs, constructed = _spring_contributions(pool, config)
+    contribs, constructed, overalloc = _spring_contributions(pool, config)
 
     calib = _spring_calibration(conn, pyth_exp)
     mean_war, mean_hit, mean_pit = _spring_league_mean_war(conn, ed, cfg, pyth_exp)
@@ -2658,7 +2720,7 @@ def get_spring_projection(team_id, config=None, out_of_options=None):
         trial_alloc = dict(config.get("pa_alloc") or {})
         trial_alloc[pos] = sug["pa_alloc"]
         trial["pa_alloc"] = trial_alloc
-        t_contribs, _ = _spring_contributions(pool, trial)
+        t_contribs, _, _ = _spring_contributions(pool, trial)
         t_proj = project_team(t_contribs, calib)
         dwins = round(t_proj.wins - base_wins, 2)
         if dwins > 0.05:   # only worthwhile suggestions
@@ -2680,6 +2742,17 @@ def get_spring_projection(team_id, config=None, out_of_options=None):
             "kind": "no_backup_catcher",
             "msg": "No backup catcher — a C starts only ~67% of games, so you "
                    "must carry a second catcher. Add one to your bench."})
+    # Over-allocation: a player handed more than a full season of PA across
+    # multiple positions. His contributions were scaled down proportionally
+    # (the projection stays honest), but flag it so the GM can rebalance.
+    for oa in overalloc:
+        pos_list = "/".join(oa["positions"])
+        warnings.append({
+            "kind": "over_allocated",
+            "msg": (f"{oa['name']} is allocated {oa['total_pa']} PA across "
+                    f"{pos_list} — more than one player can take. Capped to "
+                    f"{oa['capped_pa']} (reps scaled down proportionally). "
+                    f"Trim his share at one of those spots.")})
     return {
         "projection": dataclasses.asdict(proj),
         "constructed": constructed,

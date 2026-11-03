@@ -149,6 +149,13 @@ re-render). Playing time is a derived PA "pie": a fixed slot budget (~658 PA, 46
 RHP / 191 vs LHP) filled by platoon assignment × realistic start-shares (backup
 catcher required), with per-player PA sliders, conservation (reallocating draws from
 other players), add/remove, and three-way splits. Candidate WAR is slot-adjusted.
+**Per-player PA cap:** because each position's pie is balanced independently, a
+multi-position utility bat could be allocated more than a full season of PA
+across spots; `_spring_contributions` sums each hitter's total PA across all
+positions and, past a realistic ceiling (`_SPRING_PLAYER_PA_CAP` ≈ 700), scales
+his per-position reps and the WAR they generate down proportionally (he still
+plays everywhere, just less) and emits an `over_allocated` warning naming the
+player and positions — so the projected record stays physically possible.
 Out-of-options is a per-player user toggle (not in the API) that forces a must-decide.
 Plans persist per team in `config/spring_plans.json`. Endpoints: `/api/spring-plan`
 (GET/POST/DELETE), `/api/spring-project` (POST). The pool's wOBA stat surfaces the

@@ -90,6 +90,22 @@ this a suggestion could double-roster a fielder). Tests:
 `test_spring_dh_platoon_eligible_and_excludes_field_starters`,
 `test_spring_dh_platoon_suggestion_pairs_non_field_bat`. Full suite 1075 green.
 
+**Per-player PA cap (cross-position over-allocation).** Each position's pie is
+balanced independently, so a multi-position utility bat could be handed more than
+a full season of PA across spots (e.g. 467+191 at each of 2B/SS/3B = 1,974 PA for
+one body) with nothing flagging it — inflating the projection with impossible
+playing time. `_spring_contributions` now sums each hitter's total PA across all
+positions and, past `_SPRING_PLAYER_PA_CAP` (≈700), scales his per-position reps
+AND the WAR they generate down proportionally (WAR is linear in PA, so this is
+exactly "played proportionally fewer reps everywhere"), then emits an
+`over_allocated` warning naming the player + positions. The projected record stays
+physically possible regardless of how the pies are driven. `_spring_contributions`
+now returns `(contribs, constructed, overalloc)`. Tests:
+`test_spring_caps_cross_position_over_allocation`,
+`test_spring_no_over_allocation_warning_when_within_cap`,
+`test_spring_pa_cap_scales_war_proportionally`. Full suite 1078 + 26 web smoke
+green. Display/projection-honesty fix — no eval-model change.
+
 ---
 
 ## Session 108 — Spring Training "Opening Day Builder" + exact stored projected wOBA
