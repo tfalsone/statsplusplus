@@ -7,7 +7,8 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 ## Session 108 (cont.) — Spring platoon redesign, reliever floor, and a capped stat-WAR blend
 
 Follow-on work from the Spring Training builder, driven by hands-on testing of
-the spring page.
+the spring page. **Released as v1.24.0** (the whole Session-108 Spring build-out
++ the stat-WAR-blend and SIERA fixes; first tagged release since v1.22.0).
 
 **Spring pitching: full 26-man roster, role-based pitcher WAR, calibrated staff
 IP.** Three connected fixes from hands-on testing. (1) **26th-spot / roster

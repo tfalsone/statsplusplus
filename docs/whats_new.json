@@ -2,6 +2,20 @@
   "_comment": "Curated, user-facing release highlights for the in-app 'What's New' popup and the changelog page's highlights column. Keyed by version (no leading v). Newest entries are shown first; the popup surfaces every entry newer than the user's last-seen version. Tone mirrors the Discord patch notes: short, friendly, one line per highlight. Maintain alongside each release (see the release checklist in .kiro/steering/dev-agent.md). Keep the raw per-session technical detail in docs/changelog.md; this file is the curated highlights only.",
   "versions": [
     {
+      "version": "1.24.0",
+      "date": "2026-11-03",
+      "title": "Spring Training Opening Day builder",
+      "highlights": [
+        "New Spring Training page: build and stress-test your Opening Day 26-man and see the projected record respond live.",
+        "Projected lineups vs RHP and vs LHP — a real 1-9 batting order (on-base leads off, best hitter 2nd, power at cleanup), with Modern/Traditional and on-base/speed leadoff preferences.",
+        "The roster recommender now auto-platoons: a lefty bat weak vs LHP is correctly benched against lefties.",
+        "Pitching staff fixed: a full 8-man bullpen, an 'add arm' control, realistic per-league innings, and relievers valued in a relief role rather than as starters.",
+        "Handedness at a glance: RHP/LHP badges on pitchers, L/R/S badges on hitters, and a warning when the bullpen has no left-hander.",
+        "More accurate player valuation: value is now built up from hitting, baserunning, fielding, and position in run-space, fixing cases where an out-of-position bat was undervalued.",
+        "Pitcher evaluation no longer over-trusts a small sample of recent results over a pitcher's established talent."
+      ]
+    },
+    {
       "version": "1.21.1",
       "date": "2026-10-23",
       "title": "Stability fix",
