@@ -443,13 +443,16 @@ def offseason():
     except Exception:
         phase = ""
     # Chronological phases + display labels + which panels each surfaces.
+    # Step numbers (1-6) as the stepper markers: color-emoji don't render in the
+    # app's monospace font stack (they showed as missing-glyph boxes) and clash
+    # with the terminal aesthetic; the label below each dot names the phase.
     phases = [
-        {"key": "season_review", "label": "Season Review", "icon": "🎞️"},
-        {"key": "arbitration", "label": "Arbitration", "icon": "⚖️"},
-        {"key": "options", "label": "Options", "icon": "📄"},
-        {"key": "free_agency", "label": "Free Agency", "icon": "✍️"},
-        {"key": "rule5", "label": "Rule 5", "icon": "🔒"},
-        {"key": "spring", "label": "Spring", "icon": "🌱"},
+        {"key": "season_review", "label": "Season Review", "icon": "1"},
+        {"key": "arbitration", "label": "Arbitration", "icon": "2"},
+        {"key": "options", "label": "Options", "icon": "3"},
+        {"key": "free_agency", "label": "Free Agency", "icon": "4"},
+        {"key": "rule5", "label": "Rule 5", "icon": "5"},
+        {"key": "spring", "label": "Spring", "icon": "6"},
     ]
     # Panel gating (pure helper — see offseason_queries.panels_for_phase).
     # Trades is always shown separately in the template.

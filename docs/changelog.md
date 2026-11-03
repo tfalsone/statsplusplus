@@ -139,6 +139,19 @@ undefined until slotted). Tests: staff-rows-carry-contribution-and-proj-ip,
 reliever-contribution-below-rate. Full suite 1083 + 26 web smoke green. Display
 only — no eval change.
 
+**Spring UI polish pass.** (1) Decisions cards: the reason ("top two within 0.2
+WAR") moved to its own muted line under the slot title instead of wrapping inline
+and crowding it. (2) Table: rows for players actually on the Opening Day 26
+(derived `active_hitters` ∪ rostered staff) get a subtle green tint + left accent
++ a small "26" badge, so rostered players stand out from pool depth at a glance.
+(3) Staff WAR cell gained left padding so the two-line rate/contribution block
+doesn't crowd the `Auto` role select. (4) **Missing-glyph fix:** the phase-stepper
+used color-emoji icons (🎞️⚖️📄✍️🔒🌱) that don't render in the app's monospace
+font stack (they showed as missing-glyph boxes); replaced with step numbers 1-6
+(the label below each dot names the phase). Removed the decorative ❄ from the
+Offseason nav link, page title, and Settings toggle (same non-rendering issue, and
+it clashed with the terminal aesthetic). Full suite 1083 + 26 web smoke green.
+
 ---
 
 ## Session 108 — Spring Training "Opening Day Builder" + exact stored projected wOBA

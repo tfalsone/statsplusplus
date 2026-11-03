@@ -2,7 +2,7 @@
 {% block content %}
 <div id="offseason-page">
 
-<h1 class="page-title">❄ Offseason — {{ team_name }}</h1>
+<h1 class="page-title">Offseason — {{ team_name }}</h1>
 
 {# ── Phase stepper — click where you are in the offseason ── #}
 {% set phase_keys = phases|map(attribute='key')|list %}
@@ -1144,7 +1144,7 @@
   .sp-bench-hint { font-size:10px; color:var(--text-dim); font-style:italic; }
   .sp-bench-sub { font-size:10px; color:var(--text-dim); }
   /* staff WAR cell: rate over a compact contribution/IP line, right-aligned */
-  .sp-warcell { display:flex; flex-direction:column; align-items:flex-end; line-height:1.15; }
+  .sp-warcell { display:flex; flex-direction:column; align-items:flex-end; line-height:1.15; padding-left:6px; }
   .sp-staff-sub { font-size:9px; color:var(--text-dim); white-space:nowrap; }
   .sp-bench-plays { font-size:9px; color:#5a9bd4; border:1px solid #5a9bd4; border-radius:3px; padding:0 4px; margin-left:3px; }
   .sp-bench-add { background:var(--surface); color:var(--text-dim); border:1px dashed var(--border);
@@ -1203,7 +1203,8 @@
   /* decisions */
   .sp-dgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:12px; }
   .sp-dcard { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; }
-  .sp-drsn { color:var(--text-dim); font-size:11px; margin-left:6px; }
+  .sp-dhead { margin-bottom:1px; }
+  .sp-drsn { color:var(--text-dim); font-size:11px; margin-bottom:6px; }
   /* field (proper baseball diamond — depth-chart parity) */
   .sp-flayout { display:flex; gap:24px; align-items:flex-start; justify-content:center; }
   @media(max-width:900px){ .sp-flayout{flex-direction:column; align-items:stretch;} }
@@ -1251,6 +1252,11 @@
   .sp-tbl th { text-align:left; color:var(--text-dim); font-size:11px; text-transform:uppercase; padding:4px 8px;
         border-bottom:1px solid var(--border); cursor:pointer; }
   .sp-tbl td { padding:3px 8px; border-bottom:1px solid rgba(15,52,96,.5); }
+  /* rostered (on the 26) rows: subtle tint + a left accent + a small 26 badge */
+  .sp-tbl tr.sp-trostered td { background:rgba(78,204,163,.06); }
+  .sp-tbl tr.sp-trostered td:first-child { box-shadow:inset 2px 0 0 var(--green); }
+  .sp-on26 { font-size:8px; color:var(--green); border:1px solid var(--green); border-radius:3px;
+        padding:0 3px; margin-left:4px; vertical-align:middle; }
 </style>
 
 {% endblock %}
@@ -1913,9 +1919,9 @@
              + '<span>'+esc(c.name)+(c.out_of_options?' ⚠':'')+'</span>'
              + '<span class="sp-war '+warcls(c.war)+'">'+c.war.toFixed(1)+'</span></div>';
       }).join('');
-      var tag = s.forced ? '<span class="sp-hot">forced</span>' : '';
-      return '<div class="sp-dcard"><div><b>'+esc(s.slot)+'</b> '+tag
-           + '<span class="sp-drsn">'+esc(s.reason)+'</span></div>'+rows+'</div>';
+      var tag = s.forced ? ' <span class="sp-hot">forced</span>' : '';
+      return '<div class="sp-dcard"><div class="sp-dhead"><b>'+esc(s.slot)+'</b>'+tag+'</div>'
+           + '<div class="sp-drsn">'+esc(s.reason)+'</div>'+rows+'</div>';
     }).join('');
     document.getElementById('sv-decisions').innerHTML =
       '<div class="sp-dgrid">'+(html || '<p class="empty">No contested spots — the roster is set.</p>')+'</div>';
@@ -2009,15 +2015,26 @@
 
   // ── TABLE (sortable) ──
   function renderTable() {
+    // Who's actually on the 26: derived active hitters (lineup pies + platoon
+    // partners + bench reserves) ∪ the rostered staff. Lets the table flag
+    // rostered players vs pool depth at a glance.
+    var on26 = {};
+    (state.constructed.active_hitters || []).forEach(function(pid){ on26[pid]=1; });
+    (state.config.rotation || []).forEach(function(pid){ on26[pid]=1; });
+    (state.config.bullpen || []).forEach(function(pid){ on26[pid]=1; });
     var rows = state.pool.slice().sort(function(a,b){return b.war_proj-a.war_proj;}).map(function (p) {
       var elig = p.is_pitcher ? (p.eligible||[]).join('/')
                  : (p.eligible||[]).filter(function(e){return e!=='DH';}).join(' ');
+      var rostered = !!on26[p.player_id];
       // Proj column = the group-appropriate selected stat (hitters hit stat,
       // pitchers pit stat); plain OPS+ / ERA when WAR is the WAR column.
       var s = p.stats || {};
       var projKey = p.is_pitcher ? (pitStat==='war'?'era':pitStat) : (hitStat==='war'?'ops_plus':hitStat);
       var projVal = fmtStat(s[projKey], projKey);
-      return '<tr><td>'+esc(p.name)+platoonBadge(p)+'</td><td>'+p.bucket+'</td><td>'+p.level+'</td>'
+      var on26tag = rostered ? ' <span class="sp-on26" title="on the Opening Day 26">26</span>' : '';
+      return '<tr'+(rostered?' class="sp-trostered"':'')
+           + ' data-sort-value="'+(rostered?1:0)+'">'
+           + '<td>'+esc(p.name)+platoonBadge(p)+on26tag+'</td><td>'+p.bucket+'</td><td>'+p.level+'</td>'
            + '<td class="sp-war '+warcls(p.war_proj)+'">'+p.war_proj.toFixed(1)+'</td>'
            + '<td data-sort-value="'+(s[projKey]!=null?s[projKey]:-999)+'">'+projVal+'</td>'
            + '<td>'+(p.fv||'')+'</td><td>'+(p.age||'')+'</td>'
