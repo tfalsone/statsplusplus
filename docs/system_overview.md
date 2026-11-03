@@ -158,10 +158,12 @@ not yet re-run. **Platoon intelligence:** every pool hitter carries a `platoon`
 profile (`_spring_platoon_profile` from projected split OPS+ — strong/weak hand +
 split; `real` when the gap is meaningful AND the strong side is above average),
 surfaced as a `vs{hand}HP +N` badge on candidate/table rows. `get_spring_projection`
-also returns `platoon_suggestions`: for each field slot not already platooned,
-`_spring_suggest_platoon` proposes the best strong-side partner for the starter's
-weak hand, projects the win delta of applying it, and surfaces only net-positive
-ones — the board shows a one-click "Apply" that writes the suggested `pa_alloc`.
+also returns `platoon_suggestions`: for each hitter slot (field **and DH**) not
+already platooned, `_spring_suggest_platoon` proposes the best strong-side partner
+for the starter's weak hand, projects the win delta of applying it, and surfaces
+only net-positive ones — the board shows a one-click "Apply" that writes the
+suggested `pa_alloc`. DH platoons are supported (no defensive cost); a DH partner
+is restricted to players not already an everyday field starter (no double-roster).
 
 **Offseason budget (finance settings):** driven by per-league finance settings
 (`statsplusplus.config.finance_settings`, stored as

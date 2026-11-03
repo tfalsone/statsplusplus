@@ -79,6 +79,17 @@ edit (carried through `spring_projection_delta`). Tests: `_spring_platoon_profil
 unit cases, pool-carries-profile, suggest-pairs-strong-side, suggestions-shape. Full
 suite 1073 + 26 web smoke green. (Display-only — no eval change.)
 
+**DH platoons enabled.** The DH slot had been excluded from the platoon pie,
+editor, badge, and suggestions (a blanket "DH is simpler" guard) — but DH is a
+natural platoon spot with no defensive cost, and the server already built a DH
+pie. Dropped the `pos !== 'DH'` UI guards (pie/editor/badge now render for DH),
+removed the `pos == "DH"` short-circuit in `_spring_suggest_platoon`, and added DH
+to the suggestions loop. DH platoon **partners are restricted to players not
+already an everyday field starter** (every hitter is "eligible" at DH, so without
+this a suggestion could double-roster a fielder). Tests:
+`test_spring_dh_platoon_eligible_and_excludes_field_starters`,
+`test_spring_dh_platoon_suggestion_pairs_non_field_bat`. Full suite 1075 green.
+
 ---
 
 ## Session 108 — Spring Training "Opening Day Builder" + exact stored projected wOBA

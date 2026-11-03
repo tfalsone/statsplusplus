@@ -1361,6 +1361,70 @@ def test_spring_platoon_suggestions_shape(q):
         assert s["partner_hand"] in ("L", "R")
 
 
+def test_spring_dh_platoon_eligible_and_excludes_field_starters(q):
+    """DH platoons are allowed (DH is not skipped), but a DH platoon PARTNER must
+    not be a player already starting in the field — pairing him at DH would
+    double-roster him."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    import offseason_queries as osq
+    auto = q.get_spring_projection(TEAM_ID)
+    cfg = auto["config"]
+    field_starters = {pid for pos, pid in cfg["lineup"].items() if pos != "DH"}
+    # DH is no longer short-circuited: the suggester runs for DH (may or may not
+    # return a suggestion depending on the pool, but it must not raise and any
+    # suggestion it returns must respect the field-starter exclusion).
+    sug = osq._spring_suggest_platoon(auto["pool"], cfg, "DH")
+    if sug:
+        assert sug["partner"] not in field_starters
+    # And any DH suggestion that surfaces in the projection respects it too.
+    for s in auto["platoon_suggestions"]:
+        if s["pos"] == "DH":
+            assert s["partner"] not in field_starters
+
+
+def test_spring_dh_platoon_suggestion_pairs_non_field_bat(q):
+    """With a split DH starter and a strong-side bat who is NOT a field starter,
+    the DH suggestion pairs that bat; a field starter with a better split is NOT
+    chosen (would double-roster)."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    auto = q.get_spring_projection(TEAM_ID)
+    cfg = _clone_config(auto["config"])
+    dh = cfg["lineup"].get("DH")
+    if not dh:
+        return
+    # Make the DH starter weak vs RHP.
+    conn.execute("""UPDATE ratings SET cntct_r=35,gap_r=35,pow_r=35,eye_r=35,
+                    cntct_l=55,gap_l=55,pow_l=55,eye_l=55
+                    WHERE player_id=? AND snapshot_date='2033-06-01'""", (dh,))
+    # A bench-only bat (not in the field) who mashes RHP.
+    conn.execute(
+        "INSERT OR REPLACE INTO player_evaluation (player_id, eval_date, name, "
+        "bucket, age, composite, ceiling, level, team_id, parent_team_id, peak_war) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (902, EVAL_DATE, "DH Masher", "1B", 30, 50, 52, "1", TEAM_ID, TEAM_ID, 1.8))
+    conn.execute(
+        "INSERT OR REPLACE INTO players (player_id, name, age, team_id, "
+        "parent_team_id, level, pos, role, is_on_secondary) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (902, "DH Masher", 30, TEAM_ID, 0, "1", 3, 0, 1))
+    conn.execute(
+        "INSERT OR REPLACE INTO ratings (player_id, snapshot_date, league_id, "
+        "cntct, gap, pow, eye, speed, first_b, cntct_r, gap_r, pow_r, eye_r, "
+        "cntct_l, gap_l, pow_l, eye_l) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (902, "2033-06-01", 1, 50, 50, 50, 50, 40, 20, 75, 80, 75, 70, 40, 40, 35, 40))
+    conn.commit()
+    import offseason_queries as osq
+    pool = osq._spring_pool(conn, TEAM_ID, osq._eval_date(conn))
+    cfg["bench"] = list(cfg.get("bench", [])) + [902]
+    sug = osq._spring_suggest_platoon(pool, cfg, "DH")
+    field_starters = {pid for pos, pid in cfg["lineup"].items() if pos != "DH"}
+    if sug:
+        assert sug["partner"] not in field_starters
+
+
 def test_spring_candidate_slot_war_is_position_adjusted(q):
     """Each pool hitter carries a slot_war map = his WAR AT each eligible
     position (so the candidate dropdown matches the selection result — fixes

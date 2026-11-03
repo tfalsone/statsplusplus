@@ -2133,8 +2133,14 @@ def _spring_suggest_platoon(pool, config, pos):
     by_id = {p["player_id"]: p for p in pool}
     starter_pid = (config.get("lineup") or {}).get(pos)
     starter = by_id.get(starter_pid)
-    if not starter or pos == "DH":
+    if not starter:
         return None
+    # DH platoons are valid (a strong-side/weak-side DH share, no defensive
+    # cost). But every hitter is "eligible" at DH, so a DH partner must NOT be a
+    # player already penciled in as an everyday FIELD starter — pairing him at
+    # DH would double-roster him. Restrict DH partners to non-field-starters.
+    field_starters = {pid for p_pos, pid in (config.get("lineup") or {}).items()
+                      if p_pos != "DH"}
     # The primary's weaker hand — the one we want a partner to cover.
     sprof = _spring_platoon_profile(starter)
     if not sprof:
@@ -2150,6 +2156,9 @@ def _spring_suggest_platoon(pool, config, pos):
         if p["player_id"] == starter_pid or p.get("is_pitcher"):
             continue
         if not _spring_viable_at(p, pos):
+            continue
+        # At DH, skip players already starting in the field (no double-roster).
+        if pos == "DH" and p["player_id"] in field_starters:
             continue
         cand_ops = p.get(weak_key)
         if cand_ops is None:
@@ -2634,7 +2643,7 @@ def get_spring_projection(team_id, config=None, out_of_options=None):
     # "platooning here is worth +0.4 wins" and apply it in one click.
     platoon_suggestions = []
     base_wins = proj.wins
-    for pos in _SPRING_FIELD:
+    for pos in _SPRING_FIELD + ["DH"]:   # DH platoons too (no defensive cost)
         entry = constructed.get("lineup", {}).get(pos)
         if not entry:
             continue

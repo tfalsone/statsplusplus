@@ -1796,11 +1796,13 @@
         }).join('') : '<div class="sp-cand" style="cursor:default">no eligible alternatives</div>') + '</div>';
       var tierSel = p ? hitterTierSelect(p.pid) : '';
       // Platoon indicator on the row — derived from the pie (different leaders
-      // by hand), not a separate platoon config.
-      var platBadge = (p && pos !== 'DH' && isPlatoon(pos)) ? ' <span class="sp-plat-on">PLATOON</span>' : '';
-      // Expandable area: swap pool + the platoon pairing editor (field slots only).
+      // by hand), not a separate platoon config. DH platoons too (a classic
+      // strong-side/weak-side DH share — no defensive cost).
+      var platBadge = (p && isPlatoon(pos)) ? ' <span class="sp-plat-on">PLATOON</span>' : '';
+      // Expandable area: swap pool + the platoon pairing editor (all hitter
+      // slots incl. DH; the pie strips defense for DH automatically).
       var expand = '<div class="sp-expand">' + pool
-                 + (pos !== 'DH' && p ? platoonPanel(pos) : '') + '</div>';
+                 + (p ? platoonPanel(pos) : '') + '</div>';
       return '<div><div class="sp-row" onclick="springToggleRow(this)"><span class="sp-pos">'+pos+'</span>'
            + '<span class="sp-name">'+(p?esc(p.name):'—')+lvlTag(p&&p.level)+util+hot+warn+platBadge+'</span>'
            + tierSel
