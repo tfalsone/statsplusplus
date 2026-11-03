@@ -1197,6 +1197,9 @@
   .sp-plat-on { font-size:9px; color:var(--gold); border:1px solid var(--gold); border-radius:3px; padding:0 4px; margin-left:4px; }
   /* platoon-split badge (a real L/R split bat) — literal blue (pie palette) */
   .sp-plat-split { font-size:9px; color:#5a9bd4; border:1px solid #5a9bd4; border-radius:3px; padding:0 4px; margin-left:4px; white-space:nowrap; }
+  /* pitcher throwing hand: RHP muted, LHP highlighted (the scarce, roster-shaping one) */
+  .sp-throws { font-size:9px; color:var(--text-dim); border:1px solid var(--border); border-radius:3px; padding:0 3px; margin-left:4px; }
+  .sp-throws-l { color:#c08457; border-color:#c08457; }
   /* suggest-platoon callout inside a position panel (literal gold, pie palette) */
   .sp-sugg { margin:6px 0 2px 42px; border-left:2px solid #e0b64e; padding:4px 8px; background:rgba(224,182,78,0.08); border-radius:0 4px 4px 0; }
   .sp-sugg-lab { font-size:10px; color:#e0b64e; text-transform:uppercase; letter-spacing:.03em; }
@@ -1782,6 +1785,13 @@
          + ' OPS+ vs '+pl.strong+'HP — a '+pl.split+'-point platoon split">'
          + 'vs'+pl.strong+'HP +'+pl.split+'</span>';
   }
+  // Pitcher throwing hand: 'L' (highlighted — lefties are the scarce, roster-
+  // shaping ones) or 'R'. Blank when unknown.
+  function throwsBadge(t){
+    if (t !== 'L' && t !== 'R') return '';
+    var cls = t === 'L' ? 'sp-throws sp-throws-l' : 'sp-throws';
+    return ' <span class="'+cls+'" title="throws '+(t==='L'?'left':'right')+'">'+t+'HP</span>';
+  }
 
   // Pitchers eligible for a staff group ('SP' or 'RP'), not already in it.
   function pitchersFor(group){
@@ -1827,8 +1837,9 @@
     var o = '<option value="">+ add arm…</option>' + opts.map(function(p){
       var lvl = (p.level && p.level !== 'MLB') ? ' '+p.level : '';
       var v = (p.rp_war!=null?p.rp_war:p.war_proj);
+      var hand = (p.throws === 'L' || p.throws === 'R') ? ' '+p.throws+'HP' : '';
       return '<option value="'+p.player_id+'">'+esc(shortName(p.name))
-           + ' ('+v.toFixed(1)+')'+lvl+'</option>';
+           + hand + ' ('+v.toFixed(1)+')'+lvl+'</option>';
     }).join('');
     return '<select class="sp-bench-add" onchange="if(this.value)springAddArm(Number(this.value))">'+o+'</select>';
   }
@@ -1929,7 +1940,7 @@
       var elig = pitchersFor(group).slice(0, 8);
       var pool = '<div class="sp-candpool">' + (elig.length ? elig.map(function (c) {
           return '<div class="sp-cand" onclick="springPitchSwap(\''+group+'\','+r.pid+','+c.player_id+')">'
-               + '<span>'+esc(c.name)+lvlTag(c.level)+'</span>'
+               + '<span>'+esc(c.name)+throwsBadge(c.throws)+lvlTag(c.level)+'</span>'
                + '<span class="sp-war '+(pitStat==='war'?warcls(c.war_proj):'mid')+'">'+poolPitVal(c)+'</span></div>';
         }).join('') : '<div class="sp-cand" style="cursor:default">no eligible arms</div>') + '</div>';
       var move = (group === 'SP')
@@ -1953,7 +1964,7 @@
         val = '<span class="sp-war '+pitCls(r)+'">'+pitVal(r)+'</span>';
       }
       return '<div><div class="sp-row" onclick="springToggleRow(this)"><span class="sp-pos">'+label+'</span>'
-           + '<span class="sp-name">'+esc(r.name)+' '+move
+           + '<span class="sp-name">'+esc(r.name)+throwsBadge(r.throws)+' '+move
            + '<button class="sp-drop" onclick="event.stopPropagation();springDrop('+r.pid+')" title="remove from 26">✕</button></span>'
            + tierSel + val + '</div>'
            + '<div class="sp-expand">'+pool+'</div></div>';
@@ -2087,7 +2098,7 @@
           : (isEligible(r.pid,'SP')?'<button class="sp-move2" title="move to rotation" onclick="event.stopPropagation();springMovePitcher('+r.pid+',\'SP\')">⇄</button>':'<span class="sp-move2-ph"></span>');
         var label = group==='SP' ? ('SP'+(i+1)) : (r.role||'RP');
         return '<div class="sp-fpit"><span class="sp-pit-num">'+label+'</span>'
-             + '<span class="sp-fp-name">'+esc(shortName(r.name))+'</span>'
+             + '<span class="sp-fp-name">'+esc(shortName(r.name))+throwsBadge(r.throws)+'</span>'
              + '<span class="sp-war '+(pitStat==='war'?warcls(r.war):'mid')+'">'+pitVal(r)+'</span>'+move+'</div>';
       }).join('');
       return '<div class="sp-fsec"><div class="sp-fhead">'+title+'</div><div class="sp-fbody">'+rows+'</div></div>';

@@ -1942,7 +1942,7 @@ def _spring_pool(conn, team_id, ed):
                r.pow_l, r.pow_r, r.eye_l, r.eye_r,
                r.c, r.ss, r.second_b, r.third_b, r.first_b, r.lf, r.cf, r.rf,
                r.ifr, r.ife, r.ifa, r.tdp, r.ofr, r.ofe, r.ofa,
-               r.c_frm, r.c_blk, r.c_arm,
+               r.c_frm, r.c_blk, r.c_arm, r.throws,
                r.defensive_value, r.baserunning_value, r.proj_woba
         FROM player_evaluation pe
         JOIN players p ON pe.player_id = p.player_id
@@ -1970,6 +1970,7 @@ def _spring_pool(conn, team_id, ed):
             "war_proj": round(cur_war, 2),
             "level_discount": LEVEL_DISCOUNT.get(lvl, 0.1),
             "speed": r["speed"] or 50,
+            "throws": r["throws"],   # 'L' / 'R' — drives the LHP/RHP display + bullpen handedness check
         }
         if not is_pitcher:
             # Guard against players with no offensive ratings (LEFT JOIN NULLs /
@@ -2841,6 +2842,7 @@ def _spring_contributions(pool, config, staff_ip=None):
                                      "contrib_war": round(contrib, 1), # calibrated role-IP contribution
                                      "proj_ip": round(proj_ip),
                                      "role": role, "pt_pct": round(rot_w[i] / sum_rot_w * 100),
+                                     "throws": by_id[pid].get("throws"),
                                      "stats": by_id[pid].get("stats") or {}})
     for i, pid in enumerate(bullpen_ids):
         role = pen_roles[i]
@@ -2854,6 +2856,7 @@ def _spring_contributions(pool, config, staff_ip=None):
                                 "contrib_war": round(contrib, 1),  # calibrated role-IP contribution
                                 "proj_ip": round(proj_ip),
                                 "role": role, "pt_pct": round(pen_w[i] / sum_pen_w * 100),
+                                "throws": by_id[pid].get("throws"),
                                 "stats": by_id[pid].get("stats") or {}})
 
     # Per-hitter aggregate across all pies: projected-contribution WAR (what the
@@ -3172,6 +3175,19 @@ def get_spring_projection(team_id, config=None, out_of_options=None):
                     f"{pos_list} — more than one player can take. Capped to "
                     f"{oa['capped_pa']} (reps scaled down proportionally). "
                     f"Trim his share at one of those spots.")})
+    # Bullpen handedness: a pen almost always carries at least one left-hander
+    # (a LOOGY / lefty-specialist is a standard role — he neutralizes a lineup's
+    # best LHH in a key spot). Flag a bullpen with NO lefty so the GM can add one
+    # (handedness from `throws` on each pen arm).
+    pen_rows = constructed.get("bullpen", []) or []
+    if pen_rows:
+        n_lhp = sum(1 for r in pen_rows if r.get("throws") == "L")
+        if n_lhp == 0:
+            warnings.append({
+                "kind": "no_lhp_reliever",
+                "msg": "No left-handed reliever — a bullpen usually carries at "
+                       "least one lefty (a left-handed specialist to neutralize "
+                       "a lineup's top left-handed bats). Add one via “+ add arm”."})
     return {
         "projection": dataclasses.asdict(proj),
         "constructed": constructed,

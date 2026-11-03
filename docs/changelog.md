@@ -36,6 +36,16 @@ IP, setups ~78, middles ~63 (was ~32–46). Tests updated to the new semantics
 `_pitcher_valued_by_role_not_native_workload`); full suite 1088 + 26 web smoke
 green.
 
+**Spring pitcher handedness + bullpen LHP check.** `throws` (from
+`latest_ratings`) is now carried on every pool pitcher and staff row and shown as
+an RHP/LHP badge on the Board/Field staff rows, the swap candidate pool, and the
+"+ add arm" options (lefties highlighted — the scarce, roster-shaping arm). A
+bullpen with NO left-handed reliever raises a `no_lhp_reliever` warning (a pen
+usually carries at least one lefty specialist to neutralize a lineup's top
+left-handed bats), alongside the existing backup-catcher and over-allocation
+warnings. Test: `test_spring_bullpen_handedness_warning` (lefty present → quiet;
+all-right pen → warns). Full suite 1089 + 26 web smoke green.
+
 **Spring roster valued facet-by-facet in run space (fixes the out-of-position
 platoon-bat bug).** The spring allocator previously valued every hitter off the
 pre-bundled scalar `war_proj`, swapping the positional adjustment for the slot

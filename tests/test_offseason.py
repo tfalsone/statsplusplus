@@ -667,6 +667,12 @@ def _seed_spring_pool(conn):
             "parent_team_id, level, pos, role, is_on_secondary) "
             "VALUES (?,?,?,?,?,?,?,?,?)",
             (pid, name, 27, TEAM_ID, 0, lvl, 1, 11 if bkt == "SP" else 12, 1))
+        # Give the pen a lefty (reliever 741) so the default roster passes the
+        # bullpen-handedness check; everyone else throws right.
+        conn.execute(
+            "INSERT OR REPLACE INTO ratings (player_id, snapshot_date, league_id, throws) "
+            "VALUES (?,?,?,?)",
+            (pid, "2033-06-01", 1, "L" if pid == 741 else "R"))
     conn.commit()
 
 
@@ -1524,6 +1530,27 @@ def test_spring_staff_ip_covers_a_real_season(q):
     assert 1200 <= total <= 1650, f"staff IP {total} should cover a real season"
     # The bullpen is a meaningful share of the innings (real pens throw ~40%).
     assert rp_ip >= 350, f"bullpen IP {rp_ip} too low for a full season"
+
+
+def test_spring_bullpen_handedness_warning(q):
+    """A bullpen with NO left-handed reliever is flagged (a pen usually carries
+    at least one lefty). The fixture seeds one LHP (741), so the default roster
+    does NOT warn; flipping that arm to RHP makes the all-right pen warn."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    # Default roster has a lefty (741) → no handedness warning.
+    res = q.get_spring_projection(TEAM_ID)
+    assert not any(w["kind"] == "no_lhp_reliever" for w in res["warnings"])
+    # Confirm pen rows carry throwing hand.
+    pen = res["constructed"]["bullpen"]
+    assert pen and all(r.get("throws") in ("L", "R") for r in pen)
+    assert any(r["throws"] == "L" for r in pen), "fixture should roster the lefty"
+    # Flip the only lefty to RHP → an all-right pen must warn.
+    conn.execute("UPDATE ratings SET throws='R' WHERE player_id=741")
+    conn.commit()
+    res2 = q.get_spring_projection(TEAM_ID)
+    assert any(w["kind"] == "no_lhp_reliever" for w in res2["warnings"]), \
+        "an all-right-handed bullpen should flag the missing lefty"
 
 
 def test_spring_pitcher_valued_by_role_not_native_workload(q):
