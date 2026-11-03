@@ -124,6 +124,21 @@ now correctly show they're platoon backups (Jim Dunn rate 2.2 / 0.6 proj / plays
 active-hitters-includes-pie-and-bench, bench-reserve-in-pie-shows-contribution.
 Full suite 1081 + 26 web smoke green. Display-only — no eval change.
 
+**Pitcher staff rows: contribution WAR + projected IP (bench honesty ported).**
+The rotation/bullpen rows displayed each pitcher's full-season WAR rate even
+though the projection credits only `rate × role share` — a 50%-share middle
+reliever showed a full-season WAR he won't accrue (the same mismatch just fixed
+for the bench). `constructed.rotation`/`bullpen` rows now carry `contrib_war`
+(role-scaled) and `proj_ip` (`share × full-role IP baseline`: `_SPRING_SP_FULL_IP`
+190, `_SPRING_RP_FULL_IP` 65); the board shows the full-season RATE primary with a
+compact "`N.N proj · ~NNN IP`" secondary line. The `.sp-row` grid last column was
+widened to `minmax(44px,auto)` and the staff value wrapped in a right-aligned
+`.sp-warcell` so the secondary line fits on one row without disturbing hitter-row
+alignment. Pool candidates keep showing the role-independent rate (contribution is
+undefined until slotted). Tests: staff-rows-carry-contribution-and-proj-ip,
+reliever-contribution-below-rate. Full suite 1083 + 26 web smoke green. Display
+only — no eval change.
+
 ---
 
 ## Session 108 — Spring Training "Opening Day Builder" + exact stored projected wOBA

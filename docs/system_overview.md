@@ -166,7 +166,12 @@ explicit `config.bench` reserves), so no rostered body goes unaccounted. The
 (primary — his value if pressed into duty, since a pure unused reserve's projected
 contribution is ~0) plus his projected pie contribution + a "plays {pos}" tag when
 he's actually filling a platoon/backup pie. An "+ add reserve" control adds bench
-depth (hitters not already rostered). Plans persist per team in
+depth (hitters not already rostered). **Staff (rotation/bullpen) rows** carry the
+same rate-vs-contribution honesty: each shows the pitcher's full-season WAR RATE
+(primary) plus his role-scaled projected contribution (`war × role share`) and
+projected innings (`share × full-role IP baseline` — `_SPRING_SP_FULL_IP` 190,
+`_SPRING_RP_FULL_IP` 65), so a 50%-share middle reliever no longer displays a
+full-season WAR he won't accrue. Plans persist per team in
 `config/spring_plans.json`. Endpoints: `/api/spring-plan`
 (GET/POST/DELETE), `/api/spring-project` (POST). The pool's wOBA stat surfaces the
 exact stored model projection (`ratings.proj_woba`, written by the evaluation engine

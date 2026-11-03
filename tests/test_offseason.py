@@ -1416,6 +1416,36 @@ def test_spring_caps_cross_position_over_allocation(q):
     assert warns and any(util["name"] in w["msg"] for w in warns)
 
 
+def test_spring_staff_rows_carry_contribution_and_proj_ip(q):
+    """Rotation + bullpen rows carry full-season `war` (rate), role-scaled
+    `contrib_war` (= war × role share, ≤ war), and `proj_ip` (share × full-role
+    IP baseline). A reliever's contribution is well below his rate; a starter's
+    is closer."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    con = res["constructed"]
+    for r in con["rotation"] + con["bullpen"]:
+        assert set(r) >= {"war", "contrib_war", "proj_ip", "role", "pt_pct"}
+        # Contribution never exceeds the full-season rate (share ≤ 1).
+        assert r["contrib_war"] <= r["war"] + 1e-6
+        assert r["proj_ip"] > 0
+    # SP projected IP should exceed RP projected IP (full-role baselines differ).
+    if con["rotation"] and con["bullpen"]:
+        max_rp_ip = max(r["proj_ip"] for r in con["bullpen"])
+        min_sp_ip = min(r["proj_ip"] for r in con["rotation"])
+        assert min_sp_ip > max_rp_ip
+
+
+def test_spring_reliever_contribution_below_rate(q):
+    """A bullpen arm's role share (<=0.70) means his projected contribution is
+    materially below his full-season rate — the honesty fix the display ports."""
+    _seed_spring_pool(q.get_db())
+    con = q.get_spring_projection(TEAM_ID)["constructed"]
+    for r in con["bullpen"]:
+        if r["war"] > 0.3:   # meaningful arm, avoid near-zero rounding noise
+            assert r["contrib_war"] < r["war"]
+
+
 def test_spring_bench_view_carries_rate_and_contribution(q):
     """Each bench reserve carries full-season RATE (war), projected pie
     CONTRIBUTION (contrib_war), pie PA, and where he plays (in_pie)."""

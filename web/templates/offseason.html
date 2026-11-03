@@ -1143,6 +1143,9 @@
   .sp-bench-lab { font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.03em; }
   .sp-bench-hint { font-size:10px; color:var(--text-dim); font-style:italic; }
   .sp-bench-sub { font-size:10px; color:var(--text-dim); }
+  /* staff WAR cell: rate over a compact contribution/IP line, right-aligned */
+  .sp-warcell { display:flex; flex-direction:column; align-items:flex-end; line-height:1.15; }
+  .sp-staff-sub { font-size:9px; color:var(--text-dim); white-space:nowrap; }
   .sp-bench-plays { font-size:9px; color:#5a9bd4; border:1px solid #5a9bd4; border-radius:3px; padding:0 4px; margin-left:3px; }
   .sp-bench-add { background:var(--surface); color:var(--text-dim); border:1px dashed var(--border);
         border-radius:4px; font-size:11px; padding:2px 6px; margin-top:4px; cursor:pointer; }
@@ -1151,7 +1154,7 @@
   .sp-grid3 { display:grid; grid-template-columns:1.1fr 1fr 1fr; gap:16px; align-items:start; }
   @media(max-width:900px){ .sp-grid3{grid-template-columns:1fr;} .spring-proj{grid-template-columns:1fr; gap:10px;} }
   .sp-colh { font-size:11px; text-transform:uppercase; color:var(--text-dim); margin-bottom:6px; }
-  .sp-row { display:grid; grid-template-columns:42px 1fr auto 44px; align-items:center; gap:8px; padding:5px 8px;
+  .sp-row { display:grid; grid-template-columns:42px 1fr auto minmax(44px,auto); align-items:center; gap:8px; padding:5px 8px;
         background:var(--bg); border:1px solid var(--border); border-radius:6px; cursor:pointer; margin-bottom:3px; }
   .sp-tier { background:var(--surface); color:var(--text-dim); border:1px solid var(--border);
         border-radius:4px; font-size:10px; padding:1px 3px; max-width:120px; }
@@ -1852,11 +1855,26 @@
         ? '<button class="sp-move" onclick="event.stopPropagation();springMovePitcher('+r.pid+',\'RP\')" title="move to bullpen">→ pen</button>'
         : (isEligible(r.pid,'SP') ? '<button class="sp-move" onclick="event.stopPropagation();springMovePitcher('+r.pid+',\'SP\')" title="move to rotation">→ rot</button>' : '');
       var tierSel = (group === 'SP') ? spTierSelect(r.pid) : rpTierSelect(r.pid);
+      // When showing WAR: full-season RATE is primary; the role-scaled
+      // CONTRIBUTION + projected IP are secondary (a reliever's rate overstates
+      // his ~50-65 IP contribution — same honesty fix as the bench). For a rate
+      // stat (ERA/FIP), just show that stat.
+      // WAR cell: a single grid cell. When showing WAR, stack the full-season
+      // RATE (primary) over a compact role-scaled contribution + projected IP.
+      var val;
+      if (pitStat === 'war') {
+        var c = (r.contrib_war != null) ? r.contrib_war : r.war;
+        var ipTxt = (r.proj_ip != null) ? (' · ~' + r.proj_ip + ' IP') : '';
+        val = '<span class="sp-warcell">'
+            + '<span class="sp-war '+pitCls(r)+'">'+r.war.toFixed(1)+'</span>'
+            + '<span class="sp-staff-sub">'+c.toFixed(1)+' proj'+ipTxt+'</span></span>';
+      } else {
+        val = '<span class="sp-war '+pitCls(r)+'">'+pitVal(r)+'</span>';
+      }
       return '<div><div class="sp-row" onclick="springToggleRow(this)"><span class="sp-pos">'+label+'</span>'
            + '<span class="sp-name">'+esc(r.name)+' '+move
            + '<button class="sp-drop" onclick="event.stopPropagation();springDrop('+r.pid+')" title="remove from 26">✕</button></span>'
-           + tierSel
-           + '<span class="sp-war '+pitCls(r)+'">'+pitVal(r)+'</span></div>'
+           + tierSel + val + '</div>'
            + '<div class="sp-expand">'+pool+'</div></div>';
     }
     var rot = (con.rotation||[]).map(function (r,i){ return staffRow(r,'SP','SP'+(i+1)); }).join('');

@@ -2076,6 +2076,11 @@ _SPRING_PITCHER_ROLE_SHARE = {
     "sp1": 1.00, "sp2": 0.95, "sp3": 0.90, "sp4": 0.85, "sp5": 0.78,
     "closer": 0.70, "setup": 0.62, "middle": 0.50, "long": 0.42, "specialist": 0.30,
 }
+# Full-workload IP for a staff slot — the role share scales these to a projected
+# innings load (SP: a full-season #1-starter workload; RP: a full bullpen role).
+# Used to show each staff arm's projected IP alongside his contribution WAR.
+_SPRING_SP_FULL_IP = 190.0
+_SPRING_RP_FULL_IP = 65.0
 
 
 def _spring_hand_factor(player, hand):
@@ -2461,10 +2466,12 @@ def _spring_contributions(pool, config):
     for i, pid in enumerate(rotation_ids):
         role = _role_of(pid) or ("sp" + str(min(i + 1, 5)))
         share = _SPRING_PITCHER_ROLE_SHARE.get(role, 0.90)
-        contribs.append(PlayerContribution(pid, by_id[pid]["name"],
-                                           by_id[pid]["war_proj"] * share, is_pitcher=True))
+        contrib = by_id[pid]["war_proj"] * share
+        contribs.append(PlayerContribution(pid, by_id[pid]["name"], contrib, is_pitcher=True))
         constructed_rotation.append({"pid": pid, "name": by_id[pid]["name"],
-                                     "war": round(by_id[pid]["war_proj"], 1),
+                                     "war": round(by_id[pid]["war_proj"], 1),   # full-season RATE
+                                     "contrib_war": round(contrib, 1),          # role-scaled contribution
+                                     "proj_ip": round(share * _SPRING_SP_FULL_IP),
                                      "role": role, "pt_pct": round(share * 100),
                                      "stats": by_id[pid].get("stats") or {}})
     _RP_DEFAULT = ["closer", "setup", "setup", "middle", "middle", "middle", "long", "long"]
@@ -2472,10 +2479,12 @@ def _spring_contributions(pool, config):
     for i, pid in enumerate(bullpen_ids[:8]):
         role = _role_of(pid) or (_RP_DEFAULT[i] if i < len(_RP_DEFAULT) else "middle")
         share = _SPRING_PITCHER_ROLE_SHARE.get(role, 0.50)
-        contribs.append(PlayerContribution(pid, by_id[pid]["name"],
-                                           by_id[pid]["war_proj"] * share, is_pitcher=True))
+        contrib = by_id[pid]["war_proj"] * share
+        contribs.append(PlayerContribution(pid, by_id[pid]["name"], contrib, is_pitcher=True))
         constructed_pen.append({"pid": pid, "name": by_id[pid]["name"],
-                                "war": round(by_id[pid]["war_proj"], 1),
+                                "war": round(by_id[pid]["war_proj"], 1),        # full-season RATE
+                                "contrib_war": round(contrib, 1),               # role-scaled contribution
+                                "proj_ip": round(share * _SPRING_RP_FULL_IP),
                                 "role": role, "pt_pct": round(share * 100),
                                 "stats": by_id[pid].get("stats") or {}})
 
