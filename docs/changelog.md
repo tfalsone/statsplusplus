@@ -46,6 +46,23 @@ left-handed bats), alongside the existing backup-catcher and over-allocation
 warnings. Test: `test_spring_bullpen_handedness_warning` (lefty present → quiet;
 all-right pen → warns). Full suite 1089 + 26 web smoke green.
 
+**Spring lineup order — component-aware (research-based) + user prefs.** After a
+first-principles discussion (captured in `.kiro/specs/spring-training-page/
+design.md §13`), the 1–9 batting order is now built from component scores rather
+than raw OPS+ (which conflated OBP and SLG and could lead off a low-OBP masher).
+New pure helpers: `_spring_lineup_components(player, hand)` derives on-base
+(eye+contact), power (pow+gap), run (baserunning_value+speed+steal), and overall
+(vs-hand bat wRAA) from STORED model data; `_spring_order_nine` slots per The
+Book / FanGraphs research — on-base leads off, best overall bats 2nd, power at
+cleanup (#4), #3 de-prioritized, rest descending. A `config.lineup_prefs` lever
+(`{style:modern|traditional, leadoff:obp|speed}`) surfaced as two selects on the
+Lineups view: `traditional` puts the best hitter at #3; `leadoff:"speed"` puts a
+strong baserunner on top (the user's stated preference) vs the research-default
+OBP leadoff (speed as tiebreaker). `lineup_prefs` persists in the saved plan.
+Order stays projection-neutral. Tests: `test_spring_lineup_order_is_component_aware`
+(OBP leadoff + best-hitter-2nd + power-cleanup; speed-pref leads off the burner).
+Full suite 1093 + 26 web smoke green.
+
 **Spring Lineups view — 1–9 batting order vs RHP / vs LHP + auto-platoon.** A
 new "Lineups" tab renders two manager-set 1–9 batting orders (vs RHP, vs LHP).
 `_spring_lineup_cards` (pure) picks, per position + DH and per opponent hand, the

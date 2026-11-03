@@ -2988,7 +2988,8 @@ def _spring_contributions(pool, config, staff_ip=None):
         "active_hitters": active_hitters,
         "hitter_pie": {str(k): v for k, v in hitter_pie.items()},
     }
-    constructed["lineups"] = _spring_lineup_cards(constructed_lineup, by_id)
+    constructed["lineups"] = _spring_lineup_cards(
+        constructed_lineup, by_id, prefs=config.get("lineup_prefs"))
     return contribs, constructed, overalloc
 
 
@@ -2997,32 +2998,152 @@ def _spring_contributions(pool, config, staff_ip=None):
 _SPRING_LINEUP_ORDER = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"]
 
 
-# Batting-order assignment sequence: the best vs-hand bats go to the highest-
-# LEVERAGE lineup spots, not strictly 1→9. Modern lineup research (The Book)
-# puts the three best hitters at #1, #2, #4 (the #2 and #4 spots see the most
-# high-leverage PA), then #3, #5, and the rest descending. So we sort the nine
-# starters by vs-hand OPS+ and drop them into order slots in THIS priority:
-_SPRING_ORDER_PRIORITY = [2, 1, 4, 3, 5, 6, 7, 8, 9]
+def _spring_lineup_components(player, hand):
+    """Per-hitter, per-hand batting-order component scores from STORED model
+    data (no new pull). Returns ``{on_base, power, overall, run}``:
+
+    - ``on_base`` — on-base-leaning score: eye (walks) + contact (reach via
+      contact), the hand's split tools. Drives leadoff / #2.
+    - ``power``   — power-leaning score: pow + gap (the hand's split). Drives
+      #4 / #5.
+    - ``overall`` — the vs-hand bat wRAA (`facets.bat_R/bat_L`) — the "best
+      hitter" signal. Drives #2 / #3 and the tail.
+    - ``run``     — baserunning/speed score (baserunning_value + speed + steal),
+      hand-independent. The leadoff TIEBREAKER (small, per the research).
+
+    Tools are 20-80; scores are kept on that scale (centered ~50) so they're
+    directly comparable. Falls back to overall OPS+ when split tools are absent.
+    """
+    raw = player.get("_raw") or {}
+    sfx = "_" + hand.lower()
+    def _t(base):
+        return raw.get(base + sfx) if raw.get(base + sfx) is not None else raw.get(base)
+    eye = _t("eye"); cntct = _t("cntct"); pw = _t("pow"); gap = _t("gap")
+    # On-base: walks dominate, contact secondary (reaching base, not slugging).
+    if eye is not None and cntct is not None:
+        on_base = 0.6 * float(eye) + 0.4 * float(cntct)
+    else:
+        on_base = player.get("ops_vs_l" if hand == "L" else "ops_vs_r") or 100
+    # Power: raw power leads, gap (doubles) secondary.
+    if pw is not None:
+        power = 0.75 * float(pw) + 0.25 * float(gap or 50)
+    else:
+        power = player.get("ops_vs_l" if hand == "L" else "ops_vs_r") or 100
+    # Overall: the vs-hand bat run value (best "who's the better hitter" signal).
+    f = player.get("facets") or {}
+    overall = f.get("bat_L" if hand == "L" else "bat_R")
+    if overall is None:
+        overall = (player.get("ops_vs_l" if hand == "L" else "ops_vs_r") or 100) - 100
+    # Run: baserunning grade + speed + steal (hand-independent).
+    bsr = (player.get("stats") or {}).get("bsr")
+    spd = raw.get("speed"); stl = raw.get("steal")
+    run = (0.5 * float(bsr if bsr is not None else 50)
+           + 0.35 * float(spd if spd is not None else 50)
+           + 0.15 * float(stl if stl is not None else 50))
+    return {"on_base": on_base, "power": power, "overall": overall, "run": run}
 
 
-def _spring_lineup_cards(constructed_lineup, by_id):
+def _spring_order_nine(starters, prefs):
+    """Assign batting order 1–9 to the nine ``starters`` (each already carrying
+    `_comp` component scores) per the research-based slotting, honoring user
+    ``prefs`` {"style","leadoff"}. Mutates each starter with an integer `order`.
+
+    Modern default — best hitters at the highest-leverage spots #1/#2/#4:
+        1 (leadoff) = best ON-BASE  (run score breaks near-ties; `leadoff:"speed"`
+                      weights run more at #1 per the user's stated preference)
+        2           = best OVERALL remaining  (traditional → this goes to #3)
+        4           = best POWER remaining
+        3           = best OVERALL remaining
+        5           = best POWER remaining
+        6-9         = remaining by OVERALL, descending
+    """
+    prefs = prefs or {}
+    style = prefs.get("style", "modern")
+    leadoff = prefs.get("leadoff", "obp")
+    pool = list(starters)
+    assigned = {}   # order -> starter
+
+    def _take(key, extra=None):
+        if not pool:
+            return None
+        def score(s):
+            v = s["_comp"][key]
+            if extra:
+                v = v + extra(s)
+            return v
+        best = max(pool, key=score)
+        pool.remove(best)
+        return best
+
+    # 1 — leadoff: best on-base. `leadoff:"speed"` adds a run-score bonus (the
+    # user preference); default `obp` uses run only as a tiny near-tie breaker.
+    if leadoff == "speed":
+        lead = _take("on_base", extra=lambda s: 0.5 * (s["_comp"]["run"] - 50))
+    else:
+        lead = _take("on_base", extra=lambda s: 0.05 * (s["_comp"]["run"] - 50))
+    if lead:
+        assigned[1] = lead
+    # Best overall hitter: #2 (modern) or #3 (traditional).
+    best_overall_slot = 3 if style == "traditional" else 2
+    bo = _take("overall")
+    if bo:
+        assigned[best_overall_slot] = bo
+    # Cleanup #4: best power.
+    pw4 = _take("power")
+    if pw4:
+        assigned[4] = pw4
+    # The other of #2/#3: next best overall.
+    other = 2 if best_overall_slot == 3 else 3
+    nx = _take("overall")
+    if nx:
+        assigned[other] = nx
+    # #5: next power.
+    pw5 = _take("power")
+    if pw5:
+        assigned[5] = pw5
+    # 6-9: remaining by overall, descending.
+    rest = sorted(pool, key=lambda s: -s["_comp"]["overall"])
+    slot = 6
+    for s in rest:
+        while slot in assigned:
+            slot += 1
+        assigned[slot] = s
+        slot += 1
+    # Fill any gaps (short lineup) left-to-right.
+    ordered = []
+    for s in starters:
+        for o, a in assigned.items():
+            if a is s:
+                s["order"] = o
+                ordered.append(s)
+                break
+    ordered.sort(key=lambda s: s.get("order", 99))
+    # Renumber densely 1..N (in case of gaps from a short lineup).
+    for i, s in enumerate(ordered, 1):
+        s["order"] = i
+    return ordered
+
+
+def _spring_lineup_cards(constructed_lineup, by_id, prefs=None):
     """Projected 1–9 batting lineup vs RHP and vs LHP — the lineup a manager
-    would actually set, derived from the board's per-position PA pie.
+    would actually set, derived from the board's per-position PA pie + a
+    research-based, COMPONENT-AWARE batting order (OBP leadoff, best hitter 2nd,
+    power at 4 — see design.md §13). `prefs` {"style","leadoff"} lets the user
+    bias the order (modern/traditional; obp/speed leadoff).
 
     For each field position + DH and each opponent hand, the starter vs that hand
-    is whoever takes the most PA in that hand's wedge (`pa_r` / `pa_l`) — so a
-    platoon surfaces as different names in the two cards. The nine starters are
-    then ORDERED 1–9 by vs-hand OPS+ into the highest-leverage batting slots
-    (best bats at #1/#2/#4 per lineup research), giving a real manager-set order
-    rather than a position list. Returns::
+    is whoever takes the most PA in that hand's wedge (`pa_r`/`pa_l`) — so a
+    platoon surfaces as different names in the two cards. The nine are then
+    ordered 1–9 by component (not raw OPS+), so a high-OBP table-setter leads off
+    and a masher hits cleanup. Returns::
 
-        {"R": [{order, pos, pid, name, bats, ops, is_platoon}, ...],  # vs RHP, batting 1-9
-         "L": [ ... ]}                                                 # vs LHP
+        {"R": [{order, pos, pid, name, bats, ops, is_platoon}, ...],  # vs RHP 1-9
+         "L": [ ... ]}                                                 # vs LHP 1-9
 
     `order` is the 1–9 batting slot; `ops` the starter's projected OPS+ vs that
     hand; `is_platoon` marks a slot whose vs-R and vs-L starters differ. Pure.
     """
-    def _hand_lineup(handkey, opskey):
+    def _hand_lineup(handkey, opskey, hand):
         starters = []
         for pos in _SPRING_LINEUP_ORDER:
             entry = constructed_lineup.get(pos)
@@ -3039,18 +3160,15 @@ def _spring_lineup_cards(constructed_lineup, by_id):
                 "name": p.get("name", starter.get("name")),
                 "bats": p.get("bats"),
                 "ops": round(ops) if ops is not None else None,
-                "_ops_sort": ops if ops is not None else 100,
+                "_comp": _spring_lineup_components(p, hand),
             })
-        # Order 1–9: best vs-hand OPS+ → highest-leverage slot.
-        starters.sort(key=lambda s: -s["_ops_sort"])
-        for i, s in enumerate(starters):
-            s["order"] = _SPRING_ORDER_PRIORITY[i] if i < len(_SPRING_ORDER_PRIORITY) else i + 1
-            del s["_ops_sort"]
-        starters.sort(key=lambda s: s["order"])
-        return starters
+        ordered = _spring_order_nine(starters, prefs)
+        for s in ordered:
+            s.pop("_comp", None)   # internal — not needed by the UI
+        return ordered
 
-    cardsR = _hand_lineup("pa_r", "ops_vs_r")
-    cardsL = _hand_lineup("pa_l", "ops_vs_l")
+    cardsR = _hand_lineup("pa_r", "ops_vs_r", "R")
+    cardsL = _hand_lineup("pa_l", "ops_vs_l", "L")
     # Flag platoon slots (a position whose vs-R and vs-L starter differ).
     byposR = {s["pos"]: s["pid"] for s in cardsR}
     byposL = {s["pos"]: s["pid"] for s in cardsL}
@@ -3391,7 +3509,7 @@ def save_spring_plan(team_id, config, out_of_options=None):
     # deployment decisions (platoon assignment, start-share, pitcher roles).
     clean = {k: config[k] for k in
              ("lineup", "bench", "rotation", "bullpen", "platoon", "start_share",
-              "roles", "pa_alloc")
+              "roles", "pa_alloc", "lineup_prefs")
              if k in config}
     # Stamp with the current game date (from state.json, the authoritative
     # source) so the UI can warn if the plan predates a later data refresh.

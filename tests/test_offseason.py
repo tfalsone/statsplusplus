@@ -1588,6 +1588,9 @@ def _facet_hitter(pid, name, pos, bat_r, bat_l, bats="R", fld=2.0):
         "eligible": [pos, "DH"], "bats_hand": bats,
         "ops_vs_r": 100 + (bat_r - bat_l), "ops_vs_l": 100 + (bat_l - bat_r),
         "ovr_ops_plus": 100,
+        "_raw": {"eye": 50, "cntct": 50, "pow": 50, "gap": 50, "speed": 50,
+                 "steal": 50, "eye_r": 50, "cntct_r": 50, "pow_r": 50, "gap_r": 50,
+                 "eye_l": 50, "cntct_l": 50, "pow_l": 50, "gap_l": 50},
         "facets": {
             "bat": (bat_r + bat_l) / 2.0, "bat_R": bat_r, "bat_L": bat_l,
             "br": 0.0, "fld": {pos: fld, "DH": 0.0}, "pos": {pos: 0.0, "DH": -17.0},
@@ -1643,6 +1646,54 @@ def test_spring_auto_config_platoons_when_it_helps(q):
     lf_l = next((s for s in lu["L"] if s["pos"] == "LF"), None)
     assert lf_r and lf_l and lf_r["pid"] == 760 and lf_l["pid"] == 761
     assert lf_r["is_platoon"] and lf_l["is_platoon"]
+
+
+def _order_hitter(pid, name, pos, *, eye, pow_, gap, bsr, spd, bat_r):
+    """A synthetic pool hitter with the raw tools + facets the component-aware
+    batting order reads (eye/pow/gap → on-base/power; bsr/speed → run; bat_R →
+    overall). Lets the ordering be unit-tested with clean, differentiated
+    components (the fixture DB has no run-space calibration, so facet `overall`
+    ties)."""
+    d = _facet_hitter(pid, name, pos, bat_r=bat_r, bat_l=bat_r - 3.0)
+    d["_raw"].update({"eye": eye, "cntct": 55, "pow": pow_, "gap": gap,
+                      "speed": spd, "steal": spd,
+                      "eye_r": eye, "cntct_r": 55, "pow_r": pow_, "gap_r": gap})
+    d["stats"] = dict(d.get("stats") or {}); d["stats"]["bsr"] = bsr
+    return d
+
+
+def test_spring_lineup_order_is_component_aware(q):
+    """The 1-9 order is built from COMPONENTS (OBP leadoff, best hitter 2nd,
+    power at cleanup), not raw OPS+. A high-OBP/low-power table-setter leads off
+    over a low-OBP masher; the masher hits cleanup. The `leadoff:"speed"` pref
+    puts a strong baserunner on top instead. Unit-tested on a synthetic facet
+    pool (clean, differentiated components)."""
+    # Distinct profiles: an OBP specialist (leadoff), a best-overall hitter (#2),
+    # and a pure power bat that is NOT the best overall (so #2 doesn't grab him —
+    # he should land at cleanup #4 on power), plus a burner for the speed pref.
+    pool = [
+        _order_hitter(770, "On-Base Oscar", "LF", eye=78, pow_=40, gap=45, bsr=30, spd=35, bat_r=9.0),
+        _order_hitter(773, "Best Hitter",  "C",  eye=62, pow_=62, gap=58, bsr=45, spd=45, bat_r=16.0),
+        _order_hitter(771, "Masher Mike",  "RF", eye=38, pow_=80, gap=68, bsr=25, spd=25, bat_r=9.5),
+        _order_hitter(772, "Burner Bob",   "CF", eye=55, pow_=45, gap=50, bsr=78, spd=78, bat_r=8.0),
+        _order_hitter(774, "1B Guy", "1B", eye=52, pow_=55, gap=52, bsr=40, spd=40, bat_r=10.0),
+        _order_hitter(775, "2B Guy", "2B", eye=48, pow_=48, gap=50, bsr=55, spd=55, bat_r=7.0),
+        _order_hitter(776, "3B Guy", "3B", eye=50, pow_=52, gap=52, bsr=45, spd=45, bat_r=8.5),
+        _order_hitter(777, "SS Guy", "SS", eye=46, pow_=44, gap=48, bsr=60, spd=60, bat_r=5.0),
+        _order_hitter(778, "DH Guy", "DH", eye=52, pow_=50, gap=52, bsr=40, spd=40, bat_r=9.2),
+    ]
+    cfg = q._spring_auto_config(pool)
+    lu = q._spring_contributions(pool, cfg)[1]["lineups"]["R"]
+    order = {s["pid"]: s["order"] for s in lu}
+    # OBP specialist (eye 78) leads off; the elite-power bat hits cleanup (#4).
+    assert order.get(770) == 1, f"high-OBP bat should lead off, got {order}"
+    assert order.get(773) == 2, f"best overall hitter should bat 2nd (modern), got {order}"
+    assert order.get(771) == 4, f"masher (elite power) should bat cleanup, got {order}"
+    # Speed-leadoff pref: the strong baserunner (bsr 78) takes #1 instead.
+    cfg_sp = dict(cfg); cfg_sp["lineup_prefs"] = {"leadoff": "speed"}
+    lu2 = q._spring_contributions(pool, cfg_sp)[1]["lineups"]["R"]
+    order2 = {s["pid"]: s["order"] for s in lu2}
+    assert order2.get(772) == 1, f"speed pref should lead off the burner, got {order2}"
 
 
 def test_spring_hitter_rows_carry_batting_hand(q):

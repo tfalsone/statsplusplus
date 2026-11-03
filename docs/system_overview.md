@@ -155,11 +155,17 @@ no full re-render). The **Lineups** view shows two projected **1–9 batting ord
 LHP — derived from the PA pie (`_spring_lineup_cards` → `constructed.lineups`):
 per position the starter vs each hand is whoever takes the most PA in that hand's
 wedge (a platoon → different names in the two cards), and the nine starters are
-ordered 1–9 by vs-hand OPS+ into the highest-leverage batting slots (best bats at
-#1/#2/#4 per lineup research; the projection itself is order-independent). Each
-slot shows the batting number, player, position, batting-hand badge, and OPS+ vs
-that hand; the card header shows the L/R/S mix. The view doubles as a validation
-lens on the auto deployment. The **auto-config auto-platoons** (Phase 4 of
+ordered 1–9 by COMPONENT — not raw OPS+ — via `_spring_lineup_components`
+(`_spring_order_nine`): on-base proxy (eye+contact) leads off, the best overall
+vs-hand bat (`facets.bat_*` wRAA) bats 2nd, the best power (pow+gap) hits cleanup
+(#4), per The Book / FanGraphs lineup research (design.md §13; the projection
+itself is order-independent). A `config.lineup_prefs` lever
+(`{style:modern|traditional, leadoff:obp|speed}`) biases it — `traditional` puts
+the best hitter at #3; `leadoff:"speed"` puts a strong baserunner
+(baserunning_value + speed) on top instead of the OBP leader. Each slot shows the
+batting number, player, position, batting-hand badge, and OPS+ vs that hand; the
+card header shows the L/R/S mix. The view doubles as a validation lens on the
+auto deployment. The **auto-config auto-platoons** (Phase 4 of
 `_spring_auto_config`): for each field/DH slot it checks whether splitting the
 slot — the best-vs-RHP rostered body on the ~71% RHP wedge, the best-vs-LHP body
 on the ~29% LHP wedge (hand-specific value via `_spring_slot_rate_war_hand`) —

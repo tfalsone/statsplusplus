@@ -1221,6 +1221,9 @@
   .sp-lu-name { flex:1; }
   .sp-lu-ops { font-weight:700; font-variant-numeric:tabular-nums; min-width:34px; text-align:right; }
   .sp-lu-ops.pos { color:var(--green); } .sp-lu-ops.dim { color:var(--red); } .sp-lu-ops.mid { color:var(--text); }
+  .sp-lu-prefs { display:flex; gap:18px; margin-bottom:12px; flex-wrap:wrap; }
+  .sp-lu-prefs label { font-size:12px; color:var(--text-dim); display:inline-flex; align-items:center; gap:6px; }
+  .sp-lu-pref { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 6px; font-size:12px; }
   /* suggest-platoon callout inside a position panel (literal gold, pie palette) */
   .sp-sugg { margin:6px 0 2px 42px; border-left:2px solid #e0b64e; padding:4px 8px; background:rgba(224,182,78,0.08); border-radius:0 4px 4px 0; }
   .sp-sugg-lab { font-size:10px; color:#e0b64e; text-transform:uppercase; letter-spacing:.03em; }
@@ -2086,12 +2089,29 @@
            + (hand==='R'?'~71% of PA':'~29% of PA')+'</span></div>'
            + '<div class="sp-lu-body">'+body+'</div></div>';
     }
+    // Preference controls — bias the generated order without new plumbing.
+    var pref = (state.config && state.config.lineup_prefs) || {};
+    var style = pref.style || 'modern';
+    var leadoff = pref.leadoff || 'obp';
+    function sel(id, val, opts){
+      return '<select class="sp-lu-pref" onchange="springSetLineupPref(\''+id+'\',this.value)">'
+        + opts.map(function(o){ return '<option value="'+o[0]+'"'+(o[0]===val?' selected':'')+'>'+o[1]+'</option>'; }).join('')
+        + '</select>';
+    }
+    var controls = '<div class="sp-lu-prefs">'
+      + '<label title="Modern: best hitter bats 2nd (The Book). Traditional: best hitter bats 3rd.">Order '
+      + sel('style', style, [['modern','Modern (best hitter 2nd)'],['traditional','Traditional (best hitter 3rd)']]) + '</label>'
+      + '<label title="On-base: highest-OBP bat leads off (research default, speed breaks ties). Speed: a strong baserunner/stealer leads off.">Leadoff '
+      + sel('leadoff', leadoff, [['obp','On-base (OBP-first)'],['speed','Speed / baserunner']]) + '</label>'
+      + '</div>';
     document.getElementById('sv-lineups').innerHTML =
-        '<div class="sp-lu-grid">' + card('R', lu.R) + card('L', lu.L) + '</div>'
+        controls
+      + '<div class="sp-lu-grid">' + card('R', lu.R) + card('L', lu.L) + '</div>'
       + '<div class="sp-fieldnote">Projected 1–9 batting order vs each opponent hand, '
       + 'from your playing-time pie — a PLATOON slot shows a different name in each card. '
-      + 'Order puts the best vs-hand bats in the high-leverage slots (projection is order-independent). '
-      + 'OPS+ is the starter’s projection vs that hand.</div>';
+      + 'Order puts the best vs-hand bats in the high-leverage slots by COMPONENT '
+      + '(on-base leads off, best hitter 2nd, power at cleanup) — the projection itself '
+      + 'is order-independent. OPS+ is the starter’s projection vs that hand.</div>';
   }
 
   // ── FIELD (proper baseball diamond — depth-chart parity) ──
@@ -2425,6 +2445,15 @@
     state.config.roles = state.config.roles || {};
     if (role) state.config.roles[pid] = role;
     else delete state.config.roles[pid];
+    reproject(before);
+  };
+  // Lineup-order preference (style: modern/traditional, leadoff: obp/speed).
+  // Order is projection-neutral, so no `before` delta is needed — just
+  // regenerate the lineup cards server-side with the new prefs.
+  window.springSetLineupPref = function (key, val) {
+    var before = JSON.parse(JSON.stringify(state.config));
+    state.config.lineup_prefs = state.config.lineup_prefs || {};
+    state.config.lineup_prefs[key] = val;
     reproject(before);
   };
   // Live label update while dragging a PA slider (no server round-trip).

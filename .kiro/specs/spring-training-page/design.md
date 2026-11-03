@@ -330,3 +330,61 @@ lives in `team_projection.py`, `offseason_queries.py`, `calibrate.py`, and
   `scripts/projections.py` (allocate_playing_time / allocate_pitcher_time /
   assign_diamond_positions), `scripts/standings.py` (Pythagenpat),
   `src/statsplusplus/evaluation/facet_runs.py`, `.../war.py aging_mult`.
+
+
+---
+
+## 13. Lineup & roster construction — first principles (Session 108)
+
+Added after a "step back" discussion. Two DISTINCT optimization problems that
+were being conflated; the tool treats them differently:
+
+**(A) Roster construction** — which 26, who plays each position, how to platoon.
+This moves WAR MEANINGFULLY and is the projection's real job (the auto-platoon,
+Phase 4 of `_spring_auto_config`, lives here). Runs actually live here.
+
+**(B) Batting order** — the 1–9 sequence of a GIVEN nine. Worth only ~5–15
+runs/season (~0.5–1.5 wins) at the extreme, ~0 if the order is already sane. So
+order is a PRESENTATION / VALIDATION lens, NOT a WAR lever — the projection is
+order-independent. But it's the thing the user LOOKS AT to sanity-check the
+roster, so it should read like a lineup a smart manager would actually write.
+
+### Batting-order research (The Book: Playing the Percentages; FanGraphs/Sky
+Kalkman "Optimizing Your Lineup"; BP). Established, stable findings:
+
+- **Top-of-order gets the most PA** (~18 more PA/slot going up) → put your best
+  ON-BASE guys early; don't waste PA on outs.
+- **Slot value ordering of the top: #1 ≈ #2 ≈ #4 > #3 > #5.** #2 is one of the
+  three MOST valuable spots (high PA + often men on) — the modern "best hitter
+  bats 2nd" (Trout). #3 is OVERRATED by tradition (comes up with 2 outs / bases
+  empty most) — slightly de-prioritized. #4 = best power (most men on base).
+- **OBP weighted slightly more at #1/#2; SLG slightly more at #4/#5.**
+- **Speed/steals at leadoff is OVERRATED** — real but small, must NOT override
+  OBP. A high-OBP slow runner > a low-OBP burner at leadoff. Speed is a
+  TIEBREAKER among similar-OBP bats, not a driver.
+- **Caveat:** optimal vs worst *realistic* order ≈ 1 win; any sane ordering
+  captures nearly all of it. Don't over-engineer; don't claim WAR from order.
+
+### Implementation (`_spring_lineup_cards`, component-aware, per hand)
+
+Per-hitter, per-hand component scores derived from STORED model data (no web /
+no new pull): on-base proxy from `eye`+`cntct` (walks + contact reach base) and
+`proj_woba`; power proxy from `pow`+`gap`; run score from `baserunning_value`
+(`stats.bsr`) + `speed`/`steal`; overall = the vs-hand bat wRAA
+(`facets.bat_R/bat_L`). Slot assignment (research "modern" default):
+
+    1 (leadoff) = best ON-BASE  (run score breaks near-ties)
+    2           = best OVERALL remaining
+    4           = best POWER remaining
+    3           = best OVERALL remaining
+    5           = best POWER remaining
+    6-9         = remaining by OVERALL, descending
+
+### User preferences (`config.lineup_prefs`, optional)
+
+A small lever so the generated order can match a GM's philosophy without
+re-plumbing: `{"style": "modern"|"traditional", "leadoff": "obp"|"speed"}`.
+`traditional` puts the best overall hitter at #3 (not #2); `leadoff:"speed"`
+weights the run score more heavily at #1 (the user's stated preference) vs the
+research-default `obp` (on-base dominant, speed as tiebreaker). Defaults to
+`modern` + `obp`. Batting order remains projection-neutral regardless.
