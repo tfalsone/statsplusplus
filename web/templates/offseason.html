@@ -1140,6 +1140,13 @@
   .sp-drop { background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:12px; margin-left:4px; } .sp-drop:hover { color:var(--red); }
   .sp-benchchip { display:inline-block; background:var(--bg); border:1px solid var(--border); border-radius:5px;
         padding:2px 6px; margin:2px 3px 0 0; font-size:12px; }
+  .sp-bench-lab { font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.03em; }
+  .sp-bench-hint { font-size:10px; color:var(--text-dim); font-style:italic; }
+  .sp-bench-sub { font-size:10px; color:var(--text-dim); }
+  .sp-bench-plays { font-size:9px; color:#5a9bd4; border:1px solid #5a9bd4; border-radius:3px; padding:0 4px; margin-left:3px; }
+  .sp-bench-add { background:var(--surface); color:var(--text-dim); border:1px dashed var(--border);
+        border-radius:4px; font-size:11px; padding:2px 6px; margin-top:4px; cursor:pointer; }
+  .sp-bench-add:hover { border-color:var(--green); color:var(--text); }
   /* board */
   .sp-grid3 { display:grid; grid-template-columns:1.1fr 1fr 1fr; gap:16px; align-items:start; }
   @media(max-width:900px){ .sp-grid3{grid-template-columns:1fr;} .spring-proj{grid-template-columns:1fr; gap:10px;} }
@@ -1745,6 +1752,27 @@
       }).sort(function(a,b){ return b.war_proj - a.war_proj; });
   }
 
+  // "+ add reserve": a hitter not already ON the 26 (not a lineup starter, not a
+  // pie player, not already a bench reserve). Ranked by full-season WAR.
+  function benchAddControl(){
+    var onRoster = {};
+    Object.keys(state.config.lineup||{}).forEach(function(k){ onRoster[state.config.lineup[k]]=1; });
+    (state.config.bench||[]).forEach(function(pid){ onRoster[pid]=1; });
+    // Anyone currently filling a pie (platoon partner) is already accounted for.
+    var hp = (state.constructed && state.constructed.hitter_pie) || {};
+    Object.keys(hp).forEach(function(k){ onRoster[Number(k)]=1; });
+    var opts = state.pool.filter(function(p){
+        return !p.is_pitcher && !onRoster[p.player_id];
+      }).sort(function(a,b){ return b.war_proj - a.war_proj; }).slice(0, 40);
+    if (!opts.length) return '';
+    var o = '<option value="">+ add reserve…</option>' + opts.map(function(p){
+      var lvl = (p.level && p.level !== 'MLB') ? ' '+p.level : '';
+      return '<option value="'+p.player_id+'">'+esc(shortName(p.name))
+           + ' ('+p.war_proj.toFixed(1)+')'+lvl+'</option>';
+    }).join('');
+    return '<select class="sp-bench-add" onchange="if(this.value)springAddBench(Number(this.value))">'+o+'</select>';
+  }
+
   // ── sticky projection header ──
   function renderHeader() {
     var p = state.projection;
@@ -1835,12 +1863,26 @@
     var pen = (con.bullpen||[]).slice(0,8).map(function (r){ return staffRow(r,'RP',r.role||'RP'); }).join('');
 
     var bench = (con.bench||[]).map(function (b) {
-      return '<span class="sp-benchchip">'+esc(b.name)+' ('+b.war.toFixed(1)+')'+utilBadge(b.pid)
+      // Reserve metric: full-season RATE primary (value if pressed into duty),
+      // with his actual projected pie contribution as secondary context. If a
+      // reserve is already filling a pie (platoon partner), note where.
+      var inPie = (b.in_pie && b.in_pie.length)
+        ? ' <span class="sp-bench-plays" title="already playing '+(b.pie_pa||0)+' PA">'
+          + 'plays '+b.in_pie.join('/')+'</span>'
+        : '';
+      var contrib = (b.in_pie && b.in_pie.length)
+        ? ' <span class="sp-bench-sub">'+b.contrib_war.toFixed(1)+' proj</span>'
+        : ' <span class="sp-bench-sub">rate</span>';
+      return '<span class="sp-benchchip">'+esc(b.name)+' <b>'+b.war.toFixed(1)+'</b>'+contrib
+           + utilBadge(b.pid) + inPie
            + '<button class="sp-drop" onclick="springDrop('+b.pid+')" title="remove from 26">✕</button></span>';
     }).join(' ');
     document.getElementById('sv-board').innerHTML =
         '<div class="sp-grid3"><div><div class="sp-colh">Lineup</div>'+fields
-      + '<div class="sp-bench">Bench: '+(bench||'—')+'</div></div>'
+      + '<div class="sp-bench"><span class="sp-bench-lab">Bench reserves</span> '
+      + '<span class="sp-bench-hint">(number = full-season rate; a reserve in a '
+      + 'platoon pie shows his projected contribution)</span><br>'
+      + (bench||'<span class="sp-bench-sub">no reserves</span>') + ' ' + benchAddControl() + '</div></div>'
       + '<div><div class="sp-colh">Rotation</div>'+rot+'</div>'
       + '<div><div class="sp-colh">Bullpen</div>'+pen+'</div></div>';
   }
@@ -2259,6 +2301,16 @@
     cfg.bench = (cfg.bench||[]).filter(function(x){return x!==pid;});
     cfg.rotation = (cfg.rotation||[]).filter(function(x){return x!==pid;});
     cfg.bullpen = (cfg.bullpen||[]).filter(function(x){return x!==pid;});
+    reproject(before);
+  };
+
+  // Add a reserve to the bench (the 26-man position-player depth). He's a
+  // reserve until given pie PA; the server derives his role from there.
+  window.springAddBench = function (pid) {
+    if (!pid) return;
+    var before = JSON.parse(JSON.stringify(state.config));
+    state.config.bench = state.config.bench || [];
+    if (state.config.bench.indexOf(pid) === -1) state.config.bench.push(pid);
     reproject(before);
   };
 

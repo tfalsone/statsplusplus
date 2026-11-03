@@ -2479,14 +2479,54 @@ def _spring_contributions(pool, config):
                                 "role": role, "pt_pct": round(share * 100),
                                 "stats": by_id[pid].get("stats") or {}})
 
-    bench_view = [{"pid": pid, "name": by_id[pid]["name"],
-                   "war": round(by_id[pid]["war_proj"], 1),
-                   "stats": by_id[pid].get("stats") or {}}
-                  for pid in config.get("bench", []) if pid in by_id]
+    # Per-hitter aggregate across all pies: projected-contribution WAR (what the
+    # projection actually credits) and total pie PA. Drives the derived active
+    # roster + honest bench metrics.
+    hitter_pie = {}   # pid -> {"contrib_war": float, "pa": int, "positions": [pos]}
+    for pos, entry in constructed_lineup.items():
+        for r in entry["players"]:
+            if (r.get("pa", 0) or 0) <= 0:
+                continue
+            agg = hitter_pie.setdefault(r["pid"], {"contrib_war": 0.0, "pa": 0, "positions": []})
+            agg["contrib_war"] += r.get("contrib_war", 0.0) or 0.0
+            agg["pa"] += r.get("pa", 0) or 0
+            agg["positions"].append(pos)
+
+    # Bench = RESERVES: rostered hitters who are NOT filling a pie (or barely).
+    # A platoon partner added via a pie is shown IN that pie, not on the bench
+    # (no double-count). The explicit config["bench"] is the GM's reserve list;
+    # a reserve who has since taken a pie share is surfaced with where he plays.
+    # Metric: a reserve's projected CONTRIBUTION (what the projection credits —
+    # ~0 for a pure, unused reserve) is misleading as a headline, so the bench
+    # shows his full-season RATE as the primary number (his value if pressed
+    # into duty) with contribution/PA as secondary context.
+    bench_pids = [pid for pid in config.get("bench", []) if pid in by_id]
+    bench_view = []
+    for pid in bench_pids:
+        agg = hitter_pie.get(pid)
+        bench_view.append({
+            "pid": pid, "name": by_id[pid]["name"],
+            "war": round(by_id[pid]["war_proj"], 1),       # full-season RATE (primary)
+            "contrib_war": round(agg["contrib_war"], 1) if agg else 0.0,
+            "pie_pa": agg["pa"] if agg else 0,
+            "in_pie": [agg_pos for agg_pos in (agg["positions"] if agg else [])],
+            "stats": by_id[pid].get("stats") or {},
+        })
+
+    # Active position players = everyone actually taking PA in a pie PLUS the
+    # explicit bench reserves (26-man accounting). A platoon partner who isn't
+    # on config["bench"] is still active (he's in a pie) — this is the union the
+    # UI needs so no rostered body is unaccounted-for.
+    active_hitters = sorted(
+        set(hitter_pie) | set(bench_pids),
+        key=lambda p: -(hitter_pie.get(p, {}).get("contrib_war", 0.0)
+                        or by_id[p]["war_proj"]))
 
     constructed = {
         "lineup": constructed_lineup, "rotation": constructed_rotation,
         "bullpen": constructed_pen, "bench": bench_view,
+        "active_hitters": active_hitters,
+        "hitter_pie": {str(k): v for k, v in hitter_pie.items()},
     }
     return contribs, constructed, overalloc
 

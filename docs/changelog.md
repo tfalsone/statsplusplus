@@ -106,6 +106,24 @@ now returns `(contribs, constructed, overalloc)`. Tests:
 `test_spring_pa_cap_scales_war_proportionally`. Full suite 1078 + 26 web smoke
 green. Display/projection-honesty fix — no eval-model change.
 
+**Bench/roster accounting redesign.** The bench was a static 4-pid list showing
+each player's full-season WAR — disconnected from the pie model: a platoon
+partner added via `pa_alloc` appeared nowhere in the roster accounting, the bench
+never updated, there was no way to add a reserve, and the displayed WAR oversold a
+bench bat (full-season rate for a ~100-PA role). Reworked so the active roster is
+**derived from actual usage**: `_spring_contributions` aggregates each hitter's
+projected-contribution WAR + pie PA across all positions (`constructed.hitter_pie`)
+and exposes `constructed.active_hitters` (pie users ∪ explicit bench reserves — so
+a platoon partner is always accounted for). The **bench renders as reserves**: each
+chip shows full-season RATE (primary) + projected pie contribution (secondary) + a
+"plays {pos}" tag when the reserve is actually filling a platoon/backup pie, and an
+**"+ add reserve"** control adds bench depth (hitters not already rostered, via
+`config.bench`; `springAddBench`). Verified live on vMLB: the four auto-bench bats
+now correctly show they're platoon backups (Jim Dunn rate 2.2 / 0.6 proj / plays
+3B, etc.), and Add works. Tests: bench-view-carries-rate-and-contribution,
+active-hitters-includes-pie-and-bench, bench-reserve-in-pie-shows-contribution.
+Full suite 1081 + 26 web smoke green. Display-only — no eval change.
+
 ---
 
 ## Session 108 — Spring Training "Opening Day Builder" + exact stored projected wOBA

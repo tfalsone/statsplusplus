@@ -1416,6 +1416,72 @@ def test_spring_caps_cross_position_over_allocation(q):
     assert warns and any(util["name"] in w["msg"] for w in warns)
 
 
+def test_spring_bench_view_carries_rate_and_contribution(q):
+    """Each bench reserve carries full-season RATE (war), projected pie
+    CONTRIBUTION (contrib_war), pie PA, and where he plays (in_pie)."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    for b in res["constructed"]["bench"]:
+        assert set(b) >= {"pid", "name", "war", "contrib_war", "pie_pa", "in_pie"}
+        # A pure reserve (not in a pie) has ~0 contribution but a real rate.
+        if not b["in_pie"]:
+            assert b["contrib_war"] == 0.0
+
+
+def test_spring_active_hitters_includes_pie_and_bench(q):
+    """active_hitters is the union of everyone taking pie PA and the explicit
+    bench reserves — so a platoon partner not on the bench is still accounted."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    auto = q.get_spring_projection(TEAM_ID)
+    cfg = _clone_config(auto["config"])
+    # Platoon a NON-bench, non-starter bat into LF's LHP wedge via pa_alloc.
+    pool = {p["player_id"]: p for p in auto["pool"]}
+    lf = cfg["lineup"].get("LF")
+    partner = next((p["player_id"] for p in auto["pool"]
+                    if not p["is_pitcher"] and p["player_id"] != lf
+                    and "LF" in (p.get("eligible") or [])
+                    and p["player_id"] not in cfg.get("bench", [])
+                    and p["player_id"] not in cfg["lineup"].values()), None)
+    if partner is None:
+        return
+    cfg["pa_alloc"] = {"LF": {str(lf): {"r": 467, "l": 60},
+                              str(partner): {"r": 0, "l": 131}}}
+    res = q.get_spring_projection(TEAM_ID, cfg)
+    # The partner is in a pie → must appear in active_hitters even though he's
+    # not on config["bench"].
+    assert partner in res["constructed"]["active_hitters"]
+    assert str(partner) in res["constructed"]["hitter_pie"]
+
+
+def test_spring_bench_reserve_in_pie_shows_contribution(q):
+    """A bench reserve who IS filling a platoon pie reports his pie positions
+    (in_pie) and a non-zero contribution (not just his rate)."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    auto = q.get_spring_projection(TEAM_ID)
+    cfg = _clone_config(auto["config"])
+    bench = list(cfg.get("bench", []))
+    pool = {p["player_id"]: p for p in auto["pool"]}
+    # Find a bench reserve eligible somewhere in the field, platoon him in.
+    cand = next((b for b in bench
+                 if set(pool.get(b, {}).get("eligible") or []) & set(("LF","RF","1B","3B","2B","SS"))), None)
+    if cand is None:
+        return
+    pos = next(s for s in ("LF","RF","1B","3B","2B","SS")
+               if s in (pool[cand].get("eligible") or []))
+    starter = cfg["lineup"].get(pos)
+    if not starter:
+        return
+    cfg["pa_alloc"] = {pos: {str(starter): {"r": 467, "l": 60},
+                             str(cand): {"r": 0, "l": 131}}}
+    res = q.get_spring_projection(TEAM_ID, cfg)
+    bview = {b["pid"]: b for b in res["constructed"]["bench"]}
+    if cand in bview:
+        assert bview[cand]["in_pie"]          # notes where he plays
+        assert bview[cand]["pie_pa"] > 0
+
+
 def test_spring_no_over_allocation_warning_when_within_cap(q):
     """A normal auto roster (no body over a full season) raises NO
     over_allocated warning."""

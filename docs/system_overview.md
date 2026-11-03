@@ -157,7 +157,17 @@ his per-position reps and the WAR they generate down proportionally (he still
 plays everywhere, just less) and emits an `over_allocated` warning naming the
 player and positions — so the projected record stays physically possible.
 Out-of-options is a per-player user toggle (not in the API) that forces a must-decide.
-Plans persist per team in `config/spring_plans.json`. Endpoints: `/api/spring-plan`
+**Roster/bench accounting is derived, not static:** `_spring_contributions`
+aggregates each hitter's projected-contribution WAR + pie PA across all positions
+(`constructed.hitter_pie`) and exposes `constructed.active_hitters` (the union of
+everyone taking pie PA — incl. platoon partners added via `pa_alloc` — and the
+explicit `config.bench` reserves), so no rostered body goes unaccounted. The
+**bench** renders as *reserves*: each chip shows the player's full-season RATE
+(primary — his value if pressed into duty, since a pure unused reserve's projected
+contribution is ~0) plus his projected pie contribution + a "plays {pos}" tag when
+he's actually filling a platoon/backup pie. An "+ add reserve" control adds bench
+depth (hitters not already rostered). Plans persist per team in
+`config/spring_plans.json`. Endpoints: `/api/spring-plan`
 (GET/POST/DELETE), `/api/spring-project` (POST). The pool's wOBA stat surfaces the
 exact stored model projection (`ratings.proj_woba`, written by the evaluation engine
 from the tool→wOBA fit), falling back to an OPS+ × league-wOBA estimate for leagues
