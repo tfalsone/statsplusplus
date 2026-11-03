@@ -1152,17 +1152,7 @@
   .sp-row:hover { border-color:var(--green); } .sp-pos { color:var(--text-dim); font-size:11px; } .sp-name { font-weight:600; }
   .sp-expand { display:none; }
   .sp-candpool { margin:2px 0 6px 42px; border-left:2px solid var(--green); padding-left:8px; }
-  /* platoon pairing editor */
-  .sp-platoon { margin:4px 0 8px 42px; border-left:2px solid var(--gold); padding:4px 0 4px 8px; }
-  .sp-plat-row { display:flex; align-items:center; gap:8px; margin:2px 0; }
-  .sp-plat-lab { font-size:11px; color:var(--text-dim); width:92px; }
-  .sp-plat-freq { opacity:.6; font-size:9px; }
-  .sp-plat { background:var(--surface); color:var(--text); border:1px solid var(--border);
-        border-radius:4px; font-size:11px; padding:1px 4px; max-width:190px; }
-  .sp-plat:hover { border-color:var(--gold); }
-  .sp-plat-clear { background:none; border:1px solid var(--border); color:var(--text-dim);
-        border-radius:4px; font-size:10px; padding:1px 8px; margin-top:3px; cursor:pointer; }
-  .sp-plat-clear:hover { color:var(--red); border-color:var(--red); }
+  /* platoon badge (derived from the pie) */
   .sp-plat-on { font-size:9px; color:var(--gold); border:1px solid var(--gold); border-radius:3px; padding:0 4px; margin-left:4px; }
   /* PA pie (handedness wedges) */
   .sp-pie { margin:4px 0 6px 42px; }
@@ -1187,6 +1177,7 @@
   .sp-pie-add { background:var(--surface); color:var(--text-dim); border:1px dashed var(--border);
         border-radius:4px; font-size:11px; padding:2px 6px; max-width:220px; cursor:pointer; }
   .sp-pie-add:hover { border-color:var(--green); color:var(--text); }
+  .sp-pie-hint { font-size:10px; color:var(--text-dim); font-style:italic; margin-top:4px; }
   .sp-cand { display:flex; justify-content:space-between; padding:3px 6px; font-size:12px; color:var(--text-dim); cursor:pointer; border-radius:4px; }
   .sp-cand:hover { background:rgba(78,204,163,0.1); color:var(--text); } .sp-cand.pick { color:var(--green); }
   .sp-bench { color:var(--text-dim); font-size:12px; margin-top:8px; }
@@ -1609,29 +1600,25 @@
     return hitStat === 'war' ? warcls(p.war_proj) : 'mid';
   }
 
-  // ── platoon pairing editor ──
-  // Current vs-RHP / vs-LHP assignment at a position (defaults to the starter).
-  function platoonOf(pos){
-    var pl = (state.config.platoon||{})[pos] || {};
-    var starter = (state.config.lineup||{})[pos];
-    return { vsR: pl.vsR != null ? pl.vsR : starter, vsL: pl.vsL != null ? pl.vsL : starter };
+  // ── platoon (derived from the PA pie) ──
+  // Who LEADS each handedness wedge in the constructed lineup — the vs-RHP and
+  // vs-LHP "starters". Derived from the pie (the single source of truth for
+  // deployment), NOT a separate platoon config. A position is a platoon when
+  // the two wedges are led by different players.
+  function pieLeaders(pos){
+    var entry = (state.constructed && state.constructed.lineup) ? state.constructed.lineup[pos] : null;
+    var players = (entry && entry.players) || [];
+    function lead(key){
+      var best = null;
+      players.forEach(function(pl){ if ((pl[key]||0) > 0 && (!best || pl[key] > best[key])) best = pl; });
+      return best ? best.pid : ((state.config.lineup||{})[pos] || null);
+    }
+    return { vsR: lead('pa_r'), vsL: lead('pa_l') };
   }
-  // A <select> of eligible players for one hand, each labeled with his split
-  // OPS+ vs that hand so the user can pair strong-side bats intentionally.
-  function platoonSelect(pos, hand){
-    var cur = platoonOf(pos)[hand === 'R' ? 'vsR' : 'vsL'];
-    var opts = eligibleForSlot(pos);
-    var starter = (state.config.lineup||{})[pos];
-    if (starter && byId[starter] && !opts.some(function(o){return o.player_id===starter;}))
-      opts = [byId[starter]].concat(opts);
-    var splitKey = hand === 'R' ? 'ops_vs_r' : 'ops_vs_l';
-    var o = opts.map(function(pl){
-      var s = pl[splitKey]; var lab = s ? ' ('+Math.round(s)+')' : '';
-      return '<option value="'+pl.player_id+'"'+(pl.player_id===cur?' selected':'')+'>'
-           + esc(shortName(pl.name))+lab+'</option>';
-    }).join('');
-    return '<select class="sp-plat" onclick="event.stopPropagation()" '
-         + 'onchange="springSetPlatoon(\''+pos+'\',\''+hand+'\',this.value)">'+o+'</select>';
+  // True when the position deploys a genuine platoon (different leaders by hand).
+  function isPlatoon(pos){
+    var l = pieLeaders(pos);
+    return l.vsR != null && l.vsL != null && l.vsR !== l.vsL;
   }
   // Distinct colors for the players filling a position's PA pie.
   var PIE_COLORS = ['#4ecca3','#5a9bd4','#e0b64e','#c678dd','#e06c75','#56b6c2'];
@@ -1659,7 +1646,8 @@
             + 'title="'+open+' PA unfilled"><span class="sp-pieseg-lab">'+open+' open</span></div>';
     }
     // Per-player PA sliders for literal allocation of this wedge, each with a
-    // remove (✕). Dragging one rebalances the others (conservation).
+    // remove (✕) scoped to THIS hand. Dragging one rebalances the others in the
+    // same wedge (conservation); removing zeroes him in this hand only.
     var ci2 = 0;
     var sliders = players.map(function (pl) {
       var pa = hand === 'R' ? pl.pa_r : pl.pa_l;
@@ -1672,41 +1660,44 @@
            + 'onchange="springPaCommit(\''+pos+'\','+pl.pid+',\''+hand+'\',this.value)" '
            + 'onclick="event.stopPropagation()">'
            + '<span class="sp-pasl-val" id="pav-'+pos+'-'+pl.pid+'-'+hand+'">'+pa+'</span>'
-           + '<button class="sp-pie-rm" title="remove from pie" '
-           + 'onclick="event.stopPropagation();springPieRemove(\''+pos+'\','+pl.pid+')">✕</button></div>';
+           + '<button class="sp-pie-rm" title="remove from vs '+hand+'HP" '
+           + 'onclick="event.stopPropagation();springPieRemove(\''+pos+'\','+pl.pid+',\''+hand+'\')">✕</button></div>';
     }).join('');
+    // Per-wedge "+ add vs {hand}HP" — adds a player to THIS wedge only (fixes the
+    // old coupling where adding vs one hand forced him into both). Candidates:
+    // eligible players not already filling this wedge, labeled with split OPS+
+    // vs this hand so you can pair a strong-side bat intentionally.
+    var inWedge = {};
+    players.forEach(function(pl){ inWedge[pl.pid] = 1; });
+    var splitKey = hand === 'R' ? 'ops_vs_r' : 'ops_vs_l';
+    var addOpts = eligibleForSlot(pos).filter(function(p){ return !inWedge[p.player_id]; });
+    var add = '';
+    if (addOpts.length) {
+      var o = '<option value="">+ add vs '+hand+'HP…</option>' + addOpts.map(function(p){
+        var s = p[splitKey]; var lab = s ? ' ('+Math.round(s)+')' : '';
+        return '<option value="'+p.player_id+'">'+esc(shortName(p.name))+lab+'</option>';
+      }).join('');
+      add = '<select class="sp-pie-add" onclick="event.stopPropagation()" '
+          + 'onchange="if(this.value)springPieAdd(\''+pos+'\',Number(this.value),\''+hand+'\')">'+o+'</select>';
+    }
     return '<div class="sp-wedge"><div class="sp-wedge-head">vs '+hand+'HP '
          + '<span class="sp-wedge-pa">'+total+' PA · '+freq+'</span></div>'
          + '<div class="sp-piebar">'+segs+'</div>'
-         + '<div class="sp-paslides">'+sliders+'</div></div>';
-  }
-  // "+ add player" control: eligible players NOT already sharing the pie.
-  function pieAddControl(pos, entry){
-    var inPie = {}; (entry.players || []).forEach(function(p){ inPie[p.pid]=1; });
-    var opts = eligibleForSlot(pos).filter(function(p){ return !inPie[p.player_id]; });
-    if (!opts.length) return '';
-    var o = '<option value="">+ add player to share…</option>' + opts.map(function(p){
-      return '<option value="'+p.player_id+'">'+esc(shortName(p.name))
-           + (p.slot_war && p.slot_war[pos]!=null ? ' ('+p.slot_war[pos].toFixed(1)+')' : '')+'</option>';
-    }).join('');
-    return '<select class="sp-pie-add" onclick="event.stopPropagation()" '
-         + 'onchange="if(this.value)springPieAdd(\''+pos+'\',Number(this.value))">'+o+'</select>';
+         + '<div class="sp-paslides">'+sliders+'</div>'
+         + '<div class="sp-pie-addrow">'+add+'</div></div>';
   }
   function platoonPanel(pos){
     var entry = (state.constructed && state.constructed.lineup) ? state.constructed.lineup[pos] : null;
-    var pl = platoonOf(pos);
-    var isPlat = pl.vsR !== pl.vsL;
-    // The pie: two wedges showing how the ~658 PA at this position are filled,
-    // plus an "+ add player to share" control.
-    var pie = entry ? '<div class="sp-pie">'+pieWedge(pos,'R',entry)+pieWedge(pos,'L',entry)
-                    + '<div class="sp-pie-addrow">'+pieAddControl(pos, entry)+'</div></div>' : '';
-    // Fill controls: who plays vs each hand (platoon), + the starter's share.
-    var controls = '<div class="sp-platoon" onclick="event.stopPropagation()">'
-         + '<div class="sp-plat-row"><span class="sp-plat-lab">vs RHP</span>'+platoonSelect(pos,'R')+'</div>'
-         + '<div class="sp-plat-row"><span class="sp-plat-lab">vs LHP</span>'+platoonSelect(pos,'L')+'</div>'
-         + (isPlat ? '<button class="sp-plat-clear" onclick="event.stopPropagation();springClearPlatoon(\''+pos+'\')">clear platoon</button> <span class="sp-plat-on">platoon</span>' : '')
-         + '</div>';
-    return pie + controls;
+    if (!entry) return '';
+    // The pie IS the platoon editor: two independently-managed handedness
+    // wedges (each with its own +add / remove / sliders). A platoon emerges
+    // when the two wedges are led by different players — no separate control.
+    var plat = isPlatoon(pos)
+      ? '<div class="sp-pie-hint">Platoon — vs RHP and vs LHP led by different players. '
+        + 'Adjust each wedge independently above.</div>'
+      : '<div class="sp-pie-hint">Everyday — same player leads both wedges. '
+        + 'Add a strong-side bat to a single wedge to platoon.</div>';
+    return '<div class="sp-pie">'+pieWedge(pos,'R',entry)+pieWedge(pos,'L',entry)+plat+'</div>';
   }
 
   // Pitchers eligible for a staff group ('SP' or 'RP'), not already in it.
@@ -1768,9 +1759,9 @@
                + '<span class="sp-war '+warclsAt(c,pos)+'">'+poolHitValAt(c,pos)+'</span></div>';
         }).join('') : '<div class="sp-cand" style="cursor:default">no eligible alternatives</div>') + '</div>';
       var tierSel = p ? hitterTierSelect(p.pid) : '';
-      // Platoon indicator on the row when a vs-R/vs-L split is set.
-      var pl = platoonOf(pos);
-      var platBadge = (p && pl.vsR !== pl.vsL) ? ' <span class="sp-plat-on">PLATOON</span>' : '';
+      // Platoon indicator on the row — derived from the pie (different leaders
+      // by hand), not a separate platoon config.
+      var platBadge = (p && pos !== 'DH' && isPlatoon(pos)) ? ' <span class="sp-plat-on">PLATOON</span>' : '';
       // Expandable area: swap pool + the platoon pairing editor (field slots only).
       var expand = '<div class="sp-expand">' + pool
                  + (pos !== 'DH' && p ? platoonPanel(pos) : '') + '</div>';
@@ -2042,6 +2033,15 @@
       });
   }
 
+  // Clear any literal pie allocation (and legacy platoon pairing) for a slot so
+  // its deployment re-derives from the current occupant. Called whenever the
+  // occupant of a position CHANGES (swap/drop) — otherwise a stale pa_alloc
+  // keyed on the old player would silently override the new one.
+  function clearSlotDeployment(cfg, pos) {
+    if (cfg.pa_alloc) delete cfg.pa_alloc[pos];
+    if (cfg.platoon) delete cfg.platoon[pos];
+  }
+
   window.springSwap = function (pos, pid) {
     if (!isEligible(pid, pos)) { return; }   // guard: only legal slottings
     var before = JSON.parse(JSON.stringify(state.config));  // for the per-edit delta
@@ -2060,6 +2060,9 @@
     } else if (fromPos && fromPos !== pos) {
       delete cfg.lineup[fromPos];   // moved within lineup, old slot now empty
     }
+    // Both affected slots now have a different occupant → drop their stale pies.
+    clearSlotDeployment(cfg, pos);
+    if (fromPos && fromPos !== pos) clearSlotDeployment(cfg, fromPos);
     reproject(before);
   };
 
@@ -2098,24 +2101,6 @@
     state.config.roles = state.config.roles || {};
     if (role) state.config.roles[pid] = role;
     else delete state.config.roles[pid];
-    reproject(before);
-  };
-  window.springSetPlatoon = function (pos, hand, pid) {
-    pid = Number(pid);
-    var before = JSON.parse(JSON.stringify(state.config));
-    state.config.platoon = state.config.platoon || {};
-    var cur = platoonOf(pos);
-    var pair = { vsR: cur.vsR, vsL: cur.vsL };
-    pair[hand === 'R' ? 'vsR' : 'vsL'] = pid;
-    // If both hands point at the same player, it's not a platoon — clear it.
-    if (pair.vsR === pair.vsL) delete state.config.platoon[pos];
-    else state.config.platoon[pos] = pair;
-    reproject(before);
-  };
-  window.springClearPlatoon = function (pos) {
-    var before = JSON.parse(JSON.stringify(state.config));
-    if (state.config.platoon) delete state.config.platoon[pos];
-    if (state.config.pa_alloc) delete state.config.pa_alloc[pos];  // revert to derived
     reproject(before);
   };
   // Live label update while dragging a PA slider (no server round-trip).
@@ -2163,46 +2148,60 @@
     }
     reproject(before);
   };
-  // Add an eligible player to a position's pie (both wedges, a modest default
-  // slice taken proportionally from whoever is there).
-  window.springPieAdd = function (pos, pid) {
+  // Add an eligible player to ONE handedness wedge of a position's pie. Adding
+  // vs LHP does NOT touch vs RHP (independent platoon management) — the new
+  // player takes ~1/3 of THAT wedge, the rest scale down to conserve it. When
+  // `hand` is omitted, falls back to both wedges (legacy callers).
+  window.springPieAdd = function (pos, pid, hand) {
     var before = JSON.parse(JSON.stringify(state.config));
     var cur = seedAlloc(pos);
     cur[pid] = cur[pid] || { r: 0, l: 0 };
-    ['R','L'].forEach(function(hand){
-      var k = hand === 'R' ? 'r' : 'l';
-      var budget = wedgeBudget(pos, hand);
-      // give the new player ~1/3 of the wedge, scale the rest down to fit.
+    var hands = hand ? [hand] : ['R', 'L'];
+    hands.forEach(function (h) {
+      var k = h === 'R' ? 'r' : 'l';
+      var budget = wedgeBudget(pos, h);
       var give = Math.round(budget / 3);
-      var others = Object.keys(cur).map(Number).filter(function(x){ return x !== pid; });
-      var otherSum = others.reduce(function(s,x){ return s + (cur[x][k] || 0); }, 0);
+      var others = Object.keys(cur).map(Number).filter(function (x) { return x !== pid; });
+      var otherSum = others.reduce(function (s, x) { return s + (cur[x][k] || 0); }, 0);
       cur[pid][k] = give;
       var remain = Math.max(0, budget - give);
-      if (otherSum > 0) others.forEach(function(x){ cur[x][k] = Math.round((cur[x][k]||0)/otherSum*remain); });
+      if (otherSum > 0) others.forEach(function (x) { cur[x][k] = Math.round((cur[x][k] || 0) / otherSum * remain); });
     });
     reproject(before);
   };
-  // Remove a player from a position's pie (zero his PA in both wedges; the
-  // freed PA is redistributed to whoever remains).
-  window.springPieRemove = function (pos, pid) {
+  // Remove a player from ONE handedness wedge (zero his PA in that hand; the
+  // freed PA is redistributed to whoever remains in THAT wedge). He drops off
+  // the position entirely only when both wedges are zero. `hand` omitted =
+  // remove from both (legacy).
+  window.springPieRemove = function (pos, pid, hand) {
     var before = JSON.parse(JSON.stringify(state.config));
     var cur = seedAlloc(pos);
     if (!cur[pid]) { return; }
-    delete cur[pid];
-    ['R','L'].forEach(function(hand){
-      var k = hand === 'R' ? 'r' : 'l';
-      var budget = wedgeBudget(pos, hand);
-      var others = Object.keys(cur).map(Number);
-      var otherSum = others.reduce(function(s,x){ return s + (cur[x][k]||0); }, 0);
-      if (otherSum > 0) others.forEach(function(x){ cur[x][k] = Math.round((cur[x][k]||0)/otherSum*budget); });
+    var hands = hand ? [hand] : ['R', 'L'];
+    hands.forEach(function (h) {
+      var k = h === 'R' ? 'r' : 'l';
+      var budget = wedgeBudget(pos, h);
+      cur[pid][k] = 0;
+      var others = Object.keys(cur).map(Number).filter(function (x) { return x !== pid; });
+      var otherSum = others.reduce(function (s, x) { return s + (cur[x][k] || 0); }, 0);
+      if (otherSum > 0) others.forEach(function (x) { cur[x][k] = Math.round((cur[x][k] || 0) / otherSum * budget); });
     });
+    // Fully gone from the pie → drop the entry so the position can re-derive.
+    if ((cur[pid].r || 0) === 0 && (cur[pid].l || 0) === 0) delete cur[pid];
     reproject(before);
   };
 
   window.springDrop = function (pid) {
     var before = JSON.parse(JSON.stringify(state.config));
     var cfg = state.config;
-    Object.keys(cfg.lineup).forEach(function(k){ if (cfg.lineup[k]===pid) delete cfg.lineup[k]; });
+    Object.keys(cfg.lineup).forEach(function(k){
+      if (cfg.lineup[k]===pid) { delete cfg.lineup[k]; clearSlotDeployment(cfg, k); }
+    });
+    // Also drop the dropped player from any pie he shares as a non-starter.
+    if (cfg.pa_alloc) Object.keys(cfg.pa_alloc).forEach(function(pos){
+      var a = cfg.pa_alloc[pos];
+      if (a && (a[pid] || a[String(pid)])) { delete a[pid]; delete a[String(pid)]; }
+    });
     cfg.bench = (cfg.bench||[]).filter(function(x){return x!==pid;});
     cfg.rotation = (cfg.rotation||[]).filter(function(x){return x!==pid;});
     cfg.bullpen = (cfg.bullpen||[]).filter(function(x){return x!==pid;});

@@ -771,6 +771,62 @@ def test_spring_recommend_roster_sizes(q):
     assert len(allpids) == len(set(allpids)), "a player is double-rostered"
 
 
+def test_spring_recommend_skips_below_replacement_reliever(q):
+    """A below-replacement reliever (negative WAR) is NOT auto-rostered even when
+    there's an open bullpen spot — a replacement-level call-up (~0 WAR) is
+    strictly better than carrying a negative arm. Remove the fixture's RP pool
+    down to 6 positive arms so two pen slots are open, then add a negative arm
+    that the OLD code (top-8-by-WAR) would have grabbed; confirm it's left out
+    and the pen simply runs short."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    # Drop two fixture relievers (746, 747) so only 6 positive arms remain.
+    for pid in (746, 747):
+        conn.execute("DELETE FROM player_evaluation WHERE player_id=?", (pid,))
+        conn.execute("DELETE FROM players WHERE player_id=?", (pid,))
+    # Add a clearly below-replacement arm — now it WOULD rank in the top 8.
+    conn.execute(
+        "INSERT OR REPLACE INTO player_evaluation (player_id, eval_date, name, "
+        "bucket, age, composite, ceiling, level, team_id, parent_team_id, peak_war) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (770, EVAL_DATE, "Negative Arm", "RP", 29, 40, 42, "1", TEAM_ID, TEAM_ID, -0.6))
+    conn.execute(
+        "INSERT OR REPLACE INTO players (player_id, name, age, team_id, "
+        "parent_team_id, level, pos, role, is_on_secondary) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (770, "Negative Arm", 29, TEAM_ID, 0, "1", 1, 13, 1))
+    conn.commit()
+    cfg = q.get_spring_projection(TEAM_ID)["config"]
+    assert 770 not in cfg["bullpen"], "a negative-WAR arm must not be auto-rostered"
+    # The pen runs short rather than padding with the negative arm.
+    assert len(cfg["bullpen"]) == 6
+    # Every auto-rostered reliever is above the replacement floor.
+    byid = {p["player_id"]: p for p in q.get_spring_projection(TEAM_ID)["pool"]}
+    assert all(byid[pid]["war_proj"] > 0 for pid in cfg["bullpen"] if pid in byid)
+
+
+def test_spring_below_replacement_reliever_fits_open_slot_if_flagged(q):
+    """If the GM flags that negative arm out-of-options, he's still a genuine
+    cut (below the OOO credibility floor) — surfaced as must-expose, not forced
+    onto the roster."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    conn.execute(
+        "INSERT OR REPLACE INTO player_evaluation (player_id, eval_date, name, "
+        "bucket, age, composite, ceiling, level, team_id, parent_team_id, peak_war) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (771, EVAL_DATE, "Neg Arm", "RP", 29, 40, 42, "1", TEAM_ID, TEAM_ID, -0.6))
+    conn.execute(
+        "INSERT OR REPLACE INTO players (player_id, name, age, team_id, "
+        "parent_team_id, level, pos, role, is_on_secondary) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (771, "Neg Arm", 29, TEAM_ID, 0, "1", 1, 13, 1))
+    conn.commit()
+    res = q.get_spring_projection(TEAM_ID, out_of_options={771})
+    assert 771 not in res["config"]["bullpen"]
+    assert any(m["pid"] == 771 for m in res["must_expose"])
+
+
 def test_spring_recommend_carries_credible_out_of_options(q):
     """A flagged, credible player off the auto roster is pulled onto it."""
     conn = q.get_db()

@@ -1849,6 +1849,10 @@ _SPRING_FILL_ORDER = ["C", "SS", "CF", "2B", "3B", "RF", "LF", "1B"]
 _SPRING_BENCH_SLOTS = 4
 _SPRING_SP_SLOTS = 5
 _SPRING_RP_SLOTS = 8
+# Replacement floor for auto-rostering a reliever. An arm projected at or below
+# this adds nothing over a replacement-level call-up, so the recommender leaves
+# the bullpen spot open rather than carrying a negative-WAR arm.
+_SPRING_RP_MIN_WAR = 0.0
 # A flagged out-of-options player must be at least this good (current-age WAR)
 # for the recommender to carry him over a better alternative. Below this he's a
 # genuine cut and gets surfaced as must-expose.
@@ -1915,9 +1919,15 @@ def _spring_auto_config(pool, out_of_options=None):
         lineup["DH"] = dh[0]["player_id"]
         used.add(dh[0]["player_id"])
 
-    # Phase 2 — pitchers.
+    # Phase 2 — pitchers. The rotation is a HARD 5 (you must field five starters
+    # even if the fifth is weak — a 4-man rotation isn't an option). The bullpen
+    # FLEXES: only carry arms projected above replacement — a below-replacement
+    # reliever (negative WAR) is strictly worse than leaving the spot for a
+    # replacement-level call-up (~0 WAR), so don't auto-roster him. The GM can
+    # still add one manually if he has a reason to.
     rotation = [p["player_id"] for p in sps[:_SPRING_SP_SLOTS]]
-    bullpen = [p["player_id"] for p in rps[:_SPRING_RP_SLOTS]]
+    bullpen = [p["player_id"] for p in rps[:_SPRING_RP_SLOTS]
+               if p["war_proj"] > _SPRING_RP_MIN_WAR]
     used.update(rotation)
     used.update(bullpen)
 
@@ -1986,11 +1996,14 @@ def _spring_auto_config(pool, out_of_options=None):
             else:
                 must_expose.append(pid)
         elif p["is_pitcher"]:
-            weak = min(bullpen, key=lambda x: by_id[x]["war_proj"]) if bullpen else None
-            if weak and p["war_proj"] > by_id[weak]["war_proj"]:
-                bullpen[bullpen.index(weak)] = pid
+            if len(bullpen) < _SPRING_RP_SLOTS:
+                bullpen.append(pid)            # open pen slot (we trim sub-repl arms)
             else:
-                must_expose.append(pid)
+                weak = min(bullpen, key=lambda x: by_id[x]["war_proj"]) if bullpen else None
+                if weak and p["war_proj"] > by_id[weak]["war_proj"]:
+                    bullpen[bullpen.index(weak)] = pid
+                else:
+                    must_expose.append(pid)
         else:
             weak = min(bench, key=lambda x: by_id[x]["war_proj"]) if bench else None
             if weak and p["war_proj"] > by_id[weak]["war_proj"]:
