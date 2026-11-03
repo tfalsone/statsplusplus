@@ -154,7 +154,22 @@ Field / Table, default Board), edited in place (patches header + active view, no
 re-render). Playing time is a derived PA "pie": a fixed slot budget (~658 PA, 467 vs
 RHP / 191 vs LHP) filled by platoon assignment × realistic start-shares (backup
 catcher required), with per-player PA sliders, conservation (reallocating draws from
-other players), add/remove, and three-way splits. Candidate WAR is slot-adjusted.
+other players), add/remove, and three-way splits. **Each slot's contribution is
+built facet-by-facet in RUNS** (not off the bundled scalar): `_spring_pool` pulls
+the raw tools and computes per-player current-age facet runs at a 600-PA baseline
+via the evaluation engine's run-space spine (`statsplusplus.evaluation.facet_runs`)
+using the same per-league calibration the engine uses (`tool_weights.json` →
+`run_space`) — bat wRAA (overall + per-hand from the split tools), baserunning
+runs, fielding runs AT each eligible slot, and the positional adjustment per slot.
+A PA-wedge allocation (`_slot_contrib`) is valued by summing these: bat per hand,
+baserunning/fielding/positional pro-rated by PA, then run → WAR via the league
+anchor. This keeps a platoon bat's offensive edge in the BAT facet so it is never
+scaled down by the slot's defensive/positional penalty (fixing a bug where adding
+a better vs-LHP bat out of position could lower the projection). The
+`PlayerContribution` facet shares (`bat/br/fld_share`) are each player's real run
+split, so the engine's facet breakdown is honest. Falls back to the scalar
+slot-adjusted path (`_spring_slot_war`) when a league's calibration predates the
+run-space model.
 **Per-player PA cap:** because each position's pie is balanced independently, a
 multi-position utility bat could be allocated more than a full season of PA
 across spots; `_spring_contributions` sums each hitter's total PA across all

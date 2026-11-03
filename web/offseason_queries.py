@@ -1692,6 +1692,137 @@ def _spring_calibration(conn, pyth_exp):
     return _SPRING_CALIB_CACHE[key]
 
 
+# Slot -> run-space defensive bucket (fielding_runs / def_curve keys). Field
+# corners share the outfield "COF" curve; CF/IF/C key 1:1; 1B & DH carry no
+# fielding runs (handled inside fielding_runs). Mirrors _SPRING_SLOT_ADJ_KEY
+# but uses the run-space bucket names.
+_SPRING_SLOT_DEF_BUCKET = {
+    "C": "C", "1B": "1B", "2B": "2B", "3B": "3B", "SS": "SS",
+    "LF": "COF", "RF": "COF", "CF": "CF", "DH": "DH",
+}
+# Full-season PA baseline the per-facet runs are expressed at (facet_runs.bat_runs
+# defaults to 600; keep the two in sync).
+_SPRING_FACET_PA = 600.0
+
+
+def _spring_run_space(league_dir):
+    """Load the per-league run-space facet calibration from tool_weights.json.
+
+    Returns the `run_space` dict ({woba_scale, lg_woba, br_curve, def_curve,
+    anchor, ...}) or None when the league hasn't been re-run on the run-space
+    model (older calibration) — callers then fall back to the scalar war_proj.
+    Cached per league_dir.
+    """
+    key = ("run_space", str(league_dir))
+    if key in _SPRING_CALIB_CACHE:
+        return _SPRING_CALIB_CACHE[key]
+    import json as _json
+    out = None
+    try:
+        tw = _json.loads((league_dir / "config" / "tool_weights.json").read_text())
+        rs = tw.get("run_space") or {}
+        # Require the pieces the facet math needs; else treat as unavailable.
+        if rs.get("woba_scale") and rs.get("anchor"):
+            out = rs
+    except Exception:
+        out = None
+    _SPRING_CALIB_CACHE[key] = out
+    return out
+
+
+def _spring_bat_runs_for(_raw, hand, rs, lg_woba, weights):
+    """Projected bat runs (wRAA) at 600 PA for a hitter facing ``hand`` ('R',
+    'L', or None=overall), from the run-space tool->wOBA fit on that hand's
+    split tools. Falls back to the overall proj_woba (then an OPS+-derived
+    estimate is handled upstream) when a split is missing."""
+    from statsplusplus.evaluation.composite import project_woba_hitter
+    from statsplusplus.evaluation.facet_runs import bat_runs
+    scale = rs.get("woba_scale")
+    lgw = rs.get("lg_woba", lg_woba)
+    if hand in ("R", "L"):
+        sfx = "_" + hand.lower()
+        tools = {
+            "contact": _raw.get("cntct" + sfx), "gap": _raw.get("gap" + sfx),
+            "power": _raw.get("pow" + sfx), "eye": _raw.get("eye" + sfx),
+        }
+    else:
+        tools = {"contact": _raw.get("cntct"), "gap": _raw.get("gap"),
+                 "power": _raw.get("pow"), "eye": _raw.get("eye")}
+    woba = project_woba_hitter(tools, rs)
+    if woba is None:
+        # Overall path can still use the stored proj_woba if present.
+        woba = _raw.get("proj_woba") if hand not in ("R", "L") else None
+    if woba is None:
+        return None
+    return bat_runs(woba, lgw, scale, _SPRING_FACET_PA)
+
+
+def _spring_facets(player, rs, lg_woba, weights):
+    """Current-age per-facet RUNS at a full 600-PA season for a hitter.
+
+    Returns a dict::
+
+        {"bat": <overall wRAA>, "bat_R": <vs-RHP wRAA>, "bat_L": <vs-LHP wRAA>,
+         "br": <baserunning runs>,
+         "fld": {slot: <fielding runs AT slot>, ...},
+         "pos": {slot: <positional-adj runs AT slot>, ...},
+         "age_mult": <current-age aging multiplier applied to bat/br>}
+
+    All runs are CURRENT-AGE (peak runs × the facet aging multiplier) and
+    readiness-discounted to match war_proj's playing-level scaling, so facet WAR
+    and the legacy scalar war_proj land on the same scale. Returns None when the
+    run-space calibration is unavailable (caller falls back to the scalar path).
+    """
+    if not rs:
+        return None
+    from statsplusplus.evaluation.facet_runs import (
+        baserunning_runs, fielding_runs, positional_adj_runs, facet_aging_mult,
+    )
+    _raw = player.get("_raw") or {}
+    anchor = rs.get("anchor") or {}
+    rpw = anchor.get("runs_per_win", 9.5)
+    br_curve = rs.get("br_curve")
+    def_curve = rs.get("def_curve")
+    pos_models = weights.get("POSITIONAL_MODELS") if isinstance(weights, dict) else None
+
+    # Peak (full-talent) facet runs.
+    bat = _spring_bat_runs_for(_raw, None, rs, lg_woba, weights)
+    if bat is None:
+        # No usable wOBA projection — bat facet can't be built; bail to scalar.
+        return None
+    bat_r = _spring_bat_runs_for(_raw, "R", rs, lg_woba, weights)
+    bat_l = _spring_bat_runs_for(_raw, "L", rs, lg_woba, weights)
+    if bat_r is None:
+        bat_r = bat
+    if bat_l is None:
+        bat_l = bat
+    br = baserunning_runs({"speed": _raw.get("speed"), "steal": _raw.get("steal")}, br_curve)
+
+    # Fielding runs AT each eligible slot (positional difficulty already encoded
+    # in the per-position def_curve), plus the positional adjustment per slot.
+    fld, pos = {}, {}
+    for slot in player.get("eligible", []):
+        dbucket = _SPRING_SLOT_DEF_BUCKET.get(slot, slot)
+        fld[slot] = fielding_runs(_raw, dbucket, def_curve, pos_models)
+        pos[slot] = positional_adj_runs(dbucket, rpw)
+
+    # Current-age aging: age each facet by its own curve, run-weighted (same as
+    # the evaluation engine's facet_aging_mult). Fielding is aged WITH defense;
+    # use the player's best fielding slot as its weight proxy.
+    best_fld = max(fld.values()) if fld else 0.0
+    age = player.get("age") or 27
+    age_mult = facet_aging_mult(age, bat, br, best_fld)
+    readiness = _SPRING_READINESS.get(player.get("level"), 0.5)
+    scale = age_mult * readiness
+    return {
+        "bat": bat * scale, "bat_R": bat_r * scale, "bat_L": bat_l * scale,
+        "br": br * scale,
+        "fld": {s: v * scale for s, v in fld.items()},
+        "pos": pos,   # positional adj is age-invariant (not aged/readiness-scaled)
+        "rpw": rpw, "anchor": anchor,
+    }
+
+
 _SPRING_LEVEL_NAME = {"1": "MLB", "2": "AAA", "3": "AA"}
 # Readiness discount on a non-MLB player's current-season contribution (not yet
 # MLB-proven). Distinct from projections.LEVEL_DISCOUNT (which discounts
@@ -1718,6 +1849,12 @@ def _spring_pool(conn, team_id, ed):
     )
 
     weights = load_model_weights(league_dir)
+    # Run-space facet calibration (woba_scale, lg_woba, br/def curves, WAR
+    # anchor) — the SAME per-league calibration the evaluation engine uses. The
+    # spring roster is valued facet-by-facet in RUNS from this, not off the
+    # pre-bundled scalar war_proj. Missing (league not re-run on this model
+    # version) → _spring_facets falls back to the scalar path gracefully.
+    _rs = _spring_run_space(league_dir)
     # League ERA/FIP anchors for the pitcher stat projections (display only).
     import json as _json
     _lg_era, _lg_fip = 4.5, 4.5
@@ -1732,10 +1869,12 @@ def _spring_pool(conn, team_id, ed):
     rows = conn.execute(f"""
         SELECT pe.player_id, pe.name, pe.age, pe.bucket, pe.level, pe.peak_war,
                pe.composite, pe.fv, p.role, p.is_on_secondary,
-               r.cntct, r.gap, r.pow, r.eye, r.speed,
+               r.cntct, r.gap, r.pow, r.eye, r.speed, r.steal,
                r.cntct_l, r.cntct_r, r.gap_l, r.gap_r,
                r.pow_l, r.pow_r, r.eye_l, r.eye_r,
                r.c, r.ss, r.second_b, r.third_b, r.first_b, r.lf, r.cf, r.rf,
+               r.ifr, r.ife, r.ifa, r.tdp, r.ofr, r.ofe, r.ofa,
+               r.c_frm, r.c_blk, r.c_arm,
                r.defensive_value, r.baserunning_value, r.proj_woba
         FROM player_evaluation pe
         JOIN players p ON pe.player_id = p.player_id
@@ -1802,7 +1941,30 @@ def _spring_pool(conn, team_id, ed):
             # pool shows this so "what you see is what you get" on a swap — fixes
             # the native-vs-slot mismatch (e.g. a SS shown as 2.7 but worth 0.8
             # at 1B). _spring_slot_war is defined below; compute lazily per pos.
-            d["slot_war"] = {s: round(_spring_slot_war(d, s), 1) for s in d["eligible"]}
+            # (slot_war filled after facets are computed below.)
+            # Per-facet CURRENT-AGE runs at a full 600-PA season, computed in
+            # run space from the model's own facets (proj_woba + splits, speed/
+            # steal, raw defensive tools). These are the honest building blocks
+            # the spring allocator values playing time with — bat (overall + vs
+            # each hand), baserunning, and fielding AT each eligible slot — so a
+            # platoon bat's offensive edge is never scaled by a defensive/
+            # positional penalty (the old war_proj × hand_factor bug).
+            d["_raw"] = {
+                "cntct": r["cntct"], "gap": r["gap"], "pow": r["pow"], "eye": r["eye"],
+                "cntct_l": r["cntct_l"], "gap_l": r["gap_l"], "pow_l": r["pow_l"], "eye_l": r["eye_l"],
+                "cntct_r": r["cntct_r"], "gap_r": r["gap_r"], "pow_r": r["pow_r"], "eye_r": r["eye_r"],
+                "speed": r["speed"], "steal": r["steal"],
+                "ifr": r["ifr"], "ife": r["ife"], "ifa": r["ifa"], "tdp": r["tdp"],
+                "ofr": r["ofr"], "ofe": r["ofe"], "ofa": r["ofa"],
+                "c_frm": r["c_frm"], "c_blk": r["c_blk"], "c_arm": r["c_arm"],
+                "proj_woba": r["proj_woba"],
+            }
+            d["facets"] = _spring_facets(d, _rs, _lg_woba, weights)
+            # Slot-adjusted RATE WAR at each eligible slot — now facet-based
+            # (falls back to the scalar swap when facets are unavailable) so the
+            # candidate board, swap preview, and recommender all rank by the
+            # same honest slot value.
+            d["slot_war"] = {s: round(_spring_slot_rate_war(d, s), 1) for s in d["eligible"]}
             # Display stat selector values. OPS+ (legacy), plus the run-space
             # model's native facets: projected wOBA (the model's offensive
             # currency) and the model's defensive/baserunning run grades
@@ -1862,6 +2024,16 @@ _SPRING_RP_MIN_WAR = 0.0
 _SPRING_OOO_MIN_WAR = 0.3
 
 
+def _spring_slot_val(p, slot):
+    """Slot-adjusted RATE WAR for ranking in the recommender. Prefers the
+    precomputed facet-based ``slot_war`` dict (from _spring_pool); falls back to
+    the scalar positional-swap for dicts built outside the pool."""
+    sw = p.get("slot_war")
+    if sw and slot in sw:
+        return sw[slot]
+    return _spring_slot_war(p, slot)
+
+
 def _spring_viable_at(p, pos):
     """Is hitter ``p`` viable at field position ``pos``?
 
@@ -1910,14 +2082,14 @@ def _spring_auto_config(pool, out_of_options=None):
         if not cands:  # no viable body — take best remaining bat (stretched)
             cands = [p for p in hitters if p["player_id"] not in used]
         if cands:
-            best = max(cands, key=lambda p: _spring_slot_war(p, pos))
+            best = max(cands, key=lambda p: _spring_slot_val(p, pos))
             lineup[pos] = best["player_id"]
             used.add(best["player_id"])
     # DH — the best remaining BAT, ranked by DH-slot WAR (which strips the
     # defensive/positional value), so a bat-first player beats a glove-first one
     # whose native WAR was inflated by a premium-position adjustment.
     dh = sorted([p for p in hitters if p["player_id"] not in used],
-                key=lambda p: -_spring_slot_war(p, "DH"))
+                key=lambda p: -_spring_slot_val(p, "DH"))
     if dh:
         lineup["DH"] = dh[0]["player_id"]
         used.add(dh[0]["player_id"])
@@ -2041,6 +2213,23 @@ def _spring_slot_war(player, slot):
     native_adj = _PA.get(native_key, 0.0)
     slot_adj = _PA.get(slot_key, 0.0)
     return player["war_proj"] - native_adj + slot_adj
+
+
+def _spring_slot_rate_war(player, slot):
+    """Full-season (600-PA) RATE WAR for a hitter AT ``slot``, built from the
+    run-space facets (bat at the 71/29 hand mix + baserunning + fielding at the
+    slot + positional adj → WAR via the league anchor). This is the facet-model
+    analog of _spring_slot_war and is what the UI shows as a player's "value if
+    he plays this spot every day". Falls back to _spring_slot_war when facets
+    are unavailable."""
+    f = player.get("facets")
+    if not f:
+        return _spring_slot_war(player, slot)
+    bat = f["bat_R"] * _SPRING_VS_RHP_FREQ + f["bat_L"] * _SPRING_VS_LHP_FREQ
+    runs = bat + f["br"] + f["fld"].get(slot, 0.0) + f["pos"].get(slot, 0.0)
+    rpw = f["rpw"] or 9.5
+    repl = (f["anchor"] or {}).get("replacement_runs", 20.0)
+    return (runs + repl) / rpw if rpw else 0.0
 
 
 # ── Platoon-assignment + start-share playing-time model ──
@@ -2267,25 +2456,74 @@ def _spring_contributions(pool, config):
     constructed_lineup = {}
     used_backups: set = set()   # a bench bat backs up only ONE position
 
-    def _add_contrib(pid, pos, share, hand_mix):
-        """Add a hitter's contribution at a position for a given PA share, valued
-        by the handedness mix (list of (hand, weight)); returns the display WAR."""
-        base = _spring_slot_war(by_id[pid], pos)
-        # Effectiveness-weighted value across the hands this player faces.
-        eff = sum(w * _spring_hand_factor(by_id[pid], h) for h, w in hand_mix) or 1.0
-        war = base * share * eff
-        spd = by_id[pid].get("speed", 50)
-        br = max(0.0, min(0.18, 0.08 * ((spd - 50) / 30 + 1)))
-        fld = 0.0 if pos == "DH" else 0.20
+    def _slot_contrib(pid, pos, pa_r, pa_l):
+        """Facet-based contribution for a hitter taking ``pa_r`` PA vs RHP and
+        ``pa_l`` vs LHP at ``pos``. Returns (war, bat_share, br_share, fld_share,
+        facet_runs_dict) — the REAL per-facet run split, so the engine's facet
+        breakdown is honest and the platoon bat value is never scaled by the
+        positional/defensive adjustment (the old war_proj × hand_factor bug).
+
+        Runs scale linearly with PA off the 600-PA facet baselines. Bat uses the
+        hand-specific wOBA per wedge; baserunning / fielding / positional adj
+        scale by total PA (hand-independent). WAR-above-replacement is derived
+        from total runs via the league anchor, pro-rated to the PA fraction so a
+        partial-season slot isn't credited a full replacement cushion.
+        Falls back to the scalar _spring_slot_war path when facets are absent.
+        """
+        p = by_id[pid]
+        f = p.get("facets")
+        pa = (pa_r or 0) + (pa_l or 0)
+        if not f or pa <= 0:
+            # Scalar fallback (older calibration): preserve prior behavior.
+            share = pa / _SPRING_SLOT_PA if _SPRING_SLOT_PA else 0
+            base = _spring_slot_war(p, pos)
+            hf = (((pa_r or 0) * _spring_hand_factor(p, "R")
+                   + (pa_l or 0) * _spring_hand_factor(p, "L")) / pa) if pa else 1.0
+            war = base * share * hf
+            contribs.append(PlayerContribution(
+                pid, p["name"], war, is_pitcher=False,
+                bat_share=0.72, br_share=0.08, fld_share=0.20))
+            return war, 0.72, 0.08, 0.20, None
+        # Bat runs: each wedge valued at that hand's wRAA, pro-rated by PA.
+        bat = (f["bat_R"] * (pa_r or 0) + f["bat_L"] * (pa_l or 0)) / _SPRING_FACET_PA
+        pa_frac = pa / _SPRING_FACET_PA
+        br = f["br"] * pa_frac
+        fld = (f["fld"].get(pos, 0.0)) * pa_frac
+        posr = (f["pos"].get(pos, 0.0)) * pa_frac
+        total_runs = bat + br + fld + posr
+        anchor = f["anchor"]
+        rpw = f["rpw"] or 9.5
+        repl = anchor.get("replacement_runs", 20.0)
+        # WAR above replacement for this slice: (runs_above_avg + pro-rated
+        # replacement cushion) / runs_per_win.
+        war = (total_runs + repl * pa_frac) / rpw if rpw else 0.0
+        # Facet shares for the engine breakdown: fractions of the positive run
+        # contribution (fielding folds in the positional adj as its "glove+spot"
+        # value). Bat negative is still bat; shares are |run| proportions.
+        a_bat, a_br, a_fld = abs(bat), abs(br), abs(fld + posr)
+        tot = (a_bat + a_br + a_fld) or 1.0
+        bsh, brs, fsh = a_bat / tot, a_br / tot, a_fld / tot
         contribs.append(PlayerContribution(
-            pid, by_id[pid]["name"], war, is_pitcher=False,
-            bat_share=1 - br - fld, br_share=br, fld_share=fld))
+            pid, p["name"], war, is_pitcher=False,
+            bat_share=bsh, br_share=brs, fld_share=fsh))
+        return war, bsh, brs, fsh, {"bat": bat, "br": br, "fld": fld, "pos": posr}
+
+    def _add_contrib(pid, pos, share, hand_mix):
+        """Add a hitter's contribution for a given PA SHARE + handedness mix.
+        Converts the share/mix to explicit per-wedge PA (matching _mkrow's PA
+        accounting EXACTLY) and defers to the facet-based _slot_contrib. An
+        everyday mix (both hands) fills ``share`` of BOTH wedges; a platoon
+        single-hand mix fills ``share`` of that one wedge."""
+        hands = {h for h, _w in hand_mix}
+        pa_r = _SPRING_PA_VS_RHP * share if "R" in hands else 0.0
+        pa_l = _SPRING_PA_VS_LHP * share if "L" in hands else 0.0
+        war, *_ = _slot_contrib(pid, pos, pa_r, pa_l)
         return war
 
     def _mkrow(pid, pos, share, hand_mix, label):
         war = _add_contrib(pid, pos, share, hand_mix)
         _st = dict(by_id[pid].get("stats") or {})
-        _st["war"] = round(_spring_slot_war(by_id[pid], pos), 1)
+        _st["war"] = round(_spring_slot_rate_war(by_id[pid], pos), 1)
         # PA this player fills in each handedness wedge (the pie): share of the
         # wedge PA for each hand he faces in his hand_mix.
         hands = {h: w for h, w in hand_mix}
@@ -2293,7 +2531,7 @@ def _spring_contributions(pool, config):
         pa_l = round(_SPRING_PA_VS_LHP * share) if "L" in hands else 0
         return {
             "pid": pid, "name": by_id[pid]["name"],
-            "war": round(_spring_slot_war(by_id[pid], pos), 1),
+            "war": round(_spring_slot_rate_war(by_id[pid], pos), 1),
             "level": by_id[pid]["level"],
             "pt_pct": round(share * 100), "role": label,
             "pa_r": pa_r, "pa_l": pa_l, "pa": pa_r + pa_l,
@@ -2302,24 +2540,17 @@ def _spring_contributions(pool, config):
 
     def _mkrow_pa(pid, pos, pa_r, pa_l, label="Allocated"):
         """Build a row from EXPLICIT PA in each wedge (literal pie allocation).
-        Value = (pa / wedge_PA) × slot_war × that-hand effectiveness, summed."""
-        base = _spring_slot_war(by_id[pid], pos)
-        share_r = (pa_r or 0) / _SPRING_PA_VS_RHP if _SPRING_PA_VS_RHP else 0
-        share_l = (pa_l or 0) / _SPRING_PA_VS_LHP if _SPRING_PA_VS_LHP else 0
-        # Weight each hand's contribution by its PA frequency and effectiveness.
-        war = base * (share_r * _SPRING_VS_RHP_FREQ * _spring_hand_factor(by_id[pid], "R")
-                      + share_l * _SPRING_VS_LHP_FREQ * _spring_hand_factor(by_id[pid], "L"))
-        spd = by_id[pid].get("speed", 50)
-        br = max(0.0, min(0.18, 0.08 * ((spd - 50) / 30 + 1)))
-        fld = 0.0 if pos == "DH" else 0.20
-        contribs.append(PlayerContribution(
-            pid, by_id[pid]["name"], war, is_pitcher=False,
-            bat_share=1 - br - fld, br_share=br, fld_share=fld))
+        Value is the facet-based per-wedge contribution (see _slot_contrib): bat
+        valued at each hand's wOBA, baserunning/fielding/positional scaled by PA.
+        The displayed `war` is the player's full-season RATE at this slot (the
+        600-PA facet WAR), with `contrib_war` the actual PA-scaled contribution."""
+        war, *_ = _slot_contrib(pid, pos, pa_r or 0, pa_l or 0)
+        rate = _spring_slot_rate_war(by_id[pid], pos)
         _st = dict(by_id[pid].get("stats") or {})
-        _st["war"] = round(base, 1)
+        _st["war"] = round(rate, 1)
         pa = (pa_r or 0) + (pa_l or 0)
         return {
-            "pid": pid, "name": by_id[pid]["name"], "war": round(base, 1),
+            "pid": pid, "name": by_id[pid]["name"], "war": round(rate, 1),
             "level": by_id[pid]["level"],
             "pt_pct": round(pa / _SPRING_SLOT_PA * 100), "role": label,
             "pa_r": round(pa_r or 0), "pa_l": round(pa_l or 0), "pa": round(pa),

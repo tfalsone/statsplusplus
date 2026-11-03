@@ -9,6 +9,39 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 Follow-on work from the Spring Training builder, driven by hands-on testing of
 the spring page.
 
+**Spring roster valued facet-by-facet in run space (fixes the out-of-position
+platoon-bat bug).** The spring allocator previously valued every hitter off the
+pre-bundled scalar `war_proj`, swapping the positional adjustment for the slot
+(`_spring_slot_war`) and then scaling the WHOLE result by a platoon multiplier
+(`hand_factor`). This fused offense and defense: a player's platoon bat edge got
+scaled DOWN by the defensive/positional penalty of playing out of position, so
+adding a BETTER vs-LHP bat to a slot could LOWER the projection (surfaced on
+vMLB: Jim Dunn, 118 OPS+ vs LHP, playing 1B). Rewrote the spring valuation core
+to build each roster slot's contribution from the model's OWN facets in RUNS,
+reusing the evaluation engine's run-space spine (`statsplusplus.evaluation.
+facet_runs`) and the SAME per-league run-space calibration the engine uses
+(`tool_weights.json` → `run_space`: `woba_scale`, `lg_woba`, `br_curve`,
+`def_curve`, WAR `anchor`). `_spring_pool` now pulls the raw tools (`steal`,
+`ifr/ife/ifa/tdp`, `ofr/ofe/ofa`, `c_frm/c_blk/c_arm`) and computes per-player
+current-age facet runs at a 600-PA baseline: bat wRAA (overall + per-hand from
+the split tools), baserunning runs, fielding runs AT each eligible slot
+(positional difficulty already encoded in the per-position `def_curve`), and the
+positional adjustment per slot. New helpers `_spring_run_space` (load/cache the
+calibration), `_spring_facets` (per-player facet runs, per-facet-aged +
+readiness-scaled), `_spring_slot_rate_war` (full-season rate WAR at a slot from
+facets), `_spring_slot_val` (recommender ranking). `_slot_contrib` values a
+PA-wedge allocation by summing facet runs — bat per-hand, br/fld/pos pro-rated by
+PA — and converts to WAR via the league anchor; `_add_contrib`/`_mkrow`/
+`_mkrow_pa` now defer to it, and the `PlayerContribution` facet shares
+(`bat_share`/`br_share`/`fld_share`) are the player's REAL run split instead of
+flat 0.72/0.08/0.20 priors, so the engine's facet run-diff breakdown is honest.
+Graceful fallback to the scalar path when a league's calibration predates the
+run-space model (no `run_space` block). Verified on vMLB: platooning Dunn onto
+the 1B vs-LHP wedge now correctly RAISES the projection (+0.78 wins / +6 run
+diff, was negative); the recommender places Dunn at his best slot (3B rate 2.9 vs
+1B rate 1.2); facet shares vary by profile (glove-first CF ~0.88 fld, bat-first
+COF ~0.73 bat). Full suite 1087 + 26 web smoke green.
+
 **Change breakdown — cumulative plan impact vs the saved plan, itemized by move.**
 The header's "Last change" panel measured only the single most recent edit (each
 edit overwrote the prior delta). Reframed it to the **cumulative** impact of the
