@@ -1,7 +1,7 @@
 # EMLB Analytics Platform — System Overview
 
 > **Status:** Living · **Owns:** architecture, data flow, DB tables, routes, query functions, design decisions
-> **Writing standard:** prose · **Last verified against code:** Session 104
+> **Writing standard:** prose · **Last verified against code:** Session 108
 
 ## Purpose
 
@@ -132,6 +132,30 @@ service is MLB-ready, since a Rule 5 arm only needs to be carried in the bullpen
 `draft_eligible` is amateur-draft eligibility, not a Rule 5 signal. The panel is only
 actionable pre-draft; a league past the Rule 5 draft shows no active eligibles.
 
+A **Spring Training** panel (`get_spring_projection`, `spring_projection_delta`,
+`save/load/delete_spring_plan`) is an **Opening Day roster builder**: the GM
+constructs a 26-man and sees a projected team cascade respond live. The cascade uses
+the pure `statsplusplus.evaluation.team_projection` module — record from the WAR
+identity (`replacement_wins + team_WAR`, tanh-saturated), run differential derived
+from the record (so the two agree), split into hitting/baserunning/fielding/pitching
+facet runs by each player's run-space facet components. Per-league constants
+(`RUNS_PER_WIN`, `LG_TEAM_RUNS`, `WIN_BAND_SD`, replacement win%) are fit from team
+history by `calibrate.derive_projection_calibration` (defaults for thin-history
+leagues). The point-estimate record leads; the **delta vs the prior config** is the
+precise decision signal (season luck cancels between two configs); the ±`WIN_BAND_SD`
+band is a quiet context line. Four views render one shared config (Board / Decisions /
+Field / Table, default Board), edited in place (patches header + active view, no full
+re-render). Playing time is a derived PA "pie": a fixed slot budget (~658 PA, 467 vs
+RHP / 191 vs LHP) filled by platoon assignment × realistic start-shares (backup
+catcher required), with per-player PA sliders, conservation (reallocating draws from
+other players), add/remove, and three-way splits. Candidate WAR is slot-adjusted.
+Out-of-options is a per-player user toggle (not in the API) that forces a must-decide.
+Plans persist per team in `config/spring_plans.json`. Endpoints: `/api/spring-plan`
+(GET/POST/DELETE), `/api/spring-project` (POST). The pool's wOBA stat surfaces the
+exact stored model projection (`ratings.proj_woba`, written by the evaluation engine
+from the tool→wOBA fit), falling back to an OPS+ × league-wOBA estimate for leagues
+not yet re-run.
+
 **Offseason budget (finance settings):** driven by per-league finance settings
 (`statsplusplus.config.finance_settings`, stored as
 `config/finance_settings.json`). Rather than reconstruct OOTP's cash-flow-based
@@ -194,7 +218,7 @@ All other analysis scripts are read-only against the DB.
 |---|---|---|
 | `players` | `refresh.py` | All players across all orgs and levels. Expanded fields: injury (DL status, days), service time (exact years/days), roster status (DFA/waivers/traded/FA), draft history, demographics, `organization_id` (org attribution — see `db.ORG_ID_SQL`), `player_league_id` (negative = international-complex, drives level=8). Steady-state refresh pulls `?retired=0`; first refresh / `--full` pulls all. |
 | `teams` | `refresh.py` | Team ID → name mapping (34 MLB orgs) |
-| `ratings` | `refresh.py` | Scouting ratings (latest snapshot only). Full 121 columns. Old snapshots pruned on refresh. |
+| `ratings` | `refresh.py` + `evaluation_engine.py` | Scouting ratings (latest snapshot only). Full 121 columns from refresh. The evaluation engine writes derived columns back to the latest snapshot: `composite_score`, `ceiling_score`, `tool_only_score`, `secondary_composite`, component grades, `true_ceiling`, `positional_percentile/median`, and `proj_woba` (exact model projected wOBA for hitters, from the tool→wOBA fit). Old snapshots pruned on refresh. |
 | `ratings_history` | `refresh.py` | Monthly in-game rating snapshots (53 cols). Ovr/pot, hitter/pitcher tools (cur+pot), all pitch types (cur+pot), extended ratings. ~1.3MB/snapshot. |
 | `contracts` | `refresh.py` | Active contracts league-wide |
 | `contract_extensions` | `refresh.py` | Pending contract extensions (only rows with years > 0) |

@@ -172,6 +172,114 @@ def set_offseason_phase():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+# ── Spring Training — Opening Day plan persistence ──
+
+
+def _resolve_team_id(data):
+    """Team id from the request body, defaulting to my-team."""
+    tid = data.get("team_id")
+    if tid is not None:
+        try:
+            return int(tid)
+        except (TypeError, ValueError):
+            return None
+    import queries
+    return queries.get_my_team_id()
+
+
+@api_bp.route("/api/spring-plan", methods=["GET"])
+def api_spring_plan_get():
+    """Load a team's saved Opening Day plan + re-project it against current data.
+
+    Query param `team_id` (defaults to my-team). Returns the saved config
+    reconciled to the current pool, plus the full projection for that config so
+    the page can render the plan directly. 404-style {ok, plan:null} when none.
+    """
+    import offseason_queries as osq
+    import queries
+    try:
+        tid = request.args.get("team_id")
+        team_id = int(tid) if tid is not None else queries.get_my_team_id()
+        plan = osq.load_spring_plan(team_id)
+        if plan is None:
+            return jsonify({"ok": True, "plan": None})
+        proj = osq.get_spring_projection(team_id, plan["config"],
+                                         plan["out_of_options"])
+        return jsonify({"ok": True, "plan": plan, "projection": proj})
+    except Exception as e:
+        log.error("spring-plan GET failed: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@api_bp.route("/api/spring-plan", methods=["POST"])
+def api_spring_plan_save():
+    """Save a team's Opening Day plan.
+
+    Body: {team_id?, config:{lineup,bench,rotation,bullpen}, out_of_options:[]}.
+    """
+    import offseason_queries as osq
+    data = request.get_json(silent=True) or {}
+    team_id = _resolve_team_id(data)
+    config = data.get("config")
+    if team_id is None or not isinstance(config, dict):
+        return jsonify({"ok": False, "error": "team_id and config required"}), 400
+    try:
+        rec = osq.save_spring_plan(team_id, config, data.get("out_of_options"))
+        return jsonify({"ok": True, "saved": rec})
+    except Exception as e:
+        log.error("spring-plan POST failed: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@api_bp.route("/api/spring-project", methods=["POST"])
+def api_spring_project():
+    """Re-project an edited Opening Day config and return the cascade + delta.
+
+    The live-edit endpoint: the UI POSTs the current (edited) config after each
+    change and gets back the projection plus the delta vs a baseline — the
+    precise decision signal the page foregrounds.
+
+    Body:
+        {team_id?,
+         config: {lineup, bench, rotation, bullpen},   # required — the edit
+         baseline?: {...},        # diff against this; omitted = auto recommend
+         out_of_options?: [pid],
+         baseline_out_of_options?: [pid]}
+    """
+    import offseason_queries as osq
+    data = request.get_json(silent=True) or {}
+    team_id = _resolve_team_id(data)
+    config = data.get("config")
+    if team_id is None or not isinstance(config, dict):
+        return jsonify({"ok": False, "error": "team_id and config required"}), 400
+    try:
+        res = osq.spring_projection_delta(
+            team_id, config,
+            baseline=data.get("baseline"),
+            out_of_options=data.get("out_of_options"),
+            baseline_out_of_options=data.get("baseline_out_of_options"))
+        return jsonify({"ok": True, **res})
+    except Exception as e:
+        log.error("spring-project failed: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@api_bp.route("/api/spring-plan", methods=["DELETE"])
+def api_spring_plan_delete():
+    """Delete a team's saved plan (revert to the auto recommendation)."""
+    import offseason_queries as osq
+    data = request.get_json(silent=True) or {}
+    team_id = _resolve_team_id(data)
+    if team_id is None:
+        return jsonify({"ok": False, "error": "team_id required"}), 400
+    try:
+        existed = osq.delete_spring_plan(team_id)
+        return jsonify({"ok": True, "deleted": existed})
+    except Exception as e:
+        log.error("spring-plan DELETE failed: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 def finance_payload(team_id):
     """The finance panel's data: the saved FA/extension budgets (the game's
     authoritative figures) plus the derived available-for-FA (fa_budget less any

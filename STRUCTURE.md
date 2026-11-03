@@ -28,6 +28,7 @@ statsplusplus/
 │   │   ├── surplus.py                  # Prospect/contract surplus helpers, scarcity
 │   │   ├── arb.py                      # Arb salary, service time, team control
 │   │   ├── carrying_tools.py           # Carrying tool bonus
+│   │   ├── team_projection.py          # Spring Opening Day team projection (WAR→record→run-diff→facets)
 │   │   └── constants.py                # All model constants, weight loaders
 │   ├── config/                     # League resolution, ratings normalization
 │   │   ├── league_config.py            # LeagueConfig class, dollars_per_war, league_minimum

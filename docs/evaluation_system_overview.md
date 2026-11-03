@@ -1,7 +1,7 @@
 # Player Evaluation System — High-Level Overview
 
 > **Status:** Living · **Owns:** evaluation pipeline (`src/statsplusplus/evaluation/`, `src/statsplusplus/data/{evaluation_engine,fv_calc,calibrate}.py`)
-> **Writing standard:** ASD-STE100 · **Last verified against code:** Session 102
+> **Writing standard:** ASD-STE100 · **Last verified against code:** Session 108
 
 This document explains how the evaluation system works today. It is the single
 entry point for the evaluation pipeline. It replaces the out-of-date
@@ -120,7 +120,11 @@ The four facets are:
 
 - **Bat runs.** The system projects the player's wOBA from the hitting tools. wOBA
   is a plate-production metric. The system then converts wOBA to runs above
-  average (wRAA) over a 600 plate-appearance baseline.
+  average (wRAA) over a 600 plate-appearance baseline. This projected wOBA is also
+  stored directly on the player's latest ratings row (`ratings.proj_woba`, written
+  by the evaluation engine via the pure `composite.project_woba_hitter` helper — the
+  same value the composite uses internally) so it can be displayed without being
+  re-estimated from OPS+.
 - **Baserunning runs.** A calibrated curve maps speed and steal grades to runs.
 - **Fielding runs.** A per-position curve maps the player's defensive tools to runs.
   Most positions use a **multi-tool blend** fit per league against the fullest

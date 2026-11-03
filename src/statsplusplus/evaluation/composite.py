@@ -431,6 +431,25 @@ def compute_defensive_value(
 # Hitter composite
 # ---------------------------------------------------------------------------
 
+def project_woba_hitter(tools, run_space):
+    """The model's projected wOBA for a hitter from the calibrated tool->wOBA
+    fit (contact/gap/power/eye). Returns None if calibration is unavailable or
+    a core tool is missing. This is the exact wOBA the run-space composite uses
+    internally — exposed so it can be STORED and displayed (not re-estimated).
+    """
+    if not run_space:
+        return None
+    fit = run_space.get("tool_woba_fit")
+    if not fit:
+        return None
+    con = tools.get("contact"); gap = tools.get("gap")
+    pw = tools.get("power"); eye = tools.get("eye")
+    if None in (con, gap, pw, eye):
+        return None
+    return (fit[0] + fit[1] * float(con) + fit[2] * float(gap)
+            + fit[3] * float(pw) + fit[4] * float(eye))
+
+
 def _run_space_hitter_composite(tools, defense, bucket, run_space, positional_models,
                                 observed=None):
     """Run-space composite (20-80) or None if calibration is incomplete.
@@ -461,8 +480,7 @@ def _run_space_hitter_composite(tools, defense, bucket, run_space, positional_mo
     if None in (con, gap, pw, eye):
         return None
     from statsplusplus.evaluation import facet_runs as _fr
-    proj_woba = (fit[0] + fit[1] * float(con) + fit[2] * float(gap)
-                 + fit[3] * float(pw) + fit[4] * float(eye))
+    proj_woba = project_woba_hitter(tools, run_space)
     lg_woba = run_space.get("lg_woba", 0.320)
     woba_scale = run_space.get("woba_scale", 1.28)
     rpw = run_space.get("anchor", {}).get("runs_per_win", 9.5)

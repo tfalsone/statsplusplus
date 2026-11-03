@@ -648,15 +648,65 @@
 </div>
 {% endif %}
 
-{# ── Coming-soon placeholder for phases with no dedicated panel yet ── #}
+{# ── Spring Training — Opening Day builder (multi-view) ── #}
 {% if current_phase == "spring" %}
-<div class="panel">
-  <h2>{{ (phases|selectattr('key','equalto',current_phase)|first).label }}</h2>
-  <p class="empty">
-    A dedicated view for this phase is on the way.
-    In the meantime, trades are always in play below.
-  </p>
+{% if not spring %}
+<div class="panel"><h2>Spring Training</h2>
+  <p class="empty">Opening Day projection unavailable — run a refresh so the
+  roster has current evaluations.</p></div>
+{% else %}
+<div id="spring" class="panel"
+     data-tid="{{ tid }}"
+     data-spring='{{ spring | tojson }}'>
+  {# Sticky projection header (shared across views) #}
+  <div class="spring-proj" id="spring-proj"><!-- rendered by JS --></div>
+
+  {# View switcher #}
+  <div class="spring-tabs">
+    <button class="sv-tab on" data-v="board"     onclick="springView('board')">Board</button>
+    <button class="sv-tab"    data-v="decisions" onclick="springView('decisions')">Decisions</button>
+    <button class="sv-tab"    data-v="field"     onclick="springView('field')">Field</button>
+    <button class="sv-tab"    data-v="table"     onclick="springView('table')">Table</button>
+    <span class="spring-statsel">
+      <label>Hitters
+        <select onchange="springSetStat('hit',this.value)">
+          <option value="war">WAR</option>
+          <option value="woba">wOBA</option>
+          <option value="ops_plus">OPS+</option>
+          <option value="def">Defense</option>
+          <option value="bsr">Baserunning</option>
+        </select>
+      </label>
+      <label>Pitchers
+        <select onchange="springSetStat('pit',this.value)">
+          <option value="war">WAR</option>
+          <option value="era">ERA</option>
+          <option value="fip">FIP</option>
+        </select>
+      </label>
+    </span>
+    <span class="spring-actions">
+      <button class="sv-btn" onclick="springRecommend()">⚙ Recommend my 26</button>
+      <button class="sv-btn" onclick="springSave()">💾 Save plan</button>
+      <span id="spring-save-note" class="spring-save-note"></span>
+    </span>
+  </div>
+
+  {% if spring.saved and spring.saved.stale %}
+  <p class="spring-stale">⚠ Your saved plan referenced players no longer on the
+     roster; they were dropped. Review and re-save.</p>
+  {% endif %}
+
+  {# Roster-validity warnings (e.g. no backup catcher) — filled by JS #}
+  <div id="spring-warnings" class="spring-warnings" style="display:none"></div>
+
+  {# View containers — JS fills each from the shared config #}
+  <div class="spring-view on" data-v="board"     id="sv-board"></div>
+  <div class="spring-view"    data-v="decisions" id="sv-decisions"></div>
+  <div class="spring-view"    data-v="field"     id="sv-field"></div>
+  <div class="spring-view"    data-v="table"     id="sv-table"></div>
 </div>
+{% endif %}
 {% endif %}
 
 {# ── Trades ── #}
@@ -1045,6 +1095,152 @@
   .fa-budget-save { background:none; border:1px solid var(--green); color:var(--green);
         border-radius:5px; padding:5px 12px; cursor:pointer; font-size:12px; }
   .fa-budget-save:hover { background:rgba(78,204,163,0.15); }
+
+  /* ── Spring Training — Opening Day builder ── */
+  #spring { padding:0; }
+  .spring-proj { position:sticky; top:0; z-index:5; background:var(--surface);
+        border-bottom:1px solid var(--border); border-radius:8px 8px 0 0; padding:12px 16px;
+        display:grid; grid-template-columns:auto 1fr auto; gap:22px; align-items:center; }
+  .sp-rec-lab { font-size:10px; text-transform:uppercase; color:var(--text-dim); letter-spacing:.05em; }
+  .sp-rec-big { font-size:32px; font-weight:700; }
+  .sp-rec-sub { color:var(--text-dim); font-size:12px; }
+  .sp-band { font-size:10px; color:var(--text-dim); opacity:.8; }
+  .sp-facets { display:flex; gap:14px; }
+  .sp-fct { text-align:center; } .sp-fct .v { font-weight:700; font-size:15px; }
+  .sp-fct .l { font-size:10px; color:var(--text-dim); text-transform:uppercase; }
+  .sp-delta { background:rgba(78,204,163,0.08); border:1px solid var(--green); border-radius:8px;
+        padding:8px 14px; text-align:center; min-width:150px; }
+  .sp-delta.neg { background:rgba(233,69,96,0.08); border-color:var(--red); }
+  .sp-delta .l { font-size:10px; text-transform:uppercase; letter-spacing:.04em; }
+  .sp-delta.pos .l, .sp-delta.pos .big { color:var(--green); }
+  .sp-delta.neg .l, .sp-delta.neg .big { color:var(--red); }
+  .sp-delta .big { font-size:20px; font-weight:700; } .sp-delta .n { color:var(--text-dim); font-size:11px; }
+
+  .spring-tabs { display:flex; gap:4px; align-items:center; padding:10px 16px; flex-wrap:wrap; }
+  .sv-tab { padding:6px 15px; background:var(--bg); border:1px solid var(--border); border-radius:7px;
+        cursor:pointer; color:var(--text-dim); font-size:12px; text-transform:uppercase; letter-spacing:.03em; }
+  .sv-tab.on { color:var(--bg); background:var(--green); border-color:var(--green); font-weight:700; }
+  .spring-actions { margin-left:auto; display:flex; gap:8px; align-items:center; }
+  .sv-btn { background:none; border:1px solid var(--border); color:var(--text-dim); border-radius:6px;
+        padding:6px 12px; cursor:pointer; font-size:12px; } .sv-btn:hover { color:var(--text); border-color:var(--green); }
+  .spring-save-note { font-size:11px; color:var(--green); } .spring-stale { color:var(--gold); font-size:12px; padding:0 16px; }
+  .spring-warnings { margin:0 16px 8px; }
+  .spring-warn-row { background:rgba(224,182,78,0.1); border:1px solid var(--gold); color:var(--gold);
+        border-radius:6px; padding:6px 12px; font-size:12px; margin-bottom:4px; }
+  .spring-view { display:none; padding:14px 16px; } .spring-view.on { display:block; }
+
+  .sp-war { font-weight:700; } .sp-war.pos { color:var(--green); } .sp-war.mid { color:var(--text); } .sp-war.dim { color:var(--text-dim); }
+  .sp-lvl { font-size:9px; color:var(--gold); border:1px solid var(--gold); border-radius:3px; padding:0 3px; }
+  .sp-hot { font-size:9px; color:var(--gold); border:1px solid var(--gold); border-radius:3px; padding:0 4px; }
+  .sp-util { font-size:9px; color:var(--green); border:1px solid var(--green); border-radius:3px; padding:0 4px; cursor:help; }
+  .sp-warn { font-size:9px; color:var(--red); border:1px solid var(--red); border-radius:3px; padding:0 4px; }
+  .sp-mini { font-size:9px; color:var(--text-dim); } .sp-elig { color:var(--text-dim); font-size:11px; }
+  .sp-move { background:none; border:1px solid var(--border); color:var(--text-dim); border-radius:4px;
+        font-size:9px; padding:0 5px; margin-left:4px; cursor:pointer; } .sp-move:hover { color:var(--green); border-color:var(--green); }
+  .sp-drop { background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:12px; margin-left:4px; } .sp-drop:hover { color:var(--red); }
+  .sp-benchchip { display:inline-block; background:var(--bg); border:1px solid var(--border); border-radius:5px;
+        padding:2px 6px; margin:2px 3px 0 0; font-size:12px; }
+  /* board */
+  .sp-grid3 { display:grid; grid-template-columns:1.1fr 1fr 1fr; gap:16px; align-items:start; }
+  @media(max-width:900px){ .sp-grid3{grid-template-columns:1fr;} .spring-proj{grid-template-columns:1fr; gap:10px;} }
+  .sp-colh { font-size:11px; text-transform:uppercase; color:var(--text-dim); margin-bottom:6px; }
+  .sp-row { display:grid; grid-template-columns:42px 1fr auto 44px; align-items:center; gap:8px; padding:5px 8px;
+        background:var(--bg); border:1px solid var(--border); border-radius:6px; cursor:pointer; margin-bottom:3px; }
+  .sp-tier { background:var(--surface); color:var(--text-dim); border:1px solid var(--border);
+        border-radius:4px; font-size:10px; padding:1px 3px; max-width:120px; }
+  .sp-tier:hover { color:var(--text); border-color:var(--green); }
+  .sp-row:hover { border-color:var(--green); } .sp-pos { color:var(--text-dim); font-size:11px; } .sp-name { font-weight:600; }
+  .sp-expand { display:none; }
+  .sp-candpool { margin:2px 0 6px 42px; border-left:2px solid var(--green); padding-left:8px; }
+  /* platoon pairing editor */
+  .sp-platoon { margin:4px 0 8px 42px; border-left:2px solid var(--gold); padding:4px 0 4px 8px; }
+  .sp-plat-row { display:flex; align-items:center; gap:8px; margin:2px 0; }
+  .sp-plat-lab { font-size:11px; color:var(--text-dim); width:92px; }
+  .sp-plat-freq { opacity:.6; font-size:9px; }
+  .sp-plat { background:var(--surface); color:var(--text); border:1px solid var(--border);
+        border-radius:4px; font-size:11px; padding:1px 4px; max-width:190px; }
+  .sp-plat:hover { border-color:var(--gold); }
+  .sp-plat-clear { background:none; border:1px solid var(--border); color:var(--text-dim);
+        border-radius:4px; font-size:10px; padding:1px 8px; margin-top:3px; cursor:pointer; }
+  .sp-plat-clear:hover { color:var(--red); border-color:var(--red); }
+  .sp-plat-on { font-size:9px; color:var(--gold); border:1px solid var(--gold); border-radius:3px; padding:0 4px; margin-left:4px; }
+  /* PA pie (handedness wedges) */
+  .sp-pie { margin:4px 0 6px 42px; }
+  .sp-wedge { margin-bottom:5px; }
+  .sp-wedge-head { font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.03em; margin-bottom:2px; }
+  .sp-wedge-pa { opacity:.7; }
+  .sp-piebar { display:flex; height:20px; border-radius:4px; overflow:hidden; border:1px solid var(--border); background:var(--bg); }
+  .sp-pieseg { display:flex; align-items:center; min-width:0; color:#0d1b2a; font-size:10px; font-weight:600; overflow:hidden; }
+  .sp-pieseg-lab { padding:0 5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sp-pieopen { background:repeating-linear-gradient(45deg,rgba(255,255,255,0.05),rgba(255,255,255,0.05) 4px,transparent 4px,transparent 8px);
+        color:var(--text-dim); border-left:1px dashed var(--red); }
+  /* per-player PA sliders (literal pie allocation) */
+  .sp-paslides { margin-top:3px; }
+  .sp-paslider { display:flex; align-items:center; gap:6px; margin:1px 0; font-size:11px; }
+  .sp-pasl-dot { width:8px; height:8px; border-radius:2px; flex-shrink:0; }
+  .sp-pasl-name { width:90px; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sp-paslider input[type=range] { flex:1; height:3px; accent-color:var(--green); cursor:pointer; }
+  .sp-pasl-val { width:30px; text-align:right; font-variant-numeric:tabular-nums; }
+  .sp-pie-rm { background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:11px; padding:0 2px; }
+  .sp-pie-rm:hover { color:var(--red); }
+  .sp-pie-addrow { margin-top:4px; }
+  .sp-pie-add { background:var(--surface); color:var(--text-dim); border:1px dashed var(--border);
+        border-radius:4px; font-size:11px; padding:2px 6px; max-width:220px; cursor:pointer; }
+  .sp-pie-add:hover { border-color:var(--green); color:var(--text); }
+  .sp-cand { display:flex; justify-content:space-between; padding:3px 6px; font-size:12px; color:var(--text-dim); cursor:pointer; border-radius:4px; }
+  .sp-cand:hover { background:rgba(78,204,163,0.1); color:var(--text); } .sp-cand.pick { color:var(--green); }
+  .sp-bench { color:var(--text-dim); font-size:12px; margin-top:8px; }
+  /* decisions */
+  .sp-dgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:12px; }
+  .sp-dcard { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; }
+  .sp-drsn { color:var(--text-dim); font-size:11px; margin-left:6px; }
+  /* field (proper baseball diamond — depth-chart parity) */
+  .sp-flayout { display:flex; gap:24px; align-items:flex-start; justify-content:center; }
+  @media(max-width:900px){ .sp-flayout{flex-direction:column; align-items:stretch;} }
+  .sp-fieldcol { flex:0 1 660px; min-width:0; }
+  .sp-fsidebar { width:250px; flex-shrink:0; display:flex; flex-direction:column; gap:10px; }
+  .sp-diamond { position:relative; width:100%; max-width:640px; margin:0 auto; min-height:600px; overflow:visible; }
+  .sp-field-bg { position:absolute; top:0; left:0; width:100%; height:100%; z-index:0; pointer-events:none; }
+  .sp-fcard { position:absolute; transform:translateX(-50%); width:168px; z-index:1;
+        background:var(--surface); border:1px solid var(--border); border-radius:5px; padding:0 0 4px; cursor:pointer; }
+  .sp-fcard:hover { border-color:var(--green); z-index:4; }
+  .sp-fcard.hot { box-shadow:0 0 0 2px rgba(224,182,78,0.4); }
+  .sp-fhead { background:var(--border); color:var(--text); text-align:center; padding:2px 8px;
+        border-radius:3px 3px 0 0; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; }
+  .sp-fhead-war { font-weight:400; font-size:10px; font-variant-numeric:tabular-nums; }
+  .sp-fhead.sp-war-elite { background:#1a4a8a; color:#fff; }
+  .sp-fhead.sp-war-good  { background:#1a6b3a; color:#fff; }
+  .sp-fhead.sp-war-weak  { background:#8a2a2a; color:#fff; }
+  .sp-fbody { padding:3px 8px 0; }
+  .sp-fp { display:grid; grid-template-columns:1fr auto auto; align-items:baseline; gap:5px;
+        font-size:12px; padding:1px 0; line-height:1.4; }
+  .sp-fp.starter { font-weight:600; } .sp-fp.backup { opacity:.55; font-size:11px; }
+  .sp-fp-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sp-fp-pt { font-size:10px; opacity:.4; font-variant-numeric:tabular-nums; min-width:26px; text-align:right; }
+  .sp-empty { color:var(--text-dim); font-style:italic; }
+  .sp-fpit { display:grid; grid-template-columns:52px 1fr auto 16px; align-items:center; gap:6px; font-size:12px; padding:1px 0; }
+  .sp-pit-num { color:var(--text-dim); font-size:9px; opacity:.6; text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sp-move2 { background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:12px;
+        padding:0; opacity:0; transition:opacity .12s; } .sp-fpit:hover .sp-move2 { opacity:.7; }
+  .sp-move2:hover { color:var(--green); opacity:1; } .sp-move2-ph { width:16px; }
+  .sp-fsec { border:1px solid var(--border); border-radius:5px; overflow:hidden; }
+  /* candidate pool floats under a clicked card */
+  .sp-fpool { display:none; position:absolute; left:50%; top:100%; transform:translateX(-50%);
+        margin-top:3px; width:160px; background:var(--bg); border:1px solid var(--green);
+        border-radius:6px; padding:4px; z-index:6; text-align:left; }
+  .sp-fcard.open .sp-fpool { display:block; }
+  .sp-fieldnote { color:var(--text-dim); font-size:11px; margin-top:10px; opacity:.8; }
+  /* stat selector */
+  .spring-statsel { display:flex; gap:12px; align-items:center; margin-left:12px; }
+  .spring-statsel label { font-size:10px; text-transform:uppercase; color:var(--text-dim); letter-spacing:.03em;
+        display:inline-flex; align-items:center; gap:4px; }
+  .spring-statsel select { background:var(--bg); color:var(--text); border:1px solid var(--border);
+        border-radius:4px; font-size:11px; padding:2px 4px; }
+  /* table */
+  .sp-tbl { width:100%; border-collapse:collapse; max-width:760px; }
+  .sp-tbl th { text-align:left; color:var(--text-dim); font-size:11px; text-transform:uppercase; padding:4px 8px;
+        border-bottom:1px solid var(--border); cursor:pointer; }
+  .sp-tbl td { padding:3px 8px; border-bottom:1px solid rgba(15,52,96,.5); }
 </style>
 
 {% endblock %}
@@ -1312,6 +1508,728 @@
       else { msg.textContent = 'Error: ' + (d.error || 'unknown'); }
     }).catch(function () { msg.textContent = 'Save failed'; });
   });
+})();
+</script>
+
+{# ── Spring Training — Opening Day builder controller ── #}
+<script>
+(function () {
+  var root = document.getElementById('spring');
+  if (!root) return;
+
+  var TID = root.dataset.tid;
+  var state = JSON.parse(root.dataset.spring);   // {projection, constructed, contested, config, pool, ...}
+  var byId = {}; state.pool.forEach(function (p) { byId[p.player_id] = p; });
+  var FIELD = ['C','1B','2B','3B','SS','LF','CF','RF','DH'];
+  var lastDelta = null;   // {wins, run_diff, ...} vs the prior config
+  var hitStat = 'war';    // stat selector — hitters: war | ops_plus
+  var pitStat = 'war';    // stat selector — pitchers: war | era | fip
+
+  // Format a stat value for display given its key.
+  function fmtStat(v, key){
+    if (v === null || v === undefined) return '—';
+    if (key === 'war') return v.toFixed(1);
+    if (key === 'ops_plus' || key === 'ops_vs_l' || key === 'ops_vs_r'
+        || key === 'def' || key === 'bsr') return Math.round(v);
+    if (key === 'era' || key === 'fip') return v.toFixed(2);
+    if (key === 'woba') return v.toFixed(3).replace(/^0/, '');
+    return v;
+  }
+  // Pull the currently-selected display stat off a constructed entry.
+  function hitVal(e){ var s=e&&e.stats||{}; return fmtStat(s[hitStat], hitStat); }
+  function pitVal(e){ var s=e&&e.stats||{}; return fmtStat(s[pitStat], pitStat); }
+  // Color only applies meaningfully to WAR; rate stats stay neutral.
+  function hitCls(e){ return hitStat==='war' ? warcls((e&&e.war)||0) : 'mid'; }
+  function pitCls(e){ return pitStat==='war' ? warcls((e&&e.war)||0) : 'mid'; }
+
+  function warcls(w){ return w>=2.5?'pos':(w>=1.2?'mid':'dim'); }
+  function esc(s){ return String(s).replace(/[&<>]/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+  // First-initial + last name, so cards stay compact (depth-chart parity).
+  function shortName(name){
+    var parts = String(name).split(' ');
+    if (parts.length < 2) return name;
+    return parts[0][0] + '. ' + parts.slice(1).join(' ');
+  }
+  function lvlTag(l){ return l && l!=='MLB' ? ' <span class="sp-lvl">'+l+'</span>' : ''; }
+
+  // Positions a player can credibly play (from the pool's precomputed set).
+  function eligibleOf(pid){ var p = byId[pid]; return (p && p.eligible) || []; }
+  function isEligible(pid, slot){ return eligibleOf(pid).indexOf(slot) !== -1; }
+  // "Utility" = viable at 3+ FIELD positions (DH doesn't count as flexibility).
+  function utilCount(pid){ return eligibleOf(pid).filter(function(e){return e!=='DH';}).length; }
+  function utilBadge(pid){
+    var n = utilCount(pid);
+    return n >= 3 ? ' <span class="sp-util" title="'+esc(eligibleOf(pid).join(', '))+'">UTIL '+n+'</span>' : '';
+  }
+  // Players eligible at a slot, not already the slot's starter, ranked by WAR.
+  function eligibleForSlot(slot){
+    var cur = state.config.lineup[slot];
+    return state.pool.filter(function(p){
+        return !p.is_pitcher && p.player_id !== cur && isEligible(p.player_id, slot);
+      }).sort(function(a,b){ return b.war_proj - a.war_proj; });
+  }
+  // ── tiered playing time ──
+  // Start-share control: set how often a player starts (PA is derived from
+  // this + the handedness split). "Auto" = the position's realistic default.
+  var SHARE_OPTS = [['','Auto'],['0.95','95%'],['0.85','85%'],['0.75','75%'],
+                    ['0.67','67%'],['0.5','50%'],['0.33','33%'],['0.15','15%']];
+  function shareSelect(pid, cur) {
+    var c = cur != null ? String(cur) : '';
+    var o = SHARE_OPTS.map(function(t){
+      return '<option value="'+t[0]+'"'+(c===t[0]?' selected':'')+'>'+t[1]+'</option>';
+    }).join('');
+    return '<select class="sp-tier" title="start share" onclick="event.stopPropagation()" '
+         + 'onchange="springSetShare('+pid+',this.value)">'+o+'</select>';
+  }
+  function hitterTierSelect(pid){ return shareSelect(pid, (state.config.start_share||{})[pid]); }
+  // Pitcher role control (rotation order / bullpen role).
+  var SP_ROLES=[['','Auto'],['sp1','SP1'],['sp2','SP2'],['sp3','SP3'],['sp4','SP4'],['sp5','SP5']];
+  var RP_ROLES=[['','Auto'],['closer','Closer'],['setup','Setup'],['middle','Middle'],['long','Long'],['specialist','Spec vL']];
+  function roleSelect(pid, cur, opts) {
+    var c = cur || '';
+    var o = opts.map(function(t){ return '<option value="'+t[0]+'"'+(c===t[0]?' selected':'')+'>'+t[1]+'</option>'; }).join('');
+    return '<select class="sp-tier" onclick="event.stopPropagation()" onchange="springSetRole('+pid+',this.value)">'+o+'</select>';
+  }
+  function spTierSelect(pid){ return roleSelect(pid, (state.config.roles||{})[pid], SP_ROLES); }
+  function rpTierSelect(pid){ return roleSelect(pid, (state.config.roles||{})[pid], RP_ROLES); }
+
+  // Selected-stat value for a raw POOL player (candidate rows).
+  function poolHitVal(p){ var s=p.stats||{}; return fmtStat(s[hitStat], hitStat); }
+  function poolPitVal(p){ var s=p.stats||{}; return fmtStat(s[pitStat], pitStat); }
+  // Candidate value AT a given position: when showing WAR, use the SLOT-ADJUSTED
+  // WAR (what the player is worth THERE) so the dropdown matches the result of
+  // selecting him — fixes the native-vs-slot mismatch. Other stats are
+  // position-independent, so fall back to the normal value.
+  function poolHitValAt(p, pos){
+    if (hitStat === 'war' && p.slot_war && p.slot_war[pos] != null) return p.slot_war[pos].toFixed(1);
+    return poolHitVal(p);
+  }
+  function warclsAt(p, pos){
+    if (hitStat === 'war' && p.slot_war && p.slot_war[pos] != null) return warcls(p.slot_war[pos]);
+    return hitStat === 'war' ? warcls(p.war_proj) : 'mid';
+  }
+
+  // ── platoon pairing editor ──
+  // Current vs-RHP / vs-LHP assignment at a position (defaults to the starter).
+  function platoonOf(pos){
+    var pl = (state.config.platoon||{})[pos] || {};
+    var starter = (state.config.lineup||{})[pos];
+    return { vsR: pl.vsR != null ? pl.vsR : starter, vsL: pl.vsL != null ? pl.vsL : starter };
+  }
+  // A <select> of eligible players for one hand, each labeled with his split
+  // OPS+ vs that hand so the user can pair strong-side bats intentionally.
+  function platoonSelect(pos, hand){
+    var cur = platoonOf(pos)[hand === 'R' ? 'vsR' : 'vsL'];
+    var opts = eligibleForSlot(pos);
+    var starter = (state.config.lineup||{})[pos];
+    if (starter && byId[starter] && !opts.some(function(o){return o.player_id===starter;}))
+      opts = [byId[starter]].concat(opts);
+    var splitKey = hand === 'R' ? 'ops_vs_r' : 'ops_vs_l';
+    var o = opts.map(function(pl){
+      var s = pl[splitKey]; var lab = s ? ' ('+Math.round(s)+')' : '';
+      return '<option value="'+pl.player_id+'"'+(pl.player_id===cur?' selected':'')+'>'
+           + esc(shortName(pl.name))+lab+'</option>';
+    }).join('');
+    return '<select class="sp-plat" onclick="event.stopPropagation()" '
+         + 'onchange="springSetPlatoon(\''+pos+'\',\''+hand+'\',this.value)">'+o+'</select>';
+  }
+  // Distinct colors for the players filling a position's PA pie.
+  var PIE_COLORS = ['#4ecca3','#5a9bd4','#e0b64e','#c678dd','#e06c75','#56b6c2'];
+  // One handedness wedge as a stacked PA bar: each player a segment sized by his
+  // PA in that wedge, plus any OPEN remainder.
+  function pieWedge(pos, hand, entry) {
+    var budget = entry.pa_budget || {};
+    var total = hand === 'R' ? budget.r_total : budget.l_total;
+    var open = hand === 'R' ? budget.r_open : budget.l_open;
+    var freq = hand === 'R' ? '71%' : '29%';
+    var players = (entry.players || []).filter(function(pl){
+      return (hand === 'R' ? pl.pa_r : pl.pa_l) > 0; });
+    var segs = '', ci = 0;
+    players.forEach(function (pl) {
+      var pa = hand === 'R' ? pl.pa_r : pl.pa_l;
+      var w = total ? (pa / total * 100) : 0;
+      var col = PIE_COLORS[ci % PIE_COLORS.length]; ci++;
+      segs += '<div class="sp-pieseg" style="width:'+w.toFixed(1)+'%;background:'+col+'" '
+            + 'title="'+esc(pl.name)+' — '+pa+' PA vs '+hand+'HP">'
+            + '<span class="sp-pieseg-lab">'+esc(shortName(pl.name))+' '+pa+'</span></div>';
+    });
+    if (open > 2) {
+      var ow = total ? (open / total * 100) : 0;
+      segs += '<div class="sp-pieseg sp-pieopen" style="width:'+ow.toFixed(1)+'%" '
+            + 'title="'+open+' PA unfilled"><span class="sp-pieseg-lab">'+open+' open</span></div>';
+    }
+    // Per-player PA sliders for literal allocation of this wedge, each with a
+    // remove (✕). Dragging one rebalances the others (conservation).
+    var ci2 = 0;
+    var sliders = players.map(function (pl) {
+      var pa = hand === 'R' ? pl.pa_r : pl.pa_l;
+      var col = PIE_COLORS[ci2 % PIE_COLORS.length]; ci2++;
+      return '<div class="sp-paslider">'
+           + '<span class="sp-pasl-dot" style="background:'+col+'"></span>'
+           + '<span class="sp-pasl-name">'+esc(shortName(pl.name))+'</span>'
+           + '<input type="range" min="0" max="'+total+'" step="5" value="'+pa+'" '
+           + 'oninput="springPaInput(this,\''+pos+'\','+pl.pid+',\''+hand+'\')" '
+           + 'onchange="springPaCommit(\''+pos+'\','+pl.pid+',\''+hand+'\',this.value)" '
+           + 'onclick="event.stopPropagation()">'
+           + '<span class="sp-pasl-val" id="pav-'+pos+'-'+pl.pid+'-'+hand+'">'+pa+'</span>'
+           + '<button class="sp-pie-rm" title="remove from pie" '
+           + 'onclick="event.stopPropagation();springPieRemove(\''+pos+'\','+pl.pid+')">✕</button></div>';
+    }).join('');
+    return '<div class="sp-wedge"><div class="sp-wedge-head">vs '+hand+'HP '
+         + '<span class="sp-wedge-pa">'+total+' PA · '+freq+'</span></div>'
+         + '<div class="sp-piebar">'+segs+'</div>'
+         + '<div class="sp-paslides">'+sliders+'</div></div>';
+  }
+  // "+ add player" control: eligible players NOT already sharing the pie.
+  function pieAddControl(pos, entry){
+    var inPie = {}; (entry.players || []).forEach(function(p){ inPie[p.pid]=1; });
+    var opts = eligibleForSlot(pos).filter(function(p){ return !inPie[p.player_id]; });
+    if (!opts.length) return '';
+    var o = '<option value="">+ add player to share…</option>' + opts.map(function(p){
+      return '<option value="'+p.player_id+'">'+esc(shortName(p.name))
+           + (p.slot_war && p.slot_war[pos]!=null ? ' ('+p.slot_war[pos].toFixed(1)+')' : '')+'</option>';
+    }).join('');
+    return '<select class="sp-pie-add" onclick="event.stopPropagation()" '
+         + 'onchange="if(this.value)springPieAdd(\''+pos+'\',Number(this.value))">'+o+'</select>';
+  }
+  function platoonPanel(pos){
+    var entry = (state.constructed && state.constructed.lineup) ? state.constructed.lineup[pos] : null;
+    var pl = platoonOf(pos);
+    var isPlat = pl.vsR !== pl.vsL;
+    // The pie: two wedges showing how the ~658 PA at this position are filled,
+    // plus an "+ add player to share" control.
+    var pie = entry ? '<div class="sp-pie">'+pieWedge(pos,'R',entry)+pieWedge(pos,'L',entry)
+                    + '<div class="sp-pie-addrow">'+pieAddControl(pos, entry)+'</div></div>' : '';
+    // Fill controls: who plays vs each hand (platoon), + the starter's share.
+    var controls = '<div class="sp-platoon" onclick="event.stopPropagation()">'
+         + '<div class="sp-plat-row"><span class="sp-plat-lab">vs RHP</span>'+platoonSelect(pos,'R')+'</div>'
+         + '<div class="sp-plat-row"><span class="sp-plat-lab">vs LHP</span>'+platoonSelect(pos,'L')+'</div>'
+         + (isPlat ? '<button class="sp-plat-clear" onclick="event.stopPropagation();springClearPlatoon(\''+pos+'\')">clear platoon</button> <span class="sp-plat-on">platoon</span>' : '')
+         + '</div>';
+    return pie + controls;
+  }
+
+  // Pitchers eligible for a staff group ('SP' or 'RP'), not already in it.
+  function pitchersFor(group){
+    var inGroup = {};
+    (state.config.rotation||[]).concat(state.config.bullpen||[]).forEach(function(i){inGroup[i]=1;});
+    return state.pool.filter(function(p){
+        return p.is_pitcher && !inGroup[p.player_id] && (p.eligible||[]).indexOf(group) !== -1;
+      }).sort(function(a,b){ return b.war_proj - a.war_proj; });
+  }
+
+  // ── sticky projection header ──
+  function renderHeader() {
+    var p = state.projection;
+    var facets = [['bat_runs','Hit'],['br_runs','Run'],['fld_runs','Field'],['pit_runs','Pitch']]
+      .map(function (f) {
+        var v = Math.round(p[f[0]]); var s = v>=0?'+':'';
+        return '<div class="sp-fct"><div class="v">'+s+v+'</div><div class="l">'+f[1]+'</div></div>';
+      }).join('');
+    var dhtml = '';
+    if (lastDelta) {
+      var dw = lastDelta.wins, drd = lastDelta.run_diff;
+      var cls = dw > 0.01 ? 'pos' : (dw < -0.01 ? 'neg' : '');
+      dhtml = '<div class="sp-delta '+cls+'"><div class="l">last change</div>'
+            + '<div class="big">'+(dw>=0?'+':'')+dw.toFixed(1)+' wins</div>'
+            + '<div class="n">run diff '+(drd>=0?'+':'')+Math.round(drd)+' · precise</div></div>';
+    } else {
+      dhtml = '<div class="sp-delta"><div class="l">vs auto</div>'
+            + '<div class="big">—</div><div class="n">edit to compare</div></div>';
+    }
+    var band = Math.round(p.band_sd || 9);
+    document.getElementById('spring-proj').innerHTML =
+        '<div><div class="sp-rec-lab">Projected · true talent</div>'
+      + '<div class="sp-rec-big">'+Math.round(p.wins)+'<span style="color:var(--text-dim)">–</span>'+Math.round(p.losses)+'</div>'
+      + '<div class="sp-rec-sub">'+(p.run_diff>=0?'+':'')+Math.round(p.run_diff)+' run diff · '+Math.round(p.team_war)+' WAR</div>'
+      + '<div class="sp-band">typically ±'+band+' wins (season luck) — not applied to edits</div></div>'
+      + '<div class="sp-facets">'+facets+'</div>' + dhtml;
+  }
+
+  // ── BOARD ──
+  function renderBoard() {
+    var L = state.constructed.lineup, con = state.constructed;
+    var candBySlot = {}; state.contested.forEach(function (s) { candBySlot[s.slot] = s.candidates; });
+    function row(pos) {
+      var p = L[pos];
+      var hot = (candBySlot[pos] || []).length ? ' <span class="sp-hot">contested</span>' : '';
+      // Warn if the current occupant can't actually play this slot (DH always ok).
+      var warn = (p && pos !== 'DH' && !isEligible(p.pid, pos))
+        ? ' <span class="sp-warn" title="not viable at '+pos+'">⚠ off-position</span>' : '';
+      var util = p ? utilBadge(p.pid) : '';
+      // Candidate pool = every ELIGIBLE player for this slot (contested ones
+      // flagged), ranked by WAR — so a swap is always to a legal position.
+      var contestedIds = {}; (candBySlot[pos]||[]).forEach(function(c){contestedIds[c.pid]=1;});
+      var elig = eligibleForSlot(pos).slice(0, 8);
+      var pool = '<div class="sp-candpool">' + (elig.length ? elig.map(function (c) {
+          var tag = contestedIds[c.player_id] ? ' <span class="sp-mini">in the mix</span>' : '';
+          return '<div class="sp-cand" onclick="springSwap(\''+pos+'\','+c.player_id+')">'
+               + '<span>'+esc(c.name)+lvlTag(c.level)+tag+'</span>'
+               + '<span class="sp-war '+warclsAt(c,pos)+'">'+poolHitValAt(c,pos)+'</span></div>';
+        }).join('') : '<div class="sp-cand" style="cursor:default">no eligible alternatives</div>') + '</div>';
+      var tierSel = p ? hitterTierSelect(p.pid) : '';
+      // Platoon indicator on the row when a vs-R/vs-L split is set.
+      var pl = platoonOf(pos);
+      var platBadge = (p && pl.vsR !== pl.vsL) ? ' <span class="sp-plat-on">PLATOON</span>' : '';
+      // Expandable area: swap pool + the platoon pairing editor (field slots only).
+      var expand = '<div class="sp-expand">' + pool
+                 + (pos !== 'DH' && p ? platoonPanel(pos) : '') + '</div>';
+      return '<div><div class="sp-row" onclick="springToggleRow(this)"><span class="sp-pos">'+pos+'</span>'
+           + '<span class="sp-name">'+(p?esc(p.name):'—')+lvlTag(p&&p.level)+util+hot+warn+platBadge+'</span>'
+           + tierSel
+           + '<span class="sp-war '+(p?hitCls(p):'')+'">'+(p?hitVal(p):'')+'</span></div>'
+           + expand + '</div>';
+    }
+    var fields = FIELD.map(row).join('');
+
+    // Pitcher staff row: click to open an eligible-pitcher pool; a starter can
+    // move to the pen (and vice-versa); drop removes from the 26.
+    function staffRow(r, group, label) {
+      var elig = pitchersFor(group).slice(0, 8);
+      var pool = '<div class="sp-candpool">' + (elig.length ? elig.map(function (c) {
+          return '<div class="sp-cand" onclick="springPitchSwap(\''+group+'\','+r.pid+','+c.player_id+')">'
+               + '<span>'+esc(c.name)+lvlTag(c.level)+'</span>'
+               + '<span class="sp-war '+(pitStat==='war'?warcls(c.war_proj):'mid')+'">'+poolPitVal(c)+'</span></div>';
+        }).join('') : '<div class="sp-cand" style="cursor:default">no eligible arms</div>') + '</div>';
+      var move = (group === 'SP')
+        ? '<button class="sp-move" onclick="event.stopPropagation();springMovePitcher('+r.pid+',\'RP\')" title="move to bullpen">→ pen</button>'
+        : (isEligible(r.pid,'SP') ? '<button class="sp-move" onclick="event.stopPropagation();springMovePitcher('+r.pid+',\'SP\')" title="move to rotation">→ rot</button>' : '');
+      var tierSel = (group === 'SP') ? spTierSelect(r.pid) : rpTierSelect(r.pid);
+      return '<div><div class="sp-row" onclick="springToggleRow(this)"><span class="sp-pos">'+label+'</span>'
+           + '<span class="sp-name">'+esc(r.name)+' '+move
+           + '<button class="sp-drop" onclick="event.stopPropagation();springDrop('+r.pid+')" title="remove from 26">✕</button></span>'
+           + tierSel
+           + '<span class="sp-war '+pitCls(r)+'">'+pitVal(r)+'</span></div>'
+           + '<div class="sp-expand">'+pool+'</div></div>';
+    }
+    var rot = (con.rotation||[]).map(function (r,i){ return staffRow(r,'SP','SP'+(i+1)); }).join('');
+    var pen = (con.bullpen||[]).slice(0,8).map(function (r){ return staffRow(r,'RP',r.role||'RP'); }).join('');
+
+    var bench = (con.bench||[]).map(function (b) {
+      return '<span class="sp-benchchip">'+esc(b.name)+' ('+b.war.toFixed(1)+')'+utilBadge(b.pid)
+           + '<button class="sp-drop" onclick="springDrop('+b.pid+')" title="remove from 26">✕</button></span>';
+    }).join(' ');
+    document.getElementById('sv-board').innerHTML =
+        '<div class="sp-grid3"><div><div class="sp-colh">Lineup</div>'+fields
+      + '<div class="sp-bench">Bench: '+(bench||'—')+'</div></div>'
+      + '<div><div class="sp-colh">Rotation</div>'+rot+'</div>'
+      + '<div><div class="sp-colh">Bullpen</div>'+pen+'</div></div>';
+  }
+
+  // ── DECISIONS ──
+  function renderDecisions() {
+    var html = state.contested.map(function (s) {
+      var rows = s.candidates.map(function (c) {
+        return '<div class="sp-cand'+(c.is_pick?' pick':'')+'">'
+             + '<span>'+esc(c.name)+(c.out_of_options?' ⚠':'')+'</span>'
+             + '<span class="sp-war '+warcls(c.war)+'">'+c.war.toFixed(1)+'</span></div>';
+      }).join('');
+      var tag = s.forced ? '<span class="sp-hot">forced</span>' : '';
+      return '<div class="sp-dcard"><div><b>'+esc(s.slot)+'</b> '+tag
+           + '<span class="sp-drsn">'+esc(s.reason)+'</span></div>'+rows+'</div>';
+    }).join('');
+    document.getElementById('sv-decisions').innerHTML =
+      '<div class="sp-dgrid">'+(html || '<p class="empty">No contested spots — the roster is set.</p>')+'</div>';
+  }
+
+  // ── FIELD (proper baseball diamond — depth-chart parity) ──
+  // Real SVG field (grass arc, dirt, basepaths, home plate), cards positioned
+  // in %-x / px-y, multiple players per position with PT%, per-position WAR
+  // with a strength heatmap, DH/SP/RP sidebar. Click a card to swap.
+  var FIELD_BG = '<svg class="sp-field-bg" viewBox="0 -100 700 750" preserveAspectRatio="xMidYMid meet">'
+    + '<path d="M40,240 A310,310 0 0,1 660,240" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1.5"/>'
+    + '<circle cx="350" cy="395" r="165" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>'
+    + '<line x1="350" y1="560" x2="190" y2="395" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>'
+    + '<line x1="190" y1="395" x2="350" y2="230" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>'
+    + '<line x1="350" y1="230" x2="510" y2="395" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>'
+    + '<line x1="510" y1="395" x2="350" y2="560" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>'
+    + '<polygon points="342,555 358,555 358,563 350,570 342,563" fill="rgba(255,255,255,0.2)"/></svg>';
+  // depth-chart card positions (left %, top px) in the 700x750 field box.
+  var FIELD_COORDS = {CF:[50,0],LF:[15,80],RF:[85,80],SS:[30,230],'2B':[70,230],
+                      '3B':[18,390],'1B':[82,390],C:[50,545]};
+  // Strength heatmap by WAR tier (parity with depth chart's rank coloring).
+  function posWarCls(w){ return w>=4?'sp-war-elite':(w>=2?'sp-war-good':(w<1?'sp-war-weak':'')); }
+
+  function renderField() {
+    var L = state.constructed.lineup, con = state.constructed;
+    var candBySlot = {}; state.contested.forEach(function (s) { candBySlot[s.slot] = s.candidates; });
+
+    function posCard(pos) {
+      var slot = L[pos], c = FIELD_COORDS[pos];
+      var players = (slot && slot.players) || [];
+      var posWar = slot ? (slot.pos_war != null ? slot.pos_war : slot.war) : 0;
+      var hot = candBySlot[pos] ? ' hot' : '';
+      // player rows (starter bold, platoon/backups dim) with PT%
+      var rows = players.length ? players.map(function (pl, i) {
+          var warn = (pos!=='DH' && !isEligible(pl.pid,pos)) ? ' <span class="sp-warn">⚠</span>' : '';
+          var cls = 'sp-fp' + (i===0?' starter':' backup');
+          return '<div class="'+cls+'"><span class="sp-fp-name">'+esc(shortName(pl.name))+lvlTag(pl.level)+warn+'</span>'
+               + '<span class="sp-war '+(hitStat==='war'?warcls(pl.war):'mid')+'">'+hitVal(pl)+'</span>'
+               + '<span class="sp-fp-pt">'+(pl.pt_pct||0)+'%</span></div>';
+        }).join('') : '<div class="sp-fp sp-empty">— empty —</div>';
+      // swap pool (eligible players), revealed on click
+      var elig = eligibleForSlot(pos).slice(0, 6);
+      var pool = '<div class="sp-fpool">' + (elig.length ? elig.map(function (x) {
+          return '<div class="sp-cand" onclick="event.stopPropagation();springSwap(\''+pos+'\','+x.player_id+')">'
+               + '<span>'+esc(shortName(x.name))+lvlTag(x.level)+'</span>'
+               + '<span class="sp-war '+warclsAt(x,pos)+'">'+poolHitValAt(x,pos)+'</span></div>';
+        }).join('') : '<div class="sp-cand" style="cursor:default">none eligible</div>') + '</div>';
+      return '<div class="sp-fcard'+hot+'" style="left:'+c[0]+'%;top:'+c[1]+'px" onclick="springToggleRow(this)">'
+           + '<div class="sp-fhead'+posWarCls(posWar)+'">'+pos+' <span class="sp-fhead-war">'+posWar.toFixed(1)+'</span></div>'
+           + '<div class="sp-fbody">'+rows+'</div>'+pool+'</div>';
+    }
+    var cards = Object.keys(FIELD_COORDS).map(posCard).join('');
+
+    // Sidebar: DH + SP + RP sections (depth-chart layout).
+    function dhSection() {
+      var dh = L['DH'];
+      var rows = (dh && dh.players ? dh.players : (dh?[dh]:[])).map(function(pl,i){
+        return '<div class="sp-fp'+(i===0?' starter':' backup')+'"><span class="sp-fp-name">'+esc(shortName(pl.name))+lvlTag(pl.level)+'</span>'
+             + '<span class="sp-war '+(hitStat==='war'?warcls(pl.war):'mid')+'">'+hitVal(pl)+'</span>'
+             + '<span class="sp-fp-pt">'+(pl.pt_pct||0)+'%</span></div>';
+      }).join('') || '<div class="sp-fp sp-empty">— empty —</div>';
+      var w = dh ? (dh.pos_war!=null?dh.pos_war:dh.war) : 0;
+      return '<div class="sp-fsec"><div class="sp-fhead'+posWarCls(w)+'">DH <span class="sp-fhead-war">'+w.toFixed(1)+'</span></div>'
+           + '<div class="sp-fbody">'+rows+'</div></div>';
+    }
+    function staffSection(title, arr, group) {
+      var rows = (arr||[]).slice(0,9).map(function(r,i){
+        // Move affordance: a subtle hover-only ⇄ icon (title explains it),
+        // not inline text that clutters every row.
+        var move = (group==='SP')
+          ? '<button class="sp-move2" title="move to bullpen" onclick="event.stopPropagation();springMovePitcher('+r.pid+',\'RP\')">⇄</button>'
+          : (isEligible(r.pid,'SP')?'<button class="sp-move2" title="move to rotation" onclick="event.stopPropagation();springMovePitcher('+r.pid+',\'SP\')">⇄</button>':'<span class="sp-move2-ph"></span>');
+        var label = group==='SP' ? ('SP'+(i+1)) : (r.role||'RP');
+        return '<div class="sp-fpit"><span class="sp-pit-num">'+label+'</span>'
+             + '<span class="sp-fp-name">'+esc(shortName(r.name))+'</span>'
+             + '<span class="sp-war '+(pitStat==='war'?warcls(r.war):'mid')+'">'+pitVal(r)+'</span>'+move+'</div>';
+      }).join('');
+      return '<div class="sp-fsec"><div class="sp-fhead">'+title+'</div><div class="sp-fbody">'+rows+'</div></div>';
+    }
+
+    document.getElementById('sv-field').innerHTML =
+        '<div class="sp-flayout">'
+      + '  <div class="sp-fieldcol"><div class="sp-diamond">'+FIELD_BG+cards+'</div></div>'
+      + '  <div class="sp-fsidebar">'+dhSection()
+      + staffSection('SP', con.rotation, 'SP') + staffSection('RP', con.bullpen, 'RP')
+      + '  </div>'
+      + '</div>'
+      + '<div class="sp-fieldnote">Projections use estimated playing time (PT%). '
+      + 'Click a position to swap. Hitters by '+hitStat.toUpperCase().replace("_PLUS","+").replace("OPS_PLUS","OPS+")+', pitchers by '+pitStat.toUpperCase()+'.</div>';
+  }
+
+  // ── TABLE (sortable) ──
+  function renderTable() {
+    var rows = state.pool.slice().sort(function(a,b){return b.war_proj-a.war_proj;}).map(function (p) {
+      var elig = p.is_pitcher ? (p.eligible||[]).join('/')
+                 : (p.eligible||[]).filter(function(e){return e!=='DH';}).join(' ');
+      // Proj column = the group-appropriate selected stat (hitters hit stat,
+      // pitchers pit stat); plain OPS+ / ERA when WAR is the WAR column.
+      var s = p.stats || {};
+      var projKey = p.is_pitcher ? (pitStat==='war'?'era':pitStat) : (hitStat==='war'?'ops_plus':hitStat);
+      var projVal = fmtStat(s[projKey], projKey);
+      return '<tr><td>'+esc(p.name)+'</td><td>'+p.bucket+'</td><td>'+p.level+'</td>'
+           + '<td class="sp-war '+warcls(p.war_proj)+'">'+p.war_proj.toFixed(1)+'</td>'
+           + '<td data-sort-value="'+(s[projKey]!=null?s[projKey]:-999)+'">'+projVal+'</td>'
+           + '<td>'+(p.fv||'')+'</td><td>'+(p.age||'')+'</td>'
+           + '<td class="sp-elig" data-sort-value="'+utilCount(p.player_id)+'">'+(elig||'—')+'</td></tr>';
+    }).join('');
+    document.getElementById('sv-table').innerHTML =
+        '<table class="sp-tbl"><thead><tr><th data-sort="str">Player</th>'
+      + '<th data-sort="pos">Pos</th><th data-sort="str">Lvl</th>'
+      + '<th data-sort="num">WAR</th><th data-sort="num">Proj</th>'
+      + '<th data-sort="num">FV</th><th data-sort="num">Age</th>'
+      + '<th data-sort="num">Eligible</th>'
+      + '</tr></thead><tbody>'+rows+'</tbody></table>';
+    if (typeof initSort === 'function') initSort(document.querySelector('#sv-table table'));
+  }
+
+  function renderWarnings() {
+    var el = document.getElementById('spring-warnings');
+    if (!el) return;
+    var ws = state.warnings || [];
+    el.innerHTML = ws.map(function(w){
+      return '<div class="spring-warn-row">⚠ '+esc(w.msg)+'</div>';
+    }).join('');
+    el.style.display = ws.length ? 'block' : 'none';
+  }
+  function renderAll() { renderHeader(); renderWarnings(); renderBoard(); renderDecisions(); renderField(); renderTable(); }
+
+  // ── view switch ──
+  window.springView = function (v) {
+    document.querySelectorAll('#spring .spring-view').forEach(function(e){ e.classList.toggle('on', e.dataset.v===v); });
+    document.querySelectorAll('#spring .sv-tab').forEach(function(e){ e.classList.toggle('on', e.dataset.v===v); });
+    renderActive();   // refresh the view being shown (reproject only kept it current if active)
+  };
+  window.springToggleRow = function (rowEl) {
+    // Field diamond card: toggle an 'open' class (CSS reveals its swap pool).
+    if (rowEl && rowEl.classList && rowEl.classList.contains('sp-fcard')) {
+      rowEl.classList.toggle('open');
+      return;
+    }
+    // Board/staff rows: toggle the sibling expandable area (pool + platoon).
+    // Use COMPUTED display (the CSS default is none), not the inline style —
+    // otherwise the first click reads '' and wrongly re-hides an element that
+    // is already hidden by CSS.
+    if (!rowEl || !rowEl.parentElement) return;
+    var ex = rowEl.parentElement.querySelector('.sp-expand')
+          || rowEl.parentElement.querySelector('.sp-candpool');
+    if (!ex) return;
+    var shown = getComputedStyle(ex).display !== 'none';
+    ex.style.display = shown ? 'none' : 'block';
+  };
+  window.springSetStat = function (which, val) {
+    if (which === 'hit') hitStat = val; else pitStat = val;
+    renderAll();   // no re-project needed — stats are already in state
+  };
+
+  // ── edit → re-project ──  (all edits funnel here → one config mutation)
+  // Which view is showing, so a reproject only re-renders THAT one (not all 4).
+  function activeView(){
+    var t = document.querySelector('#spring .sv-tab.on');
+    return t ? t.dataset.v : 'board';
+  }
+  function renderActive(){
+    var v = activeView();
+    if (v === 'board') renderBoard();
+    else if (v === 'decisions') renderDecisions();
+    else if (v === 'field') renderField();
+    else if (v === 'table') renderTable();
+  }
+  // Capture which rows are expanded (+ scroll) so an in-place update doesn't
+  // collapse the panel you're working in or jump the page.
+  function captureUI(){
+    var open = [];
+    document.querySelectorAll('#spring .sp-expand').forEach(function(ex){
+      if (getComputedStyle(ex).display !== 'none') {
+        var row = ex.parentElement.querySelector('.sp-pos');
+        if (row) open.push(row.textContent.trim());
+      }
+    });
+    return { open: open, scroll: window.scrollY };
+  }
+  function restoreUI(ui){
+    if (!ui) return;
+    document.querySelectorAll('#spring .sp-row').forEach(function(r){
+      var pm = r.querySelector('.sp-pos');
+      if (pm && ui.open.indexOf(pm.textContent.trim()) !== -1) {
+        var ex = r.parentElement.querySelector('.sp-expand');
+        if (ex) ex.style.display = 'block';
+      }
+    });
+    window.scrollTo(0, ui.scroll);
+  }
+
+  function reproject(baselineConfig) {
+    var ui = captureUI();   // preserve expanded panels + scroll across the update
+    var payload = { team_id: Number(TID), config: state.config,
+                    out_of_options: state.config.out_of_options || [] };
+    if (baselineConfig) payload.baseline = baselineConfig;
+    fetch('/api/spring-project', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload) })
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if (!d.ok) { return; }
+        state.projection = d.projection;
+        state.constructed = d.constructed;
+        state.contested = d.contested;
+        state.config = d.config;
+        state.warnings = d.warnings || [];
+        lastDelta = d.delta;
+        renderHeader(); renderWarnings();   // always refresh the payoff readout
+        renderActive();                      // re-render ONLY the visible view
+        restoreUI(ui);                       // reopen the panel you were editing
+      });
+  }
+
+  window.springSwap = function (pos, pid) {
+    if (!isEligible(pid, pos)) { return; }   // guard: only legal slottings
+    var before = JSON.parse(JSON.stringify(state.config));  // for the per-edit delta
+    var cfg = state.config;
+    var displaced = cfg.lineup[pos];
+    // Remove the incoming player from wherever he currently is.
+    var fromPos = null;
+    Object.keys(cfg.lineup).forEach(function(k){ if (cfg.lineup[k]===pid) fromPos = k; });
+    cfg.bench = (cfg.bench || []).filter(function(b){ return b !== pid; });
+    // Place him; the displaced starter takes the incoming player's old spot:
+    // his vacated field slot if he came from the lineup, else the bench.
+    cfg.lineup[pos] = pid;
+    if (displaced && displaced !== pid) {
+      if (fromPos && fromPos !== pos) cfg.lineup[fromPos] = displaced;  // straight swap
+      else cfg.bench.push(displaced);
+    } else if (fromPos && fromPos !== pos) {
+      delete cfg.lineup[fromPos];   // moved within lineup, old slot now empty
+    }
+    reproject(before);
+  };
+
+  window.springPitchSwap = function (group, outPid, inPid) {
+    var before = JSON.parse(JSON.stringify(state.config));
+    var cfg = state.config;
+    var arr = group === 'SP' ? cfg.rotation : cfg.bullpen;
+    // Remove the incoming pitcher from wherever he is, drop him into the slot.
+    cfg.rotation = (cfg.rotation||[]).filter(function(x){return x!==inPid;});
+    cfg.bullpen = (cfg.bullpen||[]).filter(function(x){return x!==inPid;});
+    arr = group === 'SP' ? cfg.rotation : cfg.bullpen;
+    var idx = arr.indexOf(outPid);
+    if (idx >= 0) arr[idx] = inPid; else arr.push(inPid);
+    reproject(before);
+  };
+
+  window.springMovePitcher = function (pid, toGroup) {
+    if (toGroup === 'SP' && !isEligible(pid, 'SP')) return;
+    var before = JSON.parse(JSON.stringify(state.config));
+    var cfg = state.config;
+    cfg.rotation = (cfg.rotation||[]).filter(function(x){return x!==pid;});
+    cfg.bullpen = (cfg.bullpen||[]).filter(function(x){return x!==pid;});
+    (toGroup === 'SP' ? cfg.rotation : cfg.bullpen).push(pid);
+    reproject(before);
+  };
+
+  window.springSetShare = function (pid, val) {
+    var before = JSON.parse(JSON.stringify(state.config));
+    state.config.start_share = state.config.start_share || {};
+    if (val) state.config.start_share[pid] = parseFloat(val);
+    else delete state.config.start_share[pid];   // "auto" clears the override
+    reproject(before);
+  };
+  window.springSetRole = function (pid, role) {
+    var before = JSON.parse(JSON.stringify(state.config));
+    state.config.roles = state.config.roles || {};
+    if (role) state.config.roles[pid] = role;
+    else delete state.config.roles[pid];
+    reproject(before);
+  };
+  window.springSetPlatoon = function (pos, hand, pid) {
+    pid = Number(pid);
+    var before = JSON.parse(JSON.stringify(state.config));
+    state.config.platoon = state.config.platoon || {};
+    var cur = platoonOf(pos);
+    var pair = { vsR: cur.vsR, vsL: cur.vsL };
+    pair[hand === 'R' ? 'vsR' : 'vsL'] = pid;
+    // If both hands point at the same player, it's not a platoon — clear it.
+    if (pair.vsR === pair.vsL) delete state.config.platoon[pos];
+    else state.config.platoon[pos] = pair;
+    reproject(before);
+  };
+  window.springClearPlatoon = function (pos) {
+    var before = JSON.parse(JSON.stringify(state.config));
+    if (state.config.platoon) delete state.config.platoon[pos];
+    if (state.config.pa_alloc) delete state.config.pa_alloc[pos];  // revert to derived
+    reproject(before);
+  };
+  // Live label update while dragging a PA slider (no server round-trip).
+  window.springPaInput = function (el, pos, pid, hand) {
+    var lab = document.getElementById('pav-' + pos + '-' + pid + '-' + hand);
+    if (lab) lab.textContent = el.value;
+  };
+  // Seed a position's pa_alloc from its current (derived or explicit) pie so
+  // every player's PA is spelled out before we start rebalancing it.
+  function seedAlloc(pos){
+    var entry = (state.constructed && state.constructed.lineup) ? state.constructed.lineup[pos] : null;
+    state.config.pa_alloc = state.config.pa_alloc || {};
+    if (!state.config.pa_alloc[pos]) {
+      var a = {};
+      ((entry && entry.players) || []).forEach(function (pl) {
+        a[pl.pid] = { r: pl.pa_r || 0, l: pl.pa_l || 0 };
+      });
+      state.config.pa_alloc[pos] = a;
+    }
+    return state.config.pa_alloc[pos];
+  }
+  function wedgeBudget(pos, hand){
+    var e = (state.constructed && state.constructed.lineup) ? state.constructed.lineup[pos] : null;
+    var b = (e && e.pa_budget) || {};
+    return hand === 'R' ? (b.r_total || 467) : (b.l_total || 191);
+  }
+  // Commit a PA slider: set player X to V, then CONSERVE the pie — the OTHER
+  // players in that wedge absorb the (budget − V) remainder proportional to
+  // their current slices (the pie can't grow; giving one more shrinks others).
+  window.springPaCommit = function (pos, pid, hand, val) {
+    var before = JSON.parse(JSON.stringify(state.config));
+    var cur = seedAlloc(pos);
+    var k = hand === 'R' ? 'r' : 'l';
+    var budget = wedgeBudget(pos, hand);
+    var V = Math.max(0, Math.min(budget, parseInt(val, 10) || 0));
+    cur[pid] = cur[pid] || { r: 0, l: 0 };
+    cur[pid][k] = V;
+    // Rebalance the others to fill exactly (budget − V), proportional to their
+    // existing slices. If others currently sum to 0, the remainder stays OPEN.
+    var others = Object.keys(cur).map(Number).filter(function(x){ return x !== pid; });
+    var otherSum = others.reduce(function(s,x){ return s + (cur[x][k] || 0); }, 0);
+    var remain = Math.max(0, budget - V);
+    if (otherSum > 0) {
+      others.forEach(function(x){ cur[x][k] = Math.round((cur[x][k] || 0) / otherSum * remain); });
+    }
+    reproject(before);
+  };
+  // Add an eligible player to a position's pie (both wedges, a modest default
+  // slice taken proportionally from whoever is there).
+  window.springPieAdd = function (pos, pid) {
+    var before = JSON.parse(JSON.stringify(state.config));
+    var cur = seedAlloc(pos);
+    cur[pid] = cur[pid] || { r: 0, l: 0 };
+    ['R','L'].forEach(function(hand){
+      var k = hand === 'R' ? 'r' : 'l';
+      var budget = wedgeBudget(pos, hand);
+      // give the new player ~1/3 of the wedge, scale the rest down to fit.
+      var give = Math.round(budget / 3);
+      var others = Object.keys(cur).map(Number).filter(function(x){ return x !== pid; });
+      var otherSum = others.reduce(function(s,x){ return s + (cur[x][k] || 0); }, 0);
+      cur[pid][k] = give;
+      var remain = Math.max(0, budget - give);
+      if (otherSum > 0) others.forEach(function(x){ cur[x][k] = Math.round((cur[x][k]||0)/otherSum*remain); });
+    });
+    reproject(before);
+  };
+  // Remove a player from a position's pie (zero his PA in both wedges; the
+  // freed PA is redistributed to whoever remains).
+  window.springPieRemove = function (pos, pid) {
+    var before = JSON.parse(JSON.stringify(state.config));
+    var cur = seedAlloc(pos);
+    if (!cur[pid]) { return; }
+    delete cur[pid];
+    ['R','L'].forEach(function(hand){
+      var k = hand === 'R' ? 'r' : 'l';
+      var budget = wedgeBudget(pos, hand);
+      var others = Object.keys(cur).map(Number);
+      var otherSum = others.reduce(function(s,x){ return s + (cur[x][k]||0); }, 0);
+      if (otherSum > 0) others.forEach(function(x){ cur[x][k] = Math.round((cur[x][k]||0)/otherSum*budget); });
+    });
+    reproject(before);
+  };
+
+  window.springDrop = function (pid) {
+    var before = JSON.parse(JSON.stringify(state.config));
+    var cfg = state.config;
+    Object.keys(cfg.lineup).forEach(function(k){ if (cfg.lineup[k]===pid) delete cfg.lineup[k]; });
+    cfg.bench = (cfg.bench||[]).filter(function(x){return x!==pid;});
+    cfg.rotation = (cfg.rotation||[]).filter(function(x){return x!==pid;});
+    cfg.bullpen = (cfg.bullpen||[]).filter(function(x){return x!==pid;});
+    reproject(before);
+  };
+
+  window.springRecommend = function () {
+    // Reset to the model's auto 26-man: clear any saved plan, then reload (the
+    // server renders the auto recommendation when no plan is saved).
+    if (!confirm('Reset to the recommended 26-man? This clears your saved plan.')) return;
+    fetch('/api/spring-plan', { method:'DELETE', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ team_id: Number(TID) }) })
+      .then(function(){ window.location.reload(); });
+  };
+
+  window.springSave = function () {
+    var note = document.getElementById('spring-save-note');
+    fetch('/api/spring-plan', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ team_id: Number(TID), config: state.config,
+                               out_of_options: state.config.out_of_options || [] }) })
+      .then(function(r){return r.json();})
+      .then(function(d){ note.textContent = d.ok ? 'Plan saved ✓' : ('Error: '+(d.error||'')); })
+      .catch(function(){ note.textContent = 'Save failed'; });
+  };
+
+  renderAll();
+  window.springView('board');
 })();
 </script>
 {% endblock %}

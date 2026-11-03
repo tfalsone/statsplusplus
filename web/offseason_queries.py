@@ -1664,3 +1664,1077 @@ def get_rule5(team_id):
         # Your positional holes — doubles as the draft-board quick-filter strip.
         "needs": sorted(need_positions),
     }
+
+
+# ===========================================================================
+# Spring Training — Opening Day projection
+#
+# Builds a configured 26-man and projects its season output as the
+# record -> run-diff -> facet cascade, via the pure team_projection engine.
+# See .kiro/specs/spring-training-page/design.md.
+#
+# The web layer here does the DB pull + roster/playing-time assembly (it may
+# use scripts/projections.py, the established pattern); the pure projection math
+# lives in statsplusplus.evaluation.team_projection.
+# ===========================================================================
+
+# Per-league team-projection calibration is derived from team-season history
+# (calibrate.derive_projection_calibration). Cache it per request so repeated
+# edits in one page load don't re-regress every time.
+_SPRING_CALIB_CACHE: dict = {}
+
+
+def _spring_calibration(conn, pyth_exp):
+    key = id(conn)
+    if key not in _SPRING_CALIB_CACHE:
+        from statsplusplus.data.calibrate import derive_projection_calibration
+        _SPRING_CALIB_CACHE[key] = derive_projection_calibration(conn, pyth_exp)
+    return _SPRING_CALIB_CACHE[key]
+
+
+_SPRING_LEVEL_NAME = {"1": "MLB", "2": "AAA", "3": "AA"}
+# Readiness discount on a non-MLB player's current-season contribution (not yet
+# MLB-proven). Distinct from projections.LEVEL_DISCOUNT (which discounts
+# *playing-time likelihood*); this discounts the WAR *rate* for the Spring
+# what-if, where the user has explicitly chosen to roster the player.
+_SPRING_READINESS = {"MLB": 1.0, "AAA": 0.80, "AA": 0.65}
+
+
+def _spring_pool(conn, team_id, ed):
+    """Candidate pool: full 40-man + AA/AAA players with a WAR projection.
+
+    Returns per-player dicts carrying the fields the allocator + engine need:
+    current-age WAR (`war_proj`), level discount, split OPS+, positional ratings.
+    Org membership via ORG_ID_SQL (contract_team_id is stale after trades).
+    """
+    from statsplusplus.evaluation.war import aging_mult
+    from statsplusplus.evaluation.constants import load_model_weights
+    import sys as _sys
+    league_dir = get_cfg().league_dir
+    _sys.path.insert(0, str(league_dir.parent.parent / "scripts"))
+    from projections import (
+        project_ops_plus, project_ops_plus_splits, project_era, project_fip,
+        LEVEL_DISCOUNT, POS_THRESHOLDS,
+    )
+
+    weights = load_model_weights(league_dir)
+    # League ERA/FIP anchors for the pitcher stat projections (display only).
+    import json as _json
+    _lg_era, _lg_fip = 4.5, 4.5
+    try:
+        _la = _json.loads((league_dir / "config" / "league_averages.json").read_text())
+        _lg_era = _la.get("pitching", {}).get("era", 4.5)
+        _lg_fip = _la.get("pitching", {}).get("fip", 4.5)
+        _lg_woba = _la.get("batting", {}).get("woba", 0.320)
+    except Exception:
+        _lg_woba = 0.320
+
+    rows = conn.execute(f"""
+        SELECT pe.player_id, pe.name, pe.age, pe.bucket, pe.level, pe.peak_war,
+               pe.composite, pe.fv, p.role, p.is_on_secondary,
+               r.cntct, r.gap, r.pow, r.eye, r.speed,
+               r.cntct_l, r.cntct_r, r.gap_l, r.gap_r,
+               r.pow_l, r.pow_r, r.eye_l, r.eye_r,
+               r.c, r.ss, r.second_b, r.third_b, r.first_b, r.lf, r.cf, r.rf,
+               r.defensive_value, r.baserunning_value, r.proj_woba
+        FROM player_evaluation pe
+        JOIN players p ON pe.player_id = p.player_id
+        LEFT JOIN latest_ratings r ON pe.player_id = r.player_id
+        WHERE pe.eval_date = ?
+          AND {ORG_ID_SQL} = ?
+          AND pe.peak_war IS NOT NULL
+          AND (p.level = '1' OR (p.level IN ('2','3') AND p.is_on_secondary = 1)
+               OR (p.level IN ('2','3') AND pe.peak_war >= 1.5))
+    """, (ed, team_id)).fetchall()
+
+    pool = []
+    for r in rows:
+        age = r["age"] or 27
+        bucket = r["bucket"] or "COF"
+        lvl = _SPRING_LEVEL_NAME.get(r["level"], r["level"])
+        cur_war = (r["peak_war"] or 0) * aging_mult(age, bucket, weights)
+        cur_war *= _SPRING_READINESS.get(lvl, 0.5)
+        is_pitcher = bucket in ("SP", "RP")
+        d = {
+            "player_id": r["player_id"], "name": r["name"], "age": age,
+            "bucket": bucket, "level": lvl, "role": r["role"],
+            "on_40": bool(r["is_on_secondary"]), "is_pitcher": is_pitcher,
+            "fv": r["fv"], "composite": r["composite"],
+            "war_proj": round(cur_war, 2),
+            "level_discount": LEVEL_DISCOUNT.get(lvl, 0.1),
+            "speed": r["speed"] or 50,
+        }
+        if not is_pitcher:
+            # Guard against players with no offensive ratings (LEFT JOIN NULLs /
+            # incomplete rows) — fall back to neutral OPS+ (100) so the allocator
+            # and splits don't crash on a None.
+            if r["cntct"] is None or r["gap"] is None or r["pow"] is None or r["eye"] is None:
+                d["ovr_ops_plus"] = 100
+                d["split_ops_plus"] = 100
+                d["ops_vs_l"] = 100
+                d["ops_vs_r"] = 100
+            else:
+                d["ovr_ops_plus"] = project_ops_plus(r["cntct"], r["gap"], r["pow"], r["eye"])
+                sp_ops, vl, vr = project_ops_plus_splits(dict(r))
+                d["split_ops_plus"] = sp_ops
+                d["ops_vs_l"] = vl
+                d["ops_vs_r"] = vr
+            for k in ("c", "ss", "second_b", "third_b", "first_b", "lf", "cf", "rf"):
+                d[k] = r[k]
+            # Eligible field positions (where the player is viable per the
+            # positional rating thresholds) + DH (any hitter can DH). Drives
+            # swap legality and the "utility" flexibility surfaced in the UI.
+            elig = []
+            for slot, (fld, thresh) in POS_THRESHOLDS.items():
+                val = d.get(fld)
+                if val is not None and val >= thresh:
+                    elig.append(slot)
+            # Fall back to the native bucket slot if ratings didn't qualify him
+            # anywhere (incomplete ratings) so he's at least playable at home.
+            if not elig:
+                nat = _SPRING_BUCKET_POS.get(bucket)
+                if nat:
+                    elig.append(nat)
+            elig.append("DH")
+            d["eligible"] = sorted(set(elig))
+            # Slot-adjusted WAR at EACH eligible position (what he's worth THERE,
+            # positional adjustment swapped from his native bucket). The candidate
+            # pool shows this so "what you see is what you get" on a swap — fixes
+            # the native-vs-slot mismatch (e.g. a SS shown as 2.7 but worth 0.8
+            # at 1B). _spring_slot_war is defined below; compute lazily per pos.
+            d["slot_war"] = {s: round(_spring_slot_war(d, s), 1) for s in d["eligible"]}
+            # Display stat selector values. OPS+ (legacy), plus the run-space
+            # model's native facets: projected wOBA (the model's offensive
+            # currency) and the model's defensive/baserunning run grades
+            # (defensive_value / baserunning_value from latest_ratings — actual
+            # eval outputs). wOBA prefers the EXACT stored model projection
+            # (ratings.proj_woba, written by the evaluation engine from the
+            # tool->wOBA fit); falls back to the OPS+ × league-wOBA display
+            # estimate for leagues not yet re-run on this model version.
+            opsp = d.get("ovr_ops_plus") or 100
+            _pw = r["proj_woba"]
+            woba = round(_pw, 3) if _pw is not None else round(_lg_woba * (opsp / 100.0), 3)
+            d["stats"] = {
+                "war": d["war_proj"],
+                "ops_plus": opsp,
+                "ops_vs_l": d.get("ops_vs_l"),
+                "ops_vs_r": d.get("ops_vs_r"),
+                "woba": woba,
+                "def": r["defensive_value"],
+                "bsr": r["baserunning_value"],
+            }
+        else:
+            # Pitchers: an SP can also work in relief; an RP is RP-only.
+            d["eligible"] = ["SP", "RP"] if bucket == "SP" else ["RP"]
+            # Projected ERA/FIP from the composite score (depth-chart parity).
+            comp = r["composite"] or 50
+            d["stats"] = {
+                "war": d["war_proj"],
+                "era": round(project_era(comp, comp, age, bucket, 0, _lg_era), 2),
+                "fip": round(project_fip(comp, comp, age, bucket, 0, _lg_fip), 2),
+            }
+        pool.append(d)
+    return pool
+
+
+_SPRING_FIELD = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"]
+_SPRING_BUCKET_POS = {"C": "C", "1B": "1B", "2B": "2B", "3B": "3B", "SS": "SS",
+                      "LF": "LF", "CF": "CF", "RF": "RF", "COF": "LF", "IF": "2B"}
+
+
+# Field positions ordered scarcest-first — fill the hard-to-cover spots before
+# the easy ones so a premium-position player isn't wasted at a corner.
+_SPRING_FILL_ORDER = ["C", "SS", "CF", "2B", "3B", "RF", "LF", "1B"]
+# Default Opening Day structure (not rigid — bench/pen sizes derive from it).
+_SPRING_BENCH_SLOTS = 4
+_SPRING_SP_SLOTS = 5
+_SPRING_RP_SLOTS = 8
+# A flagged out-of-options player must be at least this good (current-age WAR)
+# for the recommender to carry him over a better alternative. Below this he's a
+# genuine cut and gets surfaced as must-expose.
+_SPRING_OOO_MIN_WAR = 0.3
+
+
+def _spring_viable_at(p, pos):
+    """Is hitter ``p`` viable at field position ``pos``?
+
+    Prefers the precomputed ``eligible`` set (from _spring_pool); falls back to
+    the positional rating thresholds / bucket map for player dicts that haven't
+    been through the pool build."""
+    if "eligible" in p:
+        return pos in p["eligible"]
+    import sys as _sys
+    _sys.path.insert(0, str(get_cfg().league_dir.parent.parent / "scripts"))
+    from projections import POS_THRESHOLDS
+    fld, thresh = POS_THRESHOLDS.get(pos, (None, None))
+    if fld and p.get(fld) is not None:
+        return (p.get(fld) or 0) >= thresh
+    return _SPRING_BUCKET_POS.get(p["bucket"]) == pos
+
+
+def _spring_auto_config(pool, out_of_options=None):
+    """Recommend an Opening Day 26-man.
+
+    Phase 1 (coverage): fill the 8 field positions scarcest-first with the best
+      VIABLE player at each (guarantees every position is actually covered, not
+      left empty by a greedy best-WAR grab), then best remaining bat -> DH.
+    Phase 2 (pitching): top 5 SP; bullpen anchored best-RP-first to 8.
+    Phase 3 (bench): remaining position players by WAR + coverage bonus (backup
+      C / multi-position flexibility) + platoon bonus (strong-side upgrade).
+    Out-of-options: a flagged, credible player is kept; flagged players that
+      can't be fit are returned as must-expose.
+
+    Returns the config dict plus `_must_expose` (list of flagged pids cut).
+    """
+    ooo = set(out_of_options or ())
+    hitters = sorted([p for p in pool if not p["is_pitcher"]], key=lambda x: -x["war_proj"])
+    sps = sorted([p for p in pool if p["bucket"] == "SP"], key=lambda x: -x["war_proj"])
+    rps = sorted([p for p in pool if p["bucket"] == "RP"], key=lambda x: -x["war_proj"])
+    by_id = {p["player_id"]: p for p in pool}
+    used, lineup = set(), {}
+
+    # Phase 1 — coverage: best viable player per position, scarcest-first.
+    # Rank candidates by SLOT-ADJUSTED WAR (not native war_proj): a 2B stretched
+    # to 1B is worth far less THERE, so a true 1B should win the 1B slot even if
+    # his native WAR is lower. (Same bug class as the DH fix.)
+    for pos in _SPRING_FILL_ORDER:
+        cands = [p for p in hitters if p["player_id"] not in used
+                 and _spring_viable_at(p, pos)]
+        if not cands:  # no viable body — take best remaining bat (stretched)
+            cands = [p for p in hitters if p["player_id"] not in used]
+        if cands:
+            best = max(cands, key=lambda p: _spring_slot_war(p, pos))
+            lineup[pos] = best["player_id"]
+            used.add(best["player_id"])
+    # DH — the best remaining BAT, ranked by DH-slot WAR (which strips the
+    # defensive/positional value), so a bat-first player beats a glove-first one
+    # whose native WAR was inflated by a premium-position adjustment.
+    dh = sorted([p for p in hitters if p["player_id"] not in used],
+                key=lambda p: -_spring_slot_war(p, "DH"))
+    if dh:
+        lineup["DH"] = dh[0]["player_id"]
+        used.add(dh[0]["player_id"])
+
+    # Phase 2 — pitchers.
+    rotation = [p["player_id"] for p in sps[:_SPRING_SP_SLOTS]]
+    bullpen = [p["player_id"] for p in rps[:_SPRING_RP_SLOTS]]
+    used.update(rotation)
+    used.update(bullpen)
+
+    # Phase 3 — bench by marginal value (WAR + coverage + platoon bonus).
+    starters = [by_id[pid] for pid in lineup.values()]
+    starter_pos = {pos: by_id[pid] for pos, pid in lineup.items()}
+    have_backup_c = False
+
+    def _bench_score(p):
+        s = p["war_proj"]
+        # Coverage bonus: a backup catcher is scarce and valuable.
+        if _spring_viable_at(p, "C") and not have_backup_c:
+            s += 0.6
+        # Multi-position flexibility: viable at 2+ non-trivial spots.
+        nviable = sum(1 for pos in _SPRING_FIELD if _spring_viable_at(p, pos))
+        if nviable >= 2:
+            s += 0.2 * min(nviable - 1, 3)
+        # Platoon bonus: strong-side bat that beats a starter by 5+ OPS+ on a hand.
+        best_platoon = 0.0
+        for pos, st in starter_pos.items():
+            if pos == "DH":
+                continue
+            svl, svr = st.get("ops_vs_l", 0) or 0, st.get("ops_vs_r", 0) or 0
+            pvl, pvr = p.get("ops_vs_l", 0) or 0, p.get("ops_vs_r", 0) or 0
+            if svl and pvl > svl + 5:
+                best_platoon = max(best_platoon, 0.3 * min((pvl - svl) / 30, 1.0))
+            if svr and pvr > svr + 5:
+                best_platoon = max(best_platoon, 0.2 * min((pvr - svr) / 30, 1.0))
+        return s + best_platoon
+
+    remaining = [p for p in hitters if p["player_id"] not in used]
+    bench = []
+    # HARD guarantee: a backup catcher. A C starts only ~67% of games, so every
+    # team must carry a second catcher — reserve a bench slot for the best one.
+    bc = [p for p in remaining if _spring_viable_at(p, "C")]
+    if bc:
+        best_c = max(bc, key=lambda p: p["war_proj"])
+        bench.append(best_c["player_id"])
+        used.add(best_c["player_id"])
+        have_backup_c = True
+    for p in sorted(remaining, key=_bench_score, reverse=True):
+        if len(bench) >= _SPRING_BENCH_SLOTS:
+            break
+        if p["player_id"] in used:
+            continue
+        bench.append(p["player_id"])
+        used.add(p["player_id"])
+        if _spring_viable_at(p, "C"):
+            have_backup_c = True
+
+    # Out-of-options: pull in any flagged, credible player not already rostered,
+    # bumping the weakest same-group bench/pen member. Surface the rest.
+    must_expose = []
+    for pid in ooo:
+        p = by_id.get(pid)
+        if p is None or pid in used:
+            continue
+        if p["war_proj"] < _SPRING_OOO_MIN_WAR:
+            must_expose.append(pid)
+            continue
+        if p["is_pitcher"] and p["bucket"] == "SP" and len(rotation) >= _SPRING_SP_SLOTS:
+            # Credible flagged SP — swap for the weakest rostered SP if better.
+            weak = min(rotation, key=lambda x: by_id[x]["war_proj"])
+            if p["war_proj"] > by_id[weak]["war_proj"]:
+                rotation[rotation.index(weak)] = pid
+            else:
+                must_expose.append(pid)
+        elif p["is_pitcher"]:
+            weak = min(bullpen, key=lambda x: by_id[x]["war_proj"]) if bullpen else None
+            if weak and p["war_proj"] > by_id[weak]["war_proj"]:
+                bullpen[bullpen.index(weak)] = pid
+            else:
+                must_expose.append(pid)
+        else:
+            weak = min(bench, key=lambda x: by_id[x]["war_proj"]) if bench else None
+            if weak and p["war_proj"] > by_id[weak]["war_proj"]:
+                bench[bench.index(weak)] = pid
+            else:
+                must_expose.append(pid)
+
+    return {"lineup": lineup, "bench": bench, "rotation": rotation,
+            "bullpen": bullpen, "_must_expose": must_expose}
+
+
+# Map a lineup SLOT to its positional-adjustment key. Field corners (LF/RF)
+# share the "COF" adjustment; DH is its own (worst) adjustment. Everything else
+# keys 1:1. This lets us re-value a player for the slot he's ACTUALLY playing.
+_SPRING_SLOT_ADJ_KEY = {
+    "C": "C", "1B": "1B", "2B": "2B", "3B": "3B", "SS": "SS",
+    "LF": "COF", "RF": "COF", "CF": "CF", "DH": "DH",
+}
+
+
+def _spring_slot_war(player, slot):
+    """A hitter's WAR AT a given lineup slot.
+
+    `war_proj` bakes in the positional adjustment for the player's NATIVE bucket.
+    Playing a slot off his home position (or at DH, which carries no defensive
+    value) must swap that adjustment: strip the native one, apply the slot's.
+    e.g. a SS (+0.7) at DH (-1.7) loses 2.4 WAR of positional value.
+    """
+    from statsplusplus.utils.positions import POSITIONAL_WAR_ADJUSTMENTS as _PA
+    native_key = _SPRING_SLOT_ADJ_KEY.get(player.get("bucket"), player.get("bucket"))
+    slot_key = _SPRING_SLOT_ADJ_KEY.get(slot, slot)
+    native_adj = _PA.get(native_key, 0.0)
+    slot_adj = _PA.get(slot_key, 0.0)
+    return player["war_proj"] - native_adj + slot_adj
+
+
+# ── Platoon-assignment + start-share playing-time model ──
+# PA is DERIVED from handedness deployment + realistic start-shares, NOT a flat
+# tier. See spec §4. Opponent-handedness PA split (data: 71% vs RHP / 29% vs L).
+_SPRING_VS_RHP_FREQ = 0.71
+_SPRING_VS_LHP_FREQ = 0.29
+# Realistic PRIMARY start-share by position (data: vMLB 2034 GS). The starter
+# never plays 100%; the remainder flows to the backup. Catcher is lowest (a
+# backup C is required — you can't cover 162 games with one catcher).
+_SPRING_START_SHARE = {
+    "C": 0.67, "1B": 0.79, "2B": 0.73, "3B": 0.73, "SS": 0.71,
+    "LF": 0.76, "CF": 0.76, "RF": 0.81, "DH": 0.88,
+}
+_SPRING_DEFAULT_START_SHARE = 0.75
+# PA budget per lineup slot over a season (data: team PA / 9 ≈ 658), split into
+# handedness wedges by the 71/29 frequency. This is the "pie" each position
+# must fill (vs-RHP wedge + vs-LHP wedge).
+_SPRING_SLOT_PA = 658
+_SPRING_PA_VS_RHP = round(_SPRING_SLOT_PA * _SPRING_VS_RHP_FREQ)   # ~467
+_SPRING_PA_VS_LHP = round(_SPRING_SLOT_PA * _SPRING_VS_LHP_FREQ)   # ~191
+
+# Pitcher role → IP share of a staff slot (rotation slot for SP, bullpen for RP).
+_SPRING_PITCHER_ROLE_SHARE = {
+    "sp1": 1.00, "sp2": 0.95, "sp3": 0.90, "sp4": 0.85, "sp5": 0.78,
+    "closer": 0.70, "setup": 0.62, "middle": 0.50, "long": 0.42, "specialist": 0.30,
+}
+
+
+def _spring_hand_factor(player, hand):
+    """Multiplier on a hitter's overall value when facing a given hand, from his
+    split OPS+ vs his overall OPS+. hand='R' uses vs-RHP, 'L' uses vs-LHP. A
+    platoon bat who mashes LHP gets >1 vs L, <1 vs R; falls back to 1.0 when a
+    split is missing. Clamped to a sane band."""
+    ovr = player.get("ovr_ops_plus") or 100
+    split = player.get("ops_vs_l" if hand == "L" else "ops_vs_r")
+    if not ovr or not split:
+        return 1.0
+    return max(0.6, min(1.6, split / ovr))
+
+
+def _spring_contributions(pool, config):
+    """Turn a config into playing-time-weighted PlayerContribution list.
+
+    Playing time is modeled as PLATOON ASSIGNMENT × START-SHARE (spec §4), not a
+    flat tier:
+      - each position deploys a vs-RHP and a vs-LHP player (default: the same
+        starter), plus a backup taking the remaining starts;
+      - PA/value is the start-share-weighted blend of 71% vs-RHP + 29% vs-LHP,
+        each valued with that player's split (vs-R / vs-L) effectiveness so
+        platoon value actually shows;
+      - WAR is re-valued for the slot actually played (see _spring_slot_war): DH
+        strips defensive value, off-position play swaps the positional adj.
+
+    `config` may carry a `platoon` map {pos: {"vsR": pid, "vsL": pid}} and a
+    `start_share` map {pid: frac} overriding the position defaults; absent, the
+    starter plays both hands at the position's realistic default start-share.
+    """
+    import sys as _sys
+    _sys.path.insert(0, str(get_cfg().league_dir.parent.parent / "scripts"))
+    from projections import allocate_playing_time, allocate_pitcher_time
+    from statsplusplus.evaluation.team_projection import PlayerContribution
+
+    by_id = {p["player_id"]: p for p in pool}
+    platoon = config.get("platoon") or {}        # {pos: {"vsR": pid, "vsL": pid}}
+    start_override = config.get("start_share") or {}  # {pid: frac}
+    # Literal PA allocation {pos: {pid: {"r": PA, "l": PA}}}. When set for a
+    # position, it is the source of truth for that pie (overrides the derived
+    # platoon/start-share shares). Keys may be str (JSON) or int.
+    pa_alloc = config.get("pa_alloc") or {}
+    def _alloc_for(pos):
+        a = pa_alloc.get(pos)
+        if not a:
+            return None
+        out = {}
+        for k, v in a.items():
+            try:
+                out[int(k)] = v
+            except (TypeError, ValueError):
+                pass
+        return out or None
+
+    def _ov(pid):
+        return start_override.get(pid, start_override.get(str(pid)))
+
+    # Bench bats available as backups, keyed by the position they can cover.
+    bench_by_pos: dict = {}
+    for pid in config.get("bench", []):
+        p = by_id.get(pid)
+        if not p:
+            continue
+        for e in p.get("eligible", []):
+            bench_by_pos.setdefault(e, []).append(p)
+
+    contribs = []
+    constructed_lineup = {}
+    used_backups: set = set()   # a bench bat backs up only ONE position
+
+    def _add_contrib(pid, pos, share, hand_mix):
+        """Add a hitter's contribution at a position for a given PA share, valued
+        by the handedness mix (list of (hand, weight)); returns the display WAR."""
+        base = _spring_slot_war(by_id[pid], pos)
+        # Effectiveness-weighted value across the hands this player faces.
+        eff = sum(w * _spring_hand_factor(by_id[pid], h) for h, w in hand_mix) or 1.0
+        war = base * share * eff
+        spd = by_id[pid].get("speed", 50)
+        br = max(0.0, min(0.18, 0.08 * ((spd - 50) / 30 + 1)))
+        fld = 0.0 if pos == "DH" else 0.20
+        contribs.append(PlayerContribution(
+            pid, by_id[pid]["name"], war, is_pitcher=False,
+            bat_share=1 - br - fld, br_share=br, fld_share=fld))
+        return war
+
+    def _mkrow(pid, pos, share, hand_mix, label):
+        war = _add_contrib(pid, pos, share, hand_mix)
+        _st = dict(by_id[pid].get("stats") or {})
+        _st["war"] = round(_spring_slot_war(by_id[pid], pos), 1)
+        # PA this player fills in each handedness wedge (the pie): share of the
+        # wedge PA for each hand he faces in his hand_mix.
+        hands = {h: w for h, w in hand_mix}
+        pa_r = round(_SPRING_PA_VS_RHP * share) if "R" in hands else 0
+        pa_l = round(_SPRING_PA_VS_LHP * share) if "L" in hands else 0
+        return {
+            "pid": pid, "name": by_id[pid]["name"],
+            "war": round(_spring_slot_war(by_id[pid], pos), 1),
+            "level": by_id[pid]["level"],
+            "pt_pct": round(share * 100), "role": label,
+            "pa_r": pa_r, "pa_l": pa_l, "pa": pa_r + pa_l,
+            "stats": _st, "contrib_war": war,
+        }
+
+    def _mkrow_pa(pid, pos, pa_r, pa_l, label="Allocated"):
+        """Build a row from EXPLICIT PA in each wedge (literal pie allocation).
+        Value = (pa / wedge_PA) × slot_war × that-hand effectiveness, summed."""
+        base = _spring_slot_war(by_id[pid], pos)
+        share_r = (pa_r or 0) / _SPRING_PA_VS_RHP if _SPRING_PA_VS_RHP else 0
+        share_l = (pa_l or 0) / _SPRING_PA_VS_LHP if _SPRING_PA_VS_LHP else 0
+        # Weight each hand's contribution by its PA frequency and effectiveness.
+        war = base * (share_r * _SPRING_VS_RHP_FREQ * _spring_hand_factor(by_id[pid], "R")
+                      + share_l * _SPRING_VS_LHP_FREQ * _spring_hand_factor(by_id[pid], "L"))
+        spd = by_id[pid].get("speed", 50)
+        br = max(0.0, min(0.18, 0.08 * ((spd - 50) / 30 + 1)))
+        fld = 0.0 if pos == "DH" else 0.20
+        contribs.append(PlayerContribution(
+            pid, by_id[pid]["name"], war, is_pitcher=False,
+            bat_share=1 - br - fld, br_share=br, fld_share=fld))
+        _st = dict(by_id[pid].get("stats") or {})
+        _st["war"] = round(base, 1)
+        pa = (pa_r or 0) + (pa_l or 0)
+        return {
+            "pid": pid, "name": by_id[pid]["name"], "war": round(base, 1),
+            "level": by_id[pid]["level"],
+            "pt_pct": round(pa / _SPRING_SLOT_PA * 100), "role": label,
+            "pa_r": round(pa_r or 0), "pa_l": round(pa_l or 0), "pa": round(pa),
+            "stats": _st, "contrib_war": war,
+        }
+
+    # Pass 1 — starters (+ platoon pairs). Record the backup SHARE still open.
+    backup_need = {}  # pos -> remaining share to fill with a backup
+    pa_alloc_positions = set()   # positions with literal allocation (skip backup pass)
+    for pos in _SPRING_FIELD + ["DH"]:
+        starter_pid = config["lineup"].get(pos)
+        if not starter_pid or starter_pid not in by_id:
+            continue
+        # Literal PA allocation takes over this position's pie entirely.
+        alloc = _alloc_for(pos)
+        if alloc:
+            rows = []
+            for pid, pa in sorted(alloc.items(),
+                                  key=lambda kv: -((kv[1].get("r", 0) or 0) + (kv[1].get("l", 0) or 0))):
+                if pid not in by_id:
+                    continue
+                rows.append(_mkrow_pa(pid, pos, pa.get("r", 0) or 0, pa.get("l", 0) or 0))
+            if rows:
+                constructed_lineup[pos] = {"players": rows}
+                pa_alloc_positions.add(pos)
+                backup_need[pos] = 0.0
+                continue
+        pl = platoon.get(pos) or {}
+        vsR = pl.get("vsR", starter_pid)
+        vsL = pl.get("vsL", starter_pid)
+        base_share = _SPRING_START_SHARE.get(pos, _SPRING_DEFAULT_START_SHARE)
+        rows = []
+        if vsR == vsL:
+            share = _ov(vsR) if _ov(vsR) is not None else base_share
+            rows.append(_mkrow(vsR, pos, share,
+                        [("R", _SPRING_VS_RHP_FREQ), ("L", _SPRING_VS_LHP_FREQ)], "Everyday"))
+            backup_need[pos] = max(0.0, 1.0 - share)
+        else:
+            rows.append(_mkrow(vsR, pos, _SPRING_VS_RHP_FREQ, [("R", 1.0)], "vs RHP"))
+            if vsL in by_id:
+                rows.append(_mkrow(vsL, pos, _SPRING_VS_LHP_FREQ, [("L", 1.0)], "vs LHP"))
+            # a platoon pair already covers both hands → minimal backup need
+            backup_need[pos] = 0.0
+        constructed_lineup[pos] = {"players": rows}
+
+    # Pass 2 — assign ONE bench bat as backup per position, SCARCEST-FIRST (C
+    # most), each bench player used at most once (no PA double-counting).
+    for pos in ["C", "SS", "CF", "2B", "3B", "RF", "LF", "1B", "DH"]:
+        need = backup_need.get(pos, 0.0)
+        if need <= 0.02 or pos not in constructed_lineup:
+            continue
+        starter_pid = constructed_lineup[pos]["players"][0]["pid"]
+        cands = [b for b in bench_by_pos.get(pos, [])
+                 if b["player_id"] != starter_pid and b["player_id"] not in used_backups]
+        if not cands:
+            continue
+        bk = max(cands, key=lambda b: b["war_proj"])
+        used_backups.add(bk["player_id"])
+        constructed_lineup[pos]["players"].append(
+            _mkrow(bk["player_id"], pos, need,
+                   [("R", _SPRING_VS_RHP_FREQ), ("L", _SPRING_VS_LHP_FREQ)], "Backup"))
+
+    # Finalize each position: starter top-level fields + pos_war total + the
+    # PA "pie" (wedge budgets, filled PA by hand, and any unfilled remainder).
+    for pos, entry in constructed_lineup.items():
+        rows = entry["players"]
+        starter_row = rows[0]
+        for k, v in starter_row.items():
+            entry[k] = v
+        entry["players"] = rows
+        entry["pos_war"] = round(sum(r["contrib_war"] for r in rows), 1)
+        filled_r = sum(r.get("pa_r", 0) for r in rows)
+        filled_l = sum(r.get("pa_l", 0) for r in rows)
+        entry["pa_budget"] = {
+            "r_total": _SPRING_PA_VS_RHP, "l_total": _SPRING_PA_VS_LHP,
+            "r_filled": filled_r, "l_filled": filled_l,
+            "r_open": max(0, _SPRING_PA_VS_RHP - filled_r),
+            "l_open": max(0, _SPRING_PA_VS_LHP - filled_l),
+        }
+
+    # Pitchers — IP share by role (rotation order 1-5, bullpen role). A per-pid
+    # `roles` map in the config overrides the default position in the list.
+    roles = config.get("roles") or {}
+
+    def _role_of(pid):
+        return roles.get(pid) or roles.get(str(pid))
+
+    constructed_rotation, constructed_pen = [], []
+    rotation_ids = [pid for pid in config.get("rotation", []) if pid in by_id]
+    for i, pid in enumerate(rotation_ids):
+        role = _role_of(pid) or ("sp" + str(min(i + 1, 5)))
+        share = _SPRING_PITCHER_ROLE_SHARE.get(role, 0.90)
+        contribs.append(PlayerContribution(pid, by_id[pid]["name"],
+                                           by_id[pid]["war_proj"] * share, is_pitcher=True))
+        constructed_rotation.append({"pid": pid, "name": by_id[pid]["name"],
+                                     "war": round(by_id[pid]["war_proj"], 1),
+                                     "role": role, "pt_pct": round(share * 100),
+                                     "stats": by_id[pid].get("stats") or {}})
+    _RP_DEFAULT = ["closer", "setup", "setup", "middle", "middle", "middle", "long", "long"]
+    bullpen_ids = [pid for pid in config.get("bullpen", []) if pid in by_id]
+    for i, pid in enumerate(bullpen_ids[:8]):
+        role = _role_of(pid) or (_RP_DEFAULT[i] if i < len(_RP_DEFAULT) else "middle")
+        share = _SPRING_PITCHER_ROLE_SHARE.get(role, 0.50)
+        contribs.append(PlayerContribution(pid, by_id[pid]["name"],
+                                           by_id[pid]["war_proj"] * share, is_pitcher=True))
+        constructed_pen.append({"pid": pid, "name": by_id[pid]["name"],
+                                "war": round(by_id[pid]["war_proj"], 1),
+                                "role": role, "pt_pct": round(share * 100),
+                                "stats": by_id[pid].get("stats") or {}})
+
+    bench_view = [{"pid": pid, "name": by_id[pid]["name"],
+                   "war": round(by_id[pid]["war_proj"], 1),
+                   "stats": by_id[pid].get("stats") or {}}
+                  for pid in config.get("bench", []) if pid in by_id]
+
+    constructed = {
+        "lineup": constructed_lineup, "rotation": constructed_rotation,
+        "bullpen": constructed_pen, "bench": bench_view,
+    }
+    return contribs, constructed
+
+
+def _spring_league_mean_war(conn, ed, cfg, pyth_exp):
+    """Mean auto-configured team WAR across all MLB orgs — the .500 anchor, plus
+    the hitter/pitcher means that baseline the per-facet display.
+
+    Removes the uniform optimism in the ratings-based WAR scale by centering an
+    average roster at games/2 wins. Returns (total, hit, pit) means. Cached.
+    """
+    key = (id(conn), "lgwar")
+    if key in _SPRING_CALIB_CACHE:
+        return _SPRING_CALIB_CACHE[key]
+    tids = [int(t) for t in cfg.team_abbr_map.keys()]
+    totals, hits, pits = [], [], []
+    for tid in tids:
+        pool = _spring_pool(conn, tid, ed)
+        if not pool:
+            continue
+        cfg_auto = _spring_auto_config(pool)
+        contribs, _ = _spring_contributions(pool, cfg_auto)
+        totals.append(sum(c.war for c in contribs))
+        hits.append(sum(c.war for c in contribs if not c.is_pitcher))
+        pits.append(sum(c.war for c in contribs if c.is_pitcher))
+    n = len(totals)
+    out = (round(sum(totals) / n, 2), round(sum(hits) / n, 2), round(sum(pits) / n, 2)) if n else (None, None, None)
+    _SPRING_CALIB_CACHE[key] = out
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Contested spots — Layer 1, the real decisions.
+#
+# A spot is contested when the OUTCOME IS IN DOUBT, not whenever a choice exists:
+#   (1) starting-job competition — top candidate and runner-up within ~1 WAR
+#       (a clear 4.0-vs-1.0 is a lock, not a decision);
+#   (2) final-roster-spot bubble — the last bench bats / last bullpen arms,
+#       where N vie for M<M+1 spots and the cut line is tight;
+#   (3) forced by a hard constraint — an out-of-options player on the bubble
+#       must make the 26 or clear waivers, so the spot is contested even with a
+#       clear talent gap (the user-supplied out-of-options toggle feeds in here).
+#
+# Locks never appear here — they live in the Opening Day team view (Layer 2).
+# ---------------------------------------------------------------------------
+
+# How close the top-2 must be (in current-age WAR) to count as a competition.
+_SPRING_CONTEST_WAR = 1.0
+# Bubble width around a cut line: players within this of the last-in player.
+_SPRING_BUBBLE_WAR = 0.8
+
+
+def _spring_candidate(p, is_pick, forced=False):
+    """A contested-spot candidate row for the UI."""
+    return {
+        "pid": p["player_id"], "name": p["name"], "age": p["age"],
+        "level": p["level"], "war": round(p["war_proj"], 1),
+        "fv": p.get("fv"), "composite": p.get("composite"),
+        "bucket": p["bucket"], "is_pick": is_pick,
+        "out_of_options": forced,
+    }
+
+
+def _spring_contested_spots(pool, config, out_of_options=None):
+    """Detect the genuine competitions on the Opening Day roster.
+
+    Args:
+        pool: the candidate pool (from _spring_pool).
+        config: the current 26-man config (auto or user).
+        out_of_options: set of player_ids the user flagged as out of options.
+
+    Returns a list of spot dicts:
+        {kind, slot, candidates:[...], reason}
+    sorted with forced/constraint spots first, then by how close the race is.
+    """
+    ooo = set(out_of_options or ())
+    by_id = {p["player_id"]: p for p in pool}
+    spots = []
+
+    def _forced(cands):
+        return any(c["player_id"] in ooo for c in cands)
+
+    # --- (1) Field + DH starting jobs ---
+    for pos in _SPRING_FIELD + ["DH"]:
+        nat = pos  # DH handled as its own small pool below
+        cands = sorted(
+            [p for p in pool if not p["is_pitcher"]
+             and _SPRING_BUCKET_POS.get(p["bucket"]) == (pos if pos != "DH" else p["bucket"])],
+            key=lambda x: -x["war_proj"])
+        if pos == "DH":
+            # DH: best bats NOT already an everyday field starter in this config
+            # (a locked field starter isn't also a DH decision).
+            field_starters = {pid for pos_k, pid in config.get("lineup", {}).items()
+                              if pos_k != "DH"}
+            cands = sorted([p for p in pool if not p["is_pitcher"]
+                            and p["player_id"] not in field_starters],
+                           key=lambda x: -x["war_proj"])[:4]
+        if len(cands) < 2:
+            continue
+        gap = cands[0]["war_proj"] - cands[1]["war_proj"]
+        forced = _forced([{"player_id": c["player_id"]} for c in cands[:3]])
+        if gap <= _SPRING_CONTEST_WAR or forced:
+            rows = [_spring_candidate(c, i == 0, c["player_id"] in ooo)
+                    for i, c in enumerate(cands[:3])]
+            reason = ("out-of-options decision" if forced
+                      else f"top two within {gap:.1f} WAR")
+            spots.append({"kind": "field", "slot": pos, "candidates": rows,
+                          "reason": reason, "gap": gap, "forced": forced})
+
+    # --- (2) 5th starter ---
+    sps = sorted([p for p in pool if p["bucket"] == "SP"], key=lambda x: -x["war_proj"])
+    if len(sps) >= 6:
+        gap = sps[4]["war_proj"] - sps[5]["war_proj"]
+        bubble = [p for p in sps[3:7]]
+        forced = any(p["player_id"] in ooo for p in bubble)
+        if gap <= _SPRING_CONTEST_WAR or forced:
+            pick_pid = sps[4]["player_id"]  # the 5th starter is the pick
+            rows = [_spring_candidate(c, c["player_id"] == pick_pid, c["player_id"] in ooo)
+                    for c in bubble]
+            spots.append({"kind": "rotation", "slot": "5th Starter",
+                          "candidates": rows,
+                          "reason": ("out-of-options decision" if forced
+                                     else f"5th vs 6th within {gap:.1f} WAR"),
+                          "gap": gap, "forced": forced})
+
+    # --- (3) Final bullpen spots (bubble around the 8-arm cut) ---
+    rps = sorted([p for p in pool if p["bucket"] == "RP"], key=lambda x: -x["war_proj"])
+    if len(rps) >= 9:
+        cut_war = rps[7]["war_proj"]  # last man in (8th)
+        bubble = [p for p in rps[6:] if cut_war - p["war_proj"] <= _SPRING_BUBBLE_WAR
+                  or p["war_proj"] >= cut_war]
+        forced = any(p["player_id"] in ooo for p in bubble)
+        if len(bubble) >= 3 or forced:
+            rows = [_spring_candidate(c, c["war_proj"] >= cut_war, c["player_id"] in ooo)
+                    for c in bubble[:4]]
+            spots.append({"kind": "bullpen", "slot": "Final bullpen spots",
+                          "candidates": rows,
+                          "reason": ("out-of-options decision" if forced
+                                     else f"{len(bubble)} arms for the last spots"),
+                          "gap": 0.0, "forced": forced})
+
+    # --- (4) Last bench bat (bubble around the bench cut) ---
+    hitters = sorted([p for p in pool if not p["is_pitcher"]], key=lambda x: -x["war_proj"])
+    # Bench candidates = hitters beyond the 9 everyday slots.
+    bench_pool = hitters[9:]
+    if len(bench_pool) >= 2:
+        # 4 bench bats assumed; bubble is around the 4th.
+        cut_idx = min(3, len(bench_pool) - 1)
+        cut_war = bench_pool[cut_idx]["war_proj"]
+        pick_pid = bench_pool[cut_idx]["player_id"]  # last-in = the pick
+        bubble = [p for p in bench_pool[max(0, cut_idx - 1):]
+                  if abs(p["war_proj"] - cut_war) <= _SPRING_BUBBLE_WAR]
+        forced = any(p["player_id"] in ooo for p in bubble)
+        if len(bubble) >= 2 or forced:
+            rows = [_spring_candidate(c, c["player_id"] == pick_pid, c["player_id"] in ooo)
+                    for c in bubble[:3]]
+            spots.append({"kind": "bench", "slot": "Last bench spot",
+                          "candidates": rows,
+                          "reason": ("out-of-options decision" if forced
+                                     else "tight for the final bench spot"),
+                          "gap": 0.0, "forced": forced})
+
+    # Forced/constraint spots first; then closest races first.
+    spots.sort(key=lambda s: (not s["forced"], s["gap"]))
+    return spots
+
+
+def get_spring_projection(team_id, config=None, out_of_options=None):
+    """Project a configured Opening Day roster as the full cascade.
+
+    Args:
+        team_id: the org to project.
+        config: optional roster configuration
+            {lineup:{pos:pid}, bench:[pid], rotation:[pid], bullpen:[pid]}.
+            None = the model's auto 26-man.
+        out_of_options: optional iterable of player_ids the user flagged as out
+            of options (a hard must-decide constraint — see contested spots).
+
+    Returns a dict:
+        projection: the TeamProjection cascade (record, run diff, facets, band),
+        constructed: the per-slot roster view (lineup/rotation/bullpen/bench),
+        contested: the Layer-1 decisions (competitions + constraint-forced),
+        config: the config used (so the UI can seed its editable state),
+        pool: the candidate pool (for contested-spot / swap menus).
+    """
+    from statsplusplus.evaluation.team_projection import project_team
+    import dataclasses
+
+    conn = get_db()
+    cfg = get_cfg()
+    ed = _eval_date(conn)
+    pyth_exp = cfg.settings.get("pyth_exp", 1.83)
+
+    pool = _spring_pool(conn, team_id, ed)
+    if config is None:
+        config = _spring_auto_config(pool, out_of_options)
+    must_expose = config.get("_must_expose", [])
+
+    contribs, constructed = _spring_contributions(pool, config)
+
+    calib = _spring_calibration(conn, pyth_exp)
+    mean_war, mean_hit, mean_pit = _spring_league_mean_war(conn, ed, cfg, pyth_exp)
+    if mean_war is not None:
+        calib = dataclasses.replace(calib, lg_mean_team_war=mean_war,
+                                    lg_mean_hit_war=mean_hit, lg_mean_pit_war=mean_pit)
+
+    proj = project_team(contribs, calib)
+    contested = _spring_contested_spots(pool, config, out_of_options)
+
+    by_id = {p["player_id"]: p for p in pool}
+    # Roster-validity warnings. A catcher starts only ~67% of games — a team
+    # MUST carry a backup C (you can't cover 162 with one). Flag if the C slot
+    # has no backup and there's no second catcher-eligible player rostered.
+    warnings = []
+    c_slot = constructed.get("lineup", {}).get("C")
+    c_backup = c_slot and any(r.get("role") == "Backup" for r in c_slot.get("players", []))
+    rostered = set(config.get("lineup", {}).values()) | set(config.get("bench", []))
+    c_eligible = [pid for pid in rostered
+                  if pid in by_id and "C" in (by_id[pid].get("eligible") or [])]
+    if c_slot and not c_backup and len(c_eligible) < 2:
+        warnings.append({
+            "kind": "no_backup_catcher",
+            "msg": "No backup catcher — a C starts only ~67% of games, so you "
+                   "must carry a second catcher. Add one to your bench."})
+    return {
+        "projection": dataclasses.asdict(proj),
+        "constructed": constructed,
+        "contested": contested,
+        "warnings": warnings,
+        "config": config,
+        "pool": pool,
+        # Flagged out-of-options players the recommender could NOT fit — the GM
+        # must knowingly expose (waivers) or override.
+        "must_expose": [{"pid": pid, "name": by_id[pid]["name"],
+                         "war": round(by_id[pid]["war_proj"], 1)}
+                        for pid in must_expose if pid in by_id],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Plan persistence — a saved Opening Day plan per team.
+#
+# A plan is just the user's chosen config (lineup/bench/rotation/bullpen) plus
+# their out-of-options flags — the minimal state to reconstruct their decisions.
+# Everything else (projection, contested spots, constructed roster) is DERIVED
+# by re-running get_spring_projection against CURRENT data, so a plan stays
+# meaningful across refreshes. Stored at config/spring_plans.json keyed by team.
+# ---------------------------------------------------------------------------
+
+def _spring_plans_path(league_dir):
+    from pathlib import Path
+    return Path(league_dir) / "config" / "spring_plans.json"
+
+
+def _load_spring_plans(league_dir):
+    import json
+    path = _spring_plans_path(league_dir)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text()) or {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_spring_plan(team_id, config, out_of_options=None):
+    """Persist a team's Opening Day plan. Stores player IDs + flags only (not
+    derived projections). Returns the saved record."""
+    import json
+    from datetime import datetime, timezone
+    cfg = get_cfg()
+    league_dir = cfg.league_dir
+    # Strip the internal _must_expose marker; store the roster selection + the
+    # deployment decisions (platoon assignment, start-share, pitcher roles).
+    clean = {k: config[k] for k in
+             ("lineup", "bench", "rotation", "bullpen", "platoon", "start_share",
+              "roles", "pa_alloc")
+             if k in config}
+    # Stamp with the current game date (from state.json, the authoritative
+    # source) so the UI can warn if the plan predates a later data refresh.
+    game_date = None
+    try:
+        import json
+        from pathlib import Path
+        sp = Path(league_dir) / "config" / "state.json"
+        if sp.exists():
+            game_date = json.loads(sp.read_text()).get("game_date")
+    except Exception:
+        game_date = None
+    record = {
+        "config": clean,
+        "out_of_options": sorted(set(int(p) for p in (out_of_options or []))),
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+        "game_date": game_date,
+    }
+    plans = _load_spring_plans(league_dir)
+    plans[str(team_id)] = record
+    path = _spring_plans_path(league_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(plans, indent=2) + "\n")
+    return record
+
+
+def load_spring_plan(team_id):
+    """Load a team's saved plan, reconciled against the CURRENT pool.
+
+    Players no longer in the pool (traded/released/retired since the plan was
+    saved) are dropped from the config and reported in `dropped` so the UI can
+    flag the staleness. Returns None if no plan is saved.
+    """
+    conn = get_db()
+    cfg = get_cfg()
+    ed = _eval_date(conn)
+    plans = _load_spring_plans(cfg.league_dir)
+    rec = plans.get(str(team_id))
+    if not rec:
+        return None
+
+    pool_ids = {p["player_id"] for p in _spring_pool(conn, team_id, ed)}
+    saved = rec.get("config", {})
+    dropped = []
+
+    def _keep_list(pids):
+        kept = []
+        for pid in pids or []:
+            if pid in pool_ids:
+                kept.append(pid)
+            else:
+                dropped.append(pid)
+        return kept
+
+    lineup = {}
+    for pos, pid in (saved.get("lineup") or {}).items():
+        if pid in pool_ids:
+            lineup[pos] = pid
+        else:
+            dropped.append(pid)
+    def _keep_pid_map(m):
+        """Keep a {pid: val} map for pool players only; normalize int keys."""
+        out = {}
+        for k, v in (m or {}).items():
+            try:
+                pid_k = int(k)
+            except (TypeError, ValueError):
+                continue
+            if pid_k in pool_ids:
+                out[pid_k] = v
+        return out
+
+    # Platoon assignment {pos: {vsR, vsL}} — keep entries whose players survive.
+    saved_platoon = saved.get("platoon") or {}
+    platoon = {}
+    for pos, pair in saved_platoon.items():
+        kept = {h: pid for h, pid in (pair or {}).items() if pid in pool_ids}
+        if kept:
+            platoon[pos] = kept
+
+    # Literal PA allocation {pos: {pid: {r,l}}} — drop players no longer rostered.
+    saved_alloc = saved.get("pa_alloc") or {}
+    pa_alloc = {}
+    for pos, pmap in saved_alloc.items():
+        kept = {}
+        for k, v in (pmap or {}).items():
+            try:
+                pid_k = int(k)
+            except (TypeError, ValueError):
+                continue
+            if pid_k in pool_ids:
+                kept[pid_k] = v
+        if kept:
+            pa_alloc[pos] = kept
+
+    config = {
+        "lineup": lineup,
+        "bench": _keep_list(saved.get("bench")),
+        "rotation": _keep_list(saved.get("rotation")),
+        "bullpen": _keep_list(saved.get("bullpen")),
+        "platoon": platoon,
+        "start_share": _keep_pid_map(saved.get("start_share")),
+        "roles": _keep_pid_map(saved.get("roles")),
+        "pa_alloc": pa_alloc,
+    }
+    ooo = [pid for pid in rec.get("out_of_options", []) if pid in pool_ids]
+    return {
+        "config": config,
+        "out_of_options": ooo,
+        "saved_at": rec.get("saved_at"),
+        "game_date": rec.get("game_date"),
+        "dropped": dropped,            # player_ids no longer in the pool
+        "stale": bool(dropped),        # a saved player vanished since save
+    }
+
+
+def spring_projection_delta(team_id, config, baseline=None, out_of_options=None,
+                            baseline_out_of_options=None):
+    """Re-project a (possibly edited) config and return the cascade + the DELTA
+    vs a baseline — the live decision signal.
+
+    The delta is the precise part (season luck cancels between two configs), so
+    the UI foregrounds it over the absolute band. Baseline defaults to the auto
+    recommendation ("vs the model"); pass the pre-edit config to get the effect
+    of a single edit ("vs before this change").
+
+    Args:
+        config: the edited roster configuration.
+        baseline: config to diff against; None = the auto recommendation.
+        out_of_options / baseline_out_of_options: flags for each side.
+
+    Returns {projection, baseline, delta} where delta is per-metric after-minus-
+    before (wins, run_diff, the four facet runs, team_war).
+    """
+    after = get_spring_projection(team_id, config, out_of_options)
+    if baseline is None:
+        base_res = get_spring_projection(team_id, None, baseline_out_of_options)
+    else:
+        base_res = get_spring_projection(team_id, baseline, baseline_out_of_options)
+    a, b = after["projection"], base_res["projection"]
+    metrics = ("wins", "run_diff", "team_war",
+               "bat_runs", "br_runs", "fld_runs", "pit_runs",
+               "runs_scored", "runs_allowed")
+    delta = {m: round(a[m] - b[m], 2) for m in metrics}
+    return {
+        "projection": after["projection"],
+        "constructed": after["constructed"],
+        "contested": after["contested"],
+        "config": after["config"],
+        "must_expose": after["must_expose"],
+        "warnings": after.get("warnings", []),
+        "baseline": base_res["projection"],
+        "delta": delta,
+    }
+
+
+def delete_spring_plan(team_id):
+    """Remove a team's saved plan. Returns True if one existed."""
+    import json
+    cfg = get_cfg()
+    league_dir = cfg.league_dir
+    plans = _load_spring_plans(league_dir)
+    if str(team_id) in plans:
+        del plans[str(team_id)]
+        _spring_plans_path(league_dir).write_text(json.dumps(plans, indent=2) + "\n")
+        return True
+    return False

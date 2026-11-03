@@ -4,6 +4,75 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 108 — Spring Training "Opening Day Builder" + exact stored projected wOBA
+
+The offseason page's final `spring` sub-phase is now a full **Opening Day roster
+builder**: a GM constructs and stress-tests a 26-man and sees projected team output
+respond live to every roster and deployment change. This replaces the "coming soon"
+spring placeholder (the last placeholder on the offseason stepper).
+
+**Projection cascade (honest WAR identity, no double-counting).** New pure module
+`src/statsplusplus/evaluation/team_projection.py` (`project_team`,
+`ProjectionCalibration`, `PlayerContribution`, `projection_delta`). Record comes from
+the WAR identity (`replacement_wins + team_WAR`) with tanh win-saturation; run
+differential is *derived from* the record (so the two always agree and both match
+league history), then split into facet runs (hitting / baserunning / fielding /
+pitching) by each player's run-space facet components. Per-league calibration
+(`derive_projection_calibration` in `calibrate.py`) fits `RUNS_PER_WIN`,
+`LG_TEAM_RUNS`, `WIN_BAND_SD`, and replacement win% from each league's own team
+RS/RA/record history, with sane defaults for thin-history leagues.
+
+**Display philosophy.** The point-estimate record leads; the **delta vs the prior
+config** is the loud decision signal (the season-luck term cancels between two
+configs, so the delta is precise); the ±`WIN_BAND_SD` luck band is one quiet line
+that explicitly does not apply to the delta.
+
+**Four views over one shared config** (default Board): Board (dense depth grid with
+vs-RHP / vs-LHP platoon toggle and inline contested-spot pools), Decisions (just the
+~5 contested calls with the model pick + evidence), Field (SVG diamond so an empty
+position reads as a hole), Table (full sortable candidate pool). Every edit mutates
+the single config and re-projects through the same engine; the page updates in place
+(patches only the header + active view, restoring expanded panels and scroll) rather
+than re-rendering, so tabs and open panels don't reset on each change.
+
+**Playing-time "pie" model (data-grounded).** PA is derived, not asserted: each
+position fills a fixed slot budget (~658 PA, split 467 vs RHP / 191 vs LHP from the
+measured 71/29 opponent-handedness split) via platoon assignment × realistic
+start-shares (C 67%, 1B 79%, RF 81%, etc., from historical GS data — a backup catcher
+is a hard requirement). Per-player PA sliders allow literal allocation with
+conservation (the pie can't grow — reallocating to one player draws from the others),
+add/remove players, and up-to-three-way splits. Candidate WAR is slot-adjusted (what
+the player is worth at the position he'd actually play, not his native-position WAR).
+
+**Out-of-options** is a per-player user toggle (minor-league options remaining is not
+in the StatsPlus API — audited both `/players` and `/contract` live headers), and a
+flagged player's spot becomes a forced must-decide. Plans are saved per team.
+
+**Exact stored projected wOBA.** The pool's wOBA stat now surfaces the EXACT model
+projection rather than an OPS+-derived estimate. New pure helper
+`composite.project_woba_hitter(tools, run_space)` exposes the wOBA the run-space
+composite already computes internally (from the calibrated tool→wOBA fit); the
+evaluation engine stores it in a new `ratings.proj_woba` column (idempotent
+migration + fresh-schema column; `latest_ratings` carries it automatically), and
+`_spring_pool` reads it, falling back to the OPS+ × league-wOBA estimate for leagues
+not yet re-run on this model version.
+
+New query functions (`web/offseason_queries.py`): `get_spring_projection`,
+`spring_projection_delta`, `save/load/delete_spring_plan` (+ internal `_spring_pool`,
+`_spring_auto_config`, `_spring_contributions`, `_spring_contested_spots`,
+`_spring_slot_war`, `_spring_hand_factor`). New API endpoints: `/api/spring-plan`
+(GET/POST/DELETE), `/api/spring-project` (POST). Tests:
+`tests/evaluation/test_team_projection.py` + spring coverage in
+`tests/test_offseason.py` (projection shape, contested spots, out-of-options,
+recommender coverage, platoon/start-share, PA allocation + conservation, plan
+persistence, stored-wOBA preference). Full hermetic suite green.
+
+**Migration caveat.** `ratings.proj_woba` populates on a league's next
+refresh/evaluation-engine run; until then `_spring_pool` falls back to the OPS+
+estimate, so the page degrades gracefully for un-re-run leagues.
+
+---
+
 ## Session 107 (2026-11-01) — SIERA fixed: real FanGraphs formula with net ground-ball rate
 
 Our pitcher SIERA did not match the game's and was off by as much as a full run on

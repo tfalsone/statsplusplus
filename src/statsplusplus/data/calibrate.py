@@ -32,14 +32,25 @@ from statsplusplus.evaluation.constants import DEFENSIVE_WEIGHTS, OVR_TO_WAR_DEF
     ARB_PCT_DEFAULT as ARB_PCT, SCARCITY_MULT_DEFAULT as SCARCITY_MULT, \
     MIN_REGRESSION_N, CALIBRATION_YEARS, DEFAULT_DOLLARS_PER_WAR, DEFAULT_MINIMUM_SALARY
 
-_cfg = LeagueConfig()
-_scale = _cfg.ratings_scale
+# Ratings scale resolved LAZILY, not at import. Building a LeagueConfig() at
+# import time calls get_league_dir() with no slug, which RAISES inside a Flask
+# request (the per-request league is the source of truth). calibrate runs only
+# from the CLI (where the active league resolves fine), but the module is now
+# also imported at request time (derive_projection_calibration), so import must
+# have no global-league side effect.
+_scale_cache = None
+
+def _ratings_scale():
+    global _scale_cache
+    if _scale_cache is None:
+        _scale_cache = LeagueConfig().ratings_scale
+    return _scale_cache
 
 def norm(val):
-    return _norm_pkg(val, _scale)
+    return _norm_pkg(val, _ratings_scale())
 
 def defensive_score(p, bucket):
-    return _def_score_pkg(p, bucket, _scale)
+    return _def_score_pkg(p, bucket, _ratings_scale())
 
 from statsplusplus.data.evaluation_engine import (
     derive_tool_weights, normalize_coefficients, recombine_component_weights,
@@ -2228,6 +2239,93 @@ def calibrate(dry_run=False):
         print(f"\nWrote {out_path}")
 
     return weights
+
+
+# ---------------------------------------------------------------------------
+# Team-projection calibration (for the Spring Training Opening Day builder).
+# Derives the record<->runs constants from the league's own team-season history.
+# Pure read; returns a ProjectionCalibration the pure engine consumes. Falls
+# back to DEFAULT_CALIBRATION fields when history is too thin.
+# See .kiro/specs/spring-training-page/design.md §2.3.
+# ---------------------------------------------------------------------------
+
+def derive_projection_calibration(conn, pyth_exp=1.83):
+    """Compute per-league team-projection constants from team-season history.
+
+    Returns a ``ProjectionCalibration``. Uses every season that has team
+    batting+pitching + a derivable record; needs >= ~20 team-seasons to trust
+    the regressed values, else falls back to the engine defaults (per field).
+
+    Constants:
+      lg_team_runs  = mean team RS (== RA in a balanced league)
+      runs_per_win  = 1 / slope of (wins-above-half) regressed on run_diff thru 0
+      win_band_sd   = stdev of (actual wins - pythag-expected wins)
+      repl_winpct   = clamp of the worst observed win% toward a 0.25-0.33 prior
+    """
+    from statsplusplus.evaluation.team_projection import (
+        ProjectionCalibration, DEFAULT_CALIBRATION as _D,
+    )
+    import statistics as _st
+
+    years = [r[0] for r in conn.execute(
+        "SELECT DISTINCT year FROM team_batting_stats WHERE split_id=1 ORDER BY year"
+    ).fetchall()]
+
+    def _actual_wl(tid, year):
+        row = conn.execute(
+            """SELECT
+                 SUM(CASE WHEN (home_team=? AND runs1>runs0) OR (away_team=? AND runs0>runs1) THEN 1 ELSE 0 END) w,
+                 SUM(CASE WHEN (home_team=? AND runs1<runs0) OR (away_team=? AND runs0<runs1) THEN 1 ELSE 0 END) l
+               FROM games WHERE played=1 AND date>=? AND (home_team=? OR away_team=?)""",
+            (tid, tid, tid, tid, f"{year}-01-01", tid, tid)).fetchone()
+        return (row[0] or 0), (row[1] or 0)
+
+    rs_vals, rd_wins_half, resid, winpcts = [], [], [], []
+    for y in years:
+        bat = {r["team_id"]: r["r"] for r in conn.execute(
+            "SELECT team_id, r FROM team_batting_stats WHERE split_id=1 AND year=?", (y,))}
+        pit = {r["team_id"]: r["r"] for r in conn.execute(
+            "SELECT team_id, r FROM team_pitching_stats WHERE split_id=1 AND year=?", (y,))}
+        for tid, rs in bat.items():
+            ra = pit.get(tid)
+            if ra is None:
+                continue
+            w, l = _actual_wl(tid, y)
+            g = w + l
+            if g == 0 or rs + ra == 0:
+                continue
+            rs_vals.append(rs)
+            rd_wins_half.append((rs - ra, w - g / 2.0))
+            pyth = rs ** pyth_exp / (rs ** pyth_exp + ra ** pyth_exp)
+            resid.append(w - pyth * g)
+            winpcts.append(w / g)
+
+    n = len(rs_vals)
+    if n < 20:
+        # Thin history — use engine defaults but keep the league's pyth_exp.
+        return ProjectionCalibration(pyth_exp=pyth_exp)
+
+    lg_team_runs = _st.mean(rs_vals)
+    # Slope of wins-above-half on run_diff through the origin: sum(xy)/sum(xx).
+    sxy = sum(x * yv for x, yv in rd_wins_half)
+    sxx = sum(x * x for x, _ in rd_wins_half)
+    slope = (sxy / sxx) if sxx else (1.0 / _D.runs_per_win)
+    runs_per_win = (1.0 / slope) if slope > 0 else _D.runs_per_win
+    win_band_sd = _st.pstdev(resid) if len(resid) > 1 else _D.win_band_sd
+    # Replacement win% is the floor a team of freely-available talent wins at —
+    # NOT the worst observed team (which is real, rostered, above replacement).
+    # The sabermetric anchor is ~0.294 (a ~294 team-win-pct replacement league).
+    # Keep it as the standard constant rather than deriving from observed teams;
+    # deriving from the worst observed club systematically overstates it.
+    repl = _D.repl_winpct
+
+    return ProjectionCalibration(
+        runs_per_win=round(runs_per_win, 3),
+        lg_team_runs=round(lg_team_runs, 1),
+        win_band_sd=round(win_band_sd, 2),
+        repl_winpct=repl,
+        pyth_exp=pyth_exp,
+    )
 
 
 def main():

@@ -606,3 +606,721 @@ def test_rule5_mlb_player_off_40man_is_eligible(q):
     conn.commit()
     res = q.get_rule5(TEAM_ID)
     assert "Joe Hitter" in {p["name"] for p in res["protect"]}
+
+
+# ---------------------------------------------------------------------------
+# Spring Training — Opening Day projection
+# ---------------------------------------------------------------------------
+
+def _seed_spring_pool(conn):
+    """Seed a full-enough my-team roster (peak_war + buckets + positional
+    ratings) so the spring pool can cover all 9 lineup slots + staff.
+
+    The base fixture's player_evaluation rows don't set peak_war (the spring
+    pool requires it), and it only has a few bodies — too thin to field a roster.
+    Seed a plausible 26-man-ish org: one body per field position, a DH, bench,
+    5 SP, 8 RP."""
+    # (pid, name, bucket, level, peak_war, pos_field, pos_rating)
+    bats = [
+        (710, "Cora Catcher", "C", "1", 2.5, "c", 55),
+        (711, "First Baseman", "1B", "1", 2.0, "first_b", 60),
+        (712, "Second Sacker", "2B", "1", 2.4, "second_b", 60),
+        (713, "Hot Corner", "3B", "1", 2.2, "third_b", 60),
+        (714, "Short Stop", "SS", "1", 3.5, "ss", 60),
+        (715, "Left Fielder", "LF", "1", 2.1, "lf", 55),
+        (716, "Center Field", "CF", "1", 3.0, "cf", 60),
+        (717, "Right Fielder", "RF", "1", 2.6, "rf", 55),
+        (718, "Donny Hitter", "1B", "1", 2.3, "first_b", 55),   # DH-type bat
+        (719, "Benchy One", "LF", "1", 1.1, "lf", 50),
+        (720, "Benchy Two", "2B", "1", 1.0, "second_b", 50),
+        (721, "Backup Catch", "C", "1", 0.9, "c", 50),
+        (722, "Benchy Four", "3B", "1", 0.8, "third_b", 48),
+    ]
+    arms = [(730 + i, f"Starter {i}", "SP", "1", w)
+            for i, w in enumerate([3.6, 3.0, 2.5, 2.0, 1.6, 1.2])]
+    arms += [(740 + i, f"Reliever {i}", "RP", "1", w)
+             for i, w in enumerate([1.3, 1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4])]
+
+    for pid, name, bkt, lvl, pw, fld, rating in bats:
+        conn.execute(
+            "INSERT OR REPLACE INTO player_evaluation (player_id, eval_date, name, "
+            "bucket, age, composite, ceiling, level, team_id, parent_team_id, peak_war) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (pid, EVAL_DATE, name, bkt, 27, 52, 56, lvl, TEAM_ID, TEAM_ID, pw))
+        conn.execute(
+            "INSERT OR REPLACE INTO players (player_id, name, age, team_id, "
+            "parent_team_id, level, pos, role, is_on_secondary) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (pid, name, 27, TEAM_ID, 0, lvl, 7, 0, 1))
+        conn.execute(
+            f"INSERT OR REPLACE INTO ratings (player_id, snapshot_date, league_id, "
+            f"cntct, gap, pow, eye, speed, {fld}) VALUES (?,?,?,?,?,?,?,?,?)",
+            (pid, "2033-06-01", 1, 50, 50, 50, 50, 50, rating))
+    for pid, name, bkt, lvl, pw in arms:
+        conn.execute(
+            "INSERT OR REPLACE INTO player_evaluation (player_id, eval_date, name, "
+            "bucket, age, composite, ceiling, level, team_id, parent_team_id, peak_war) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (pid, EVAL_DATE, name, bkt, 27, 52, 56, lvl, TEAM_ID, TEAM_ID, pw))
+        conn.execute(
+            "INSERT OR REPLACE INTO players (player_id, name, age, team_id, "
+            "parent_team_id, level, pos, role, is_on_secondary) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (pid, name, 27, TEAM_ID, 0, lvl, 1, 11 if bkt == "SP" else 12, 1))
+    conn.commit()
+
+
+def test_spring_projection_shape(q):
+    """get_spring_projection returns the cascade + constructed roster + pool."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    assert set(res) >= {"projection", "constructed", "config", "pool"}
+    p = res["projection"]
+    # Cascade fields present and internally consistent (RS - RA == run_diff).
+    for k in ("wins", "losses", "run_diff", "runs_scored", "runs_allowed",
+              "team_war", "bat_runs", "br_runs", "fld_runs", "pit_runs",
+              "band_low", "band_high"):
+        assert k in p
+    assert abs((p["runs_scored"] - p["runs_allowed"]) - p["run_diff"]) < 1e-6
+    assert abs((p["wins"] + p["losses"]) - 162) < 1e-6
+    assert res["pool"]  # non-empty candidate pool
+
+
+def test_spring_projection_auto_builds_a_roster(q):
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    cfg = res["config"]
+    assert cfg["lineup"]        # at least some field slots filled
+    assert "rotation" in cfg and "bullpen" in cfg and "bench" in cfg
+
+
+def test_spring_projection_override_changes_output(q):
+    """Feeding an explicit config path works and yields a (possibly zero) delta
+    without error — the comparison contract the UI depends on."""
+    _seed_spring_pool(q.get_db())
+    auto = q.get_spring_projection(TEAM_ID)
+    before = auto["projection"]["wins"]
+    # Re-project the SAME config explicitly — must reproduce the same record.
+    again = q.get_spring_projection(TEAM_ID, auto["config"])
+    assert abs(again["projection"]["wins"] - before) < 1e-6
+
+
+def test_spring_contested_spots_present_and_shaped(q):
+    """Contested spots surface with the right shape; each has exactly one pick
+    per single-slot competition, and candidates carry evidence."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    assert "contested" in res
+    for s in res["contested"]:
+        assert set(s) >= {"kind", "slot", "candidates", "reason", "forced"}
+        assert s["candidates"]
+        for c in s["candidates"]:
+            assert set(c) >= {"pid", "name", "war", "is_pick", "out_of_options"}
+        # field / rotation / bench are single-slot → exactly one pick.
+        if s["kind"] in ("field", "rotation", "bench"):
+            assert sum(1 for c in s["candidates"] if c["is_pick"]) == 1
+
+
+def test_spring_out_of_options_forces_a_spot(q):
+    """Flagging a clearly-better player as out of options makes his spot a
+    forced decision that sorts to the top, even with a talent gap."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    # Give the my-team CF (Joe Hitter, 100) a clear lead so his slot is NOT a
+    # natural competition, then flag him out of options.
+    conn.execute("UPDATE player_evaluation SET peak_war=5.0 WHERE player_id=100")
+    conn.commit()
+    res = q.get_spring_projection(TEAM_ID, out_of_options={100})
+    forced = [s for s in res["contested"] if s["forced"]]
+    assert forced, "an out-of-options player should force at least one spot"
+    # Forced spots sort first.
+    assert res["contested"][0]["forced"]
+    # The flagged player appears as an out_of_options candidate somewhere.
+    flagged = any(c["out_of_options"] for s in res["contested"] for c in s["candidates"])
+    assert flagged
+
+
+def test_spring_no_out_of_options_no_forced(q):
+    """With nothing flagged, no spot is marked forced."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    assert all(not s["forced"] for s in res["contested"])
+
+
+def test_spring_recommend_covers_all_positions(q):
+    """The recommender fills every field position + DH (coverage guarantee),
+    not a greedy best-WAR grab that could leave a position empty."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    lineup = res["config"]["lineup"]
+    # Every field slot present (DH too when a bat is available).
+    for pos in ("C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"):
+        assert pos in lineup, f"{pos} left uncovered"
+
+
+def test_spring_recommend_roster_sizes(q):
+    """Rotation/bullpen/bench sizes respect the Opening Day structure caps."""
+    _seed_spring_pool(q.get_db())
+    cfg = q.get_spring_projection(TEAM_ID)["config"]
+    assert len(cfg["rotation"]) <= 5
+    assert len(cfg["bullpen"]) <= 8
+    assert len(cfg["bench"]) <= 4
+    # No player appears in two roster groups.
+    allpids = (list(cfg["lineup"].values()) + cfg["bench"]
+               + cfg["rotation"] + cfg["bullpen"])
+    assert len(allpids) == len(set(allpids)), "a player is double-rostered"
+
+
+def test_spring_recommend_carries_credible_out_of_options(q):
+    """A flagged, credible player off the auto roster is pulled onto it."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    # Add a credible bench-quality bat that wouldn't otherwise make the cut,
+    # then flag him out of options.
+    conn.execute(
+        "INSERT OR REPLACE INTO player_evaluation (player_id, eval_date, name, "
+        "bucket, age, composite, ceiling, level, team_id, parent_team_id, peak_war) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (900, EVAL_DATE, "Oscar Options", "LF", 28, 50, 52, "1", TEAM_ID, TEAM_ID, 2.8))
+    conn.execute(
+        "INSERT OR REPLACE INTO players (player_id, name, age, team_id, "
+        "parent_team_id, level, pos, role, is_on_secondary) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (900, "Oscar Options", 28, TEAM_ID, 0, "1", 7, 0, 1))
+    conn.commit()
+    res = q.get_spring_projection(TEAM_ID, out_of_options={900})
+    cfg = res["config"]
+    rostered = (set(cfg["lineup"].values()) | set(cfg["bench"])
+                | set(cfg["rotation"]) | set(cfg["bullpen"]))
+    assert 900 in rostered, "credible out-of-options player should be carried"
+    assert all(m["pid"] != 900 for m in res["must_expose"])
+
+
+# ---------------------------------------------------------------------------
+# Spring Training — plan persistence
+# ---------------------------------------------------------------------------
+
+def test_spring_plan_save_load_roundtrip(q):
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    cfg = res["config"]
+    q.save_spring_plan(TEAM_ID, cfg, out_of_options=[])
+    loaded = q.load_spring_plan(TEAM_ID)
+    assert loaded is not None
+    assert loaded["config"]["lineup"] == {k: v for k, v in cfg["lineup"].items()}
+    assert not loaded["stale"] and loaded["dropped"] == []
+    assert loaded["game_date"]  # stamped from state.json
+    q.delete_spring_plan(TEAM_ID)
+
+
+def test_spring_plan_load_none_when_unsaved(q):
+    _seed_spring_pool(q.get_db())
+    q.delete_spring_plan(TEAM_ID)  # ensure clean
+    assert q.load_spring_plan(TEAM_ID) is None
+
+
+def test_spring_plan_drops_vanished_players(q):
+    """A saved player no longer in the pool is dropped and flagged stale."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    cfg = {k: (dict(v) if isinstance(v, dict) else list(v))
+           for k, v in res["config"].items() if k != "_must_expose"}
+    cfg["bench"] = list(cfg["bench"]) + [99999999]  # bogus pid
+    q.save_spring_plan(TEAM_ID, cfg)
+    loaded = q.load_spring_plan(TEAM_ID)
+    assert 99999999 in loaded["dropped"]
+    assert loaded["stale"] is True
+    assert 99999999 not in loaded["config"]["bench"]
+    q.delete_spring_plan(TEAM_ID)
+
+
+def test_spring_plan_delete(q):
+    _seed_spring_pool(q.get_db())
+    q.save_spring_plan(TEAM_ID, q.get_spring_projection(TEAM_ID)["config"])
+    assert q.delete_spring_plan(TEAM_ID) is True
+    assert q.delete_spring_plan(TEAM_ID) is False  # idempotent
+    assert q.load_spring_plan(TEAM_ID) is None
+
+
+def test_spring_plan_persists_out_of_options(q):
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    q.save_spring_plan(TEAM_ID, res["config"], out_of_options=[710, 711])
+    loaded = q.load_spring_plan(TEAM_ID)
+    # Both flagged pids are in the pool (seeded), so both persist.
+    assert set(loaded["out_of_options"]) == {710, 711}
+    q.delete_spring_plan(TEAM_ID)
+
+
+# ---------------------------------------------------------------------------
+# Spring Training — edit → re-project delta
+# ---------------------------------------------------------------------------
+
+def _clone_config(cfg):
+    return {k: (dict(v) if isinstance(v, dict) else list(v))
+            for k, v in cfg.items() if k != "_must_expose"}
+
+
+def test_spring_delta_zero_when_unchanged(q):
+    """Projecting the auto config with the auto baseline yields a zero delta."""
+    _seed_spring_pool(q.get_db())
+    auto = _clone_config(q.get_spring_projection(TEAM_ID)["config"])
+    res = q.spring_projection_delta(TEAM_ID, auto, baseline=auto)
+    assert res["delta"]["wins"] == 0.0
+    assert res["delta"]["run_diff"] == 0.0
+
+
+def test_spring_delta_payload_shape(q):
+    _seed_spring_pool(q.get_db())
+    auto = _clone_config(q.get_spring_projection(TEAM_ID)["config"])
+    res = q.spring_projection_delta(TEAM_ID, auto)
+    assert set(res) >= {"projection", "baseline", "delta", "constructed",
+                        "contested", "must_expose", "config"}
+    for m in ("wins", "run_diff", "team_war", "bat_runs", "br_runs",
+              "fld_runs", "pit_runs"):
+        assert m in res["delta"]
+
+
+def test_spring_delta_sign_tracks_improvement(q):
+    """Reversing a comparison negates the delta exactly (after-minus-before is a
+    true difference), independent of which roster is which."""
+    _seed_spring_pool(q.get_db())
+    auto = _clone_config(q.get_spring_projection(TEAM_ID)["config"])
+    # Two configs that differ: auto, and auto with one bench bat removed (a
+    # strictly weaker roster). Independent of the auto allocator's specifics.
+    weaker = _clone_config(auto)
+    assert weaker["bench"], "fixture should seed a bench"
+    weaker["bench"] = weaker["bench"][1:]  # drop one bench piece
+    up = q.spring_projection_delta(TEAM_ID, auto, baseline=weaker)["delta"]["wins"]
+    down = q.spring_projection_delta(TEAM_ID, weaker, baseline=auto)["delta"]["wins"]
+    # Exact mirror: d(A vs B) == -d(B vs A). This is the robust invariant.
+    assert abs(up + down) < 1e-6
+    # The fuller roster is not worse than the one missing a bench bat.
+    assert up >= 0 >= down
+
+
+# ---------------------------------------------------------------------------
+# Spring Training — positional WAR is re-valued for the slot played
+# ---------------------------------------------------------------------------
+
+def test_spring_slot_war_strips_native_positional_value_at_dh():
+    """A SS (+0.7 native) shown at DH (-1.7) loses exactly 2.4 WAR."""
+    import offseason_queries as osq
+    from statsplusplus.utils.positions import POSITIONAL_WAR_ADJUSTMENTS as PA
+    ss = {"bucket": "SS", "war_proj": 3.7}
+    at_dh = osq._spring_slot_war(ss, "DH")
+    assert abs(at_dh - (3.7 - PA["SS"] + PA["DH"])) < 1e-9
+    assert abs(at_dh - 1.3) < 1e-9  # 3.7 - 0.7 + (-1.7)
+
+
+def test_spring_slot_war_corner_slots_use_cof_adjustment():
+    """LF/RF slots key to the COF adjustment, not a missing 'LF'/'RF' key."""
+    import offseason_queries as osq
+    from statsplusplus.utils.positions import POSITIONAL_WAR_ADJUSTMENTS as PA
+    cf = {"bucket": "CF", "war_proj": 3.0}
+    at_lf = osq._spring_slot_war(cf, "LF")
+    # CF (+0.25) moved to a corner (COF -0.7): loses 0.95.
+    assert abs(at_lf - (3.0 - PA["CF"] + PA["COF"])) < 1e-9
+
+
+def test_spring_dh_war_not_inflated_by_native_position(q):
+    """End-to-end: the DH's displayed WAR reflects the DH penalty, and the DH
+    contributes no fielding runs."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    dh = res["constructed"]["lineup"].get("DH")
+    if dh:
+        pool = {p["player_id"]: p for p in res["pool"]}
+        native = pool[dh["pid"]]["war_proj"]
+        # Unless the DH is natively a 1B (same-ish adj), the slot WAR should be
+        # at or below native (DH is the worst positional adjustment).
+        assert dh["war"] <= native + 1e-6
+
+
+# ---------------------------------------------------------------------------
+# Spring Training — multi-position eligibility
+# ---------------------------------------------------------------------------
+
+def test_spring_pool_carries_eligible_positions(q):
+    """Every pool player has an `eligible` set; hitters include DH, pitchers get
+    role eligibility (SP also RP)."""
+    _seed_spring_pool(q.get_db())
+    conn = q.get_db()
+    import offseason_queries as osq
+    pool = osq._spring_pool(conn, TEAM_ID, osq._eval_date(conn))
+    assert pool
+    for p in pool:
+        assert "eligible" in p and p["eligible"]
+        if p["is_pitcher"]:
+            assert p["eligible"] in (["SP", "RP"], ["RP"])
+        else:
+            assert "DH" in p["eligible"]  # any hitter can DH
+
+
+def test_spring_eligibility_reflects_positional_ratings(q):
+    """A player with a strong rating at a position is eligible there; the seed's
+    shortstop (ss=60) qualifies at SS."""
+    _seed_spring_pool(q.get_db())
+    conn = q.get_db()
+    import offseason_queries as osq
+    pool = {p["name"]: p for p in osq._spring_pool(conn, TEAM_ID, osq._eval_date(conn))}
+    ss = pool.get("Short Stop")
+    assert ss and "SS" in ss["eligible"]
+
+
+def test_spring_viable_at_prefers_precomputed_set(q):
+    """_spring_viable_at honors the precomputed eligible set when present."""
+    import offseason_queries as osq
+    p = {"eligible": ["2B", "SS", "DH"], "bucket": "SS"}
+    assert osq._spring_viable_at(p, "SS") is True
+    assert osq._spring_viable_at(p, "2B") is True
+    assert osq._spring_viable_at(p, "C") is False
+
+
+# ---------------------------------------------------------------------------
+# Spring Training — generalized editing (role moves, drops)
+# ---------------------------------------------------------------------------
+
+def test_spring_move_starter_to_bullpen_reprojects(q):
+    """Moving a starter to the bullpen is a valid config the engine projects;
+    the rotation shrinks and the roster still projects without error."""
+    _seed_spring_pool(q.get_db())
+    auto = q.get_spring_projection(TEAM_ID)
+    cfg = _clone_config(auto["config"])
+    assert len(cfg["rotation"]) >= 5
+    moved = cfg["rotation"].pop()          # pull the 5th starter
+    cfg["bullpen"] = [moved] + list(cfg["bullpen"])
+    res = q.get_spring_projection(TEAM_ID, cfg)
+    assert len(res["constructed"]["rotation"]) == len(cfg["rotation"])
+    assert any(r["pid"] == moved for r in res["constructed"]["bullpen"])
+
+
+def test_spring_drop_player_leaves_hole_and_reprojects(q):
+    """Dropping a player from the 26 is handled: the roster is smaller and the
+    projection still computes (the GM sees the hole + WAR cost)."""
+    _seed_spring_pool(q.get_db())
+    auto = q.get_spring_projection(TEAM_ID)
+    cfg = _clone_config(auto["config"])
+    if cfg["bench"]:
+        cfg["bench"] = cfg["bench"][1:]    # drop one bench bat
+        res = q.get_spring_projection(TEAM_ID, cfg)
+        assert len(res["constructed"]["bench"]) == len(cfg["bench"])
+        assert "wins" in res["projection"]  # still projects
+
+
+# ---------------------------------------------------------------------------
+# Spring Training — platoon-assignment + start-share playing time
+# ---------------------------------------------------------------------------
+
+def test_spring_catcher_start_share_is_realistic(q):
+    """The catcher starts ~67% of games (not full-time) — the realistic
+    start-share from historical data, not a 100% everyday assumption."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    c = res["constructed"]["lineup"].get("C")
+    assert c and c["players"][0]["pt_pct"] <= 70  # ~67%, never 100
+
+
+def test_spring_start_share_override_cuts_contribution(q):
+    """A start_share override that benches a starter (low share) cuts the team
+    projection vs his default everyday share."""
+    _seed_spring_pool(q.get_db())
+    auto = q.get_spring_projection(TEAM_ID)
+    cl = auto["constructed"]["lineup"]
+    best_pos = max(cl, key=lambda p: cl[p]["war"])
+    best_pid = cl[best_pos]["pid"]
+    cfg = _clone_config(auto["config"])
+    cfg["start_share"] = {best_pid: 0.10}
+    res = q.get_spring_projection(TEAM_ID, cfg)
+    assert res["projection"]["wins"] < auto["projection"]["wins"] - 0.3
+
+
+def test_spring_recommender_carries_backup_catcher(q):
+    """The auto 26 carries a backup catcher (a C can't start 162), so the
+    no-backup-catcher warning does NOT fire when a 2nd catcher exists."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    c = res["constructed"]["lineup"].get("C")
+    has_backup = c and any(r.get("role") == "Backup" for r in c["players"])
+    assert has_backup
+    assert not any(w["kind"] == "no_backup_catcher" for w in res["warnings"])
+
+
+def test_spring_no_backup_catcher_warns(q):
+    """A config with only ONE catcher-eligible player raises the backup-C
+    warning (you physically can't cover 162 games with one catcher)."""
+    _seed_spring_pool(q.get_db())
+    auto = q.get_spring_projection(TEAM_ID)
+    cfg = _clone_config(auto["config"])
+    # Strip every catcher-eligible player except the starting C.
+    import offseason_queries as osq
+    pool = {p["player_id"]: p for p in auto["pool"]}
+    starter_c = cfg["lineup"].get("C")
+    cfg["bench"] = [b for b in cfg["bench"]
+                    if "C" not in (pool.get(b, {}).get("eligible") or [])]
+    res = q.get_spring_projection(TEAM_ID, cfg)
+    assert any(w["kind"] == "no_backup_catcher" for w in res["warnings"])
+
+
+def test_spring_pitcher_role_share_sp1_beats_sp5(q):
+    """An arm deployed SP1 (full share) contributes more than as SP5."""
+    _seed_spring_pool(q.get_db())
+    auto = q.get_spring_projection(TEAM_ID)
+    sp = auto["constructed"]["rotation"][0]["pid"]
+    a = _clone_config(auto["config"]); a["roles"] = {sp: "sp1"}
+    b = _clone_config(auto["config"]); b["roles"] = {sp: "sp5"}
+    wa = q.get_spring_projection(TEAM_ID, a)["projection"]["wins"]
+    wb = q.get_spring_projection(TEAM_ID, b)["projection"]["wins"]
+    assert wa >= wb
+
+
+def test_spring_platoon_assignment_persists_in_plan(q):
+    """A saved plan round-trips platoon + start_share decisions."""
+    _seed_spring_pool(q.get_db())
+    auto = q.get_spring_projection(TEAM_ID)
+    cl = auto["constructed"]["lineup"]
+    pid = cl["LF"]["pid"] if "LF" in cl else next(iter(cl.values()))["pid"]
+    cfg = _clone_config(auto["config"])
+    cfg["start_share"] = {pid: 0.6}
+    q.save_spring_plan(TEAM_ID, cfg)
+    loaded = q.load_spring_plan(TEAM_ID)
+    assert loaded["config"].get("start_share", {}).get(pid) == 0.6 or \
+           loaded["config"].get("start_share", {}).get(str(pid)) == 0.6
+    q.delete_spring_plan(TEAM_ID)
+
+
+# ---------------------------------------------------------------------------
+# Spring Training — stat selector data (depth-chart parity)
+# ---------------------------------------------------------------------------
+
+def test_spring_pool_carries_display_stats(q):
+    """Hitters carry OPS+ (+ splits); pitchers carry ERA/FIP — the stat-selector
+    values, computed the depth-chart way."""
+    _seed_spring_pool(q.get_db())
+    conn = q.get_db()
+    import offseason_queries as osq
+    pool = osq._spring_pool(conn, TEAM_ID, osq._eval_date(conn))
+    hitters = [p for p in pool if not p["is_pitcher"]]
+    pitchers = [p for p in pool if p["is_pitcher"]]
+    assert hitters and all("stats" in h for h in hitters)
+    assert all("ops_plus" in h["stats"] for h in hitters)
+    assert pitchers and all({"era", "fip"} <= set(p["stats"]) for p in pitchers)
+
+
+def test_spring_constructed_entries_carry_stats(q):
+    """The constructed lineup/rotation/bullpen entries expose stats for the UI,
+    with the lineup WAR being the slot-adjusted value."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    for pos, e in res["constructed"]["lineup"].items():
+        assert "stats" in e and "ops_plus" in e["stats"]
+        assert e["stats"]["war"] == e["war"]  # slot-adjusted WAR carried through
+    for e in res["constructed"]["rotation"]:
+        assert "era" in e["stats"] and "fip" in e["stats"]
+
+
+def test_spring_recommender_assigns_by_slot_war_not_native(q):
+    """The recommender should prefer a true 1B at 1B over a higher-native-WAR
+    middle infielder whose value craters when stretched to 1B (slot-adjusted
+    WAR, not raw war_proj — the same bug class as the DH fix)."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    # A natural 1B (modest native WAR) and a strong 2B who is ALSO 1B-eligible.
+    # Natively the 2B outranks the 1B, but at 1B the 2B loses ~1.5 WAR, so the
+    # true 1B should win the 1B slot.
+    conn.execute(
+        "INSERT OR REPLACE INTO player_evaluation (player_id, eval_date, name, "
+        "bucket, age, composite, ceiling, level, team_id, parent_team_id, peak_war) "
+        "VALUES (950,?, 'Natural First','1B',28,52,54,'1',?,?,1.5)", (EVAL_DATE, TEAM_ID, TEAM_ID))
+    conn.execute(
+        "INSERT OR REPLACE INTO players (player_id, name, age, team_id, parent_team_id, "
+        "level, pos, role, is_on_secondary) VALUES (950,'Natural First',28,?,0,'1',3,0,1)", (TEAM_ID,))
+    conn.execute(
+        "INSERT OR REPLACE INTO ratings (player_id, snapshot_date, league_id, cntct, gap, "
+        "pow, eye, speed, first_b) VALUES (950,'2033-06-01',1,55,50,55,52,45,60)")
+    conn.commit()
+    import offseason_queries as osq
+    pool = osq._spring_pool(conn, TEAM_ID, osq._eval_date(conn))
+    cfg = osq._spring_auto_config(pool)
+    # Whoever is at 1B must be the slot-WAR-maximizing eligible player.
+    at_1b = cfg["lineup"].get("1B")
+    by_id = {p["player_id"]: p for p in pool}
+    elig_1b = [p for p in pool if not p["is_pitcher"] and "1B" in p.get("eligible", [])]
+    best = max(elig_1b, key=lambda p: osq._spring_slot_war(p, "1B"))
+    # The 1B occupant's slot WAR should equal the best achievable at 1B.
+    assert abs(osq._spring_slot_war(by_id[at_1b], "1B")
+               - osq._spring_slot_war(best, "1B")) < 1e-6
+
+
+def test_spring_lineup_slot_carries_players_and_pos_war(q):
+    """Each constructed lineup slot carries the full players list (starter +
+    any platoon/backups sharing the slot) with PT%, plus a position WAR total —
+    the depth-chart-parity structure the field view renders."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    for pos, slot in res["constructed"]["lineup"].items():
+        assert "players" in slot and slot["players"]
+        assert "pos_war" in slot
+        # starter is the first player and matches the back-compat top-level pid
+        assert slot["players"][0]["pid"] == slot["pid"]
+        for pl in slot["players"]:
+            assert "pt_pct" in pl and "war" in pl
+
+
+def test_spring_explicit_platoon_splits_a_position(q):
+    """An explicit platoon {vsR, vsL} at a position produces a two-player split
+    with the vs-RHP player at ~71% and the vs-LHP player at ~29%."""
+    _seed_spring_pool(q.get_db())
+    auto = q.get_spring_projection(TEAM_ID)
+    cl = auto["config"]["lineup"]
+    # Need a position with an eligible bench partner. Use LF + a bench LF bat.
+    import offseason_queries as osq
+    pool = {p["player_id"]: p for p in auto["pool"]}
+    pos = "LF"
+    starter = cl.get(pos)
+    partner = next((b for b in auto["config"]["bench"]
+                    if b != starter and "LF" in (pool.get(b, {}).get("eligible") or [])), None)
+    if starter and partner:
+        cfg = _clone_config(auto["config"])
+        cfg["platoon"] = {pos: {"vsR": starter, "vsL": partner}}
+        res = q.get_spring_projection(TEAM_ID, cfg)
+        players = res["constructed"]["lineup"][pos]["players"]
+        pts = {r["pid"]: r["pt_pct"] for r in players}
+        assert pts.get(starter) in (71, 72) or abs(pts.get(starter, 0) - 71) <= 2
+        assert pts.get(partner) in (28, 29, 30) or abs(pts.get(partner, 0) - 29) <= 2
+
+
+def test_spring_platoon_persists_in_plan(q):
+    """A saved plan round-trips the platoon assignment (surviving players)."""
+    _seed_spring_pool(q.get_db())
+    auto = q.get_spring_projection(TEAM_ID)
+    cl = auto["config"]["lineup"]
+    import offseason_queries as osq
+    pool = {p["player_id"]: p for p in auto["pool"]}
+    starter = cl.get("LF")
+    partner = next((b for b in auto["config"]["bench"]
+                    if b != starter and "LF" in (pool.get(b, {}).get("eligible") or [])), None)
+    if starter and partner:
+        cfg = _clone_config(auto["config"])
+        cfg["platoon"] = {"LF": {"vsR": starter, "vsL": partner}}
+        q.save_spring_plan(TEAM_ID, cfg)
+        loaded = q.load_spring_plan(TEAM_ID)
+        assert loaded["config"]["platoon"].get("LF", {}).get("vsL") == partner
+        q.delete_spring_plan(TEAM_ID)
+
+
+def test_spring_candidate_slot_war_is_position_adjusted(q):
+    """Each pool hitter carries a slot_war map = his WAR AT each eligible
+    position (so the candidate dropdown matches the selection result — fixes
+    the native-vs-slot mismatch)."""
+    _seed_spring_pool(q.get_db())
+    conn = q.get_db()
+    import offseason_queries as osq
+    pool = osq._spring_pool(conn, TEAM_ID, osq._eval_date(conn))
+    for p in pool:
+        if p["is_pitcher"]:
+            continue
+        assert "slot_war" in p and p["slot_war"]
+        # the slot_war at a position equals _spring_slot_war for that position
+        for pos, w in p["slot_war"].items():
+            assert abs(w - round(osq._spring_slot_war(p, pos), 1)) < 1e-6
+
+
+def test_spring_pa_pie_budget_and_fill(q):
+    """Each lineup position exposes a PA pie: a vs-RHP + vs-LHP wedge budget,
+    per-player PA by hand, and the unfilled remainder."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    for pos, slot in res["constructed"]["lineup"].items():
+        b = slot.get("pa_budget")
+        assert b and b["r_total"] > b["l_total"]  # more PA vs RHP
+        filled_r = sum(p.get("pa_r", 0) for p in slot["players"])
+        # filled + open should reconcile to the wedge budget (±rounding)
+        assert abs((filled_r + b["r_open"]) - b["r_total"]) <= 2
+        for p in slot["players"]:
+            assert "pa_r" in p and "pa_l" in p
+
+
+def test_spring_literal_pa_alloc_overrides_pie(q):
+    """An explicit pa_alloc at a position becomes the source of truth for its
+    pie — the players' PA match what was allocated (literal pie allocation)."""
+    _seed_spring_pool(q.get_db())
+    auto = q.get_spring_projection(TEAM_ID)
+    cl = auto["config"]["lineup"]
+    pool = {p["player_id"]: p for p in auto["pool"]}
+    ss = cl.get("SS")
+    partner = next((b for b in auto["config"]["bench"]
+                    if b != ss and "SS" in (pool.get(b, {}).get("eligible") or [])), None)
+    if ss and partner:
+        cfg = _clone_config(auto["config"])
+        cfg["pa_alloc"] = {"SS": {str(ss): {"r": 300, "l": 100},
+                                  str(partner): {"r": 167, "l": 91}}}
+        res = q.get_spring_projection(TEAM_ID, cfg)
+        rows = {r["pid"]: r for r in res["constructed"]["lineup"]["SS"]["players"]}
+        assert rows[ss]["pa_r"] == 300 and rows[ss]["pa_l"] == 100
+        assert rows[partner]["pa_r"] == 167 and rows[partner]["pa_l"] == 91
+        # the wedge is fully filled (300+167 ≈ 467 vsR)
+        assert res["constructed"]["lineup"]["SS"]["pa_budget"]["r_open"] <= 1
+
+
+def test_spring_pa_alloc_persists_in_plan(q):
+    """A saved plan round-trips a literal PA allocation."""
+    _seed_spring_pool(q.get_db())
+    auto = q.get_spring_projection(TEAM_ID)
+    ss = auto["config"]["lineup"].get("SS")
+    if ss:
+        cfg = _clone_config(auto["config"])
+        cfg["pa_alloc"] = {"SS": {str(ss): {"r": 400, "l": 150}}}
+        q.save_spring_plan(TEAM_ID, cfg)
+        loaded = q.load_spring_plan(TEAM_ID)
+        alloc = loaded["config"]["pa_alloc"].get("SS", {})
+        # key normalized to int on load
+        assert alloc.get(ss, {}).get("r") == 400
+        q.delete_spring_plan(TEAM_ID)
+
+
+def test_spring_pool_carries_woba_and_defense_stats(q):
+    """Hitters expose the run-space model's native facets for display: a
+    projected wOBA, defensive_value, and baserunning_value."""
+    _seed_spring_pool(q.get_db())
+    conn = q.get_db()
+    import offseason_queries as osq
+    pool = osq._spring_pool(conn, TEAM_ID, osq._eval_date(conn))
+    hitters = [p for p in pool if not p["is_pitcher"]]
+    assert hitters
+    for h in hitters:
+        assert "woba" in h["stats"]      # projected wOBA (display)
+        assert "def" in h["stats"]       # defensive_value (model output)
+        assert "bsr" in h["stats"]       # baserunning_value (model output)
+    # wOBA is in a plausible range for a scaled league value
+    wobas = [h["stats"]["woba"] for h in hitters if h["stats"]["woba"]]
+    assert all(0.15 < w < 0.55 for w in wobas)
+
+
+def test_spring_pool_prefers_stored_proj_woba(q):
+    """When the evaluation engine has written an exact model wOBA
+    (ratings.proj_woba), the pool surfaces THAT value rather than the OPS+ ×
+    league-wOBA display estimate. Falls back to the estimate when NULL."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    import offseason_queries as osq
+    ed = osq._eval_date(conn)
+
+    # Baseline: the seed has proj_woba NULL on every ratings row, so the pool
+    # uses the estimate. Capture the SS's estimated wOBA.
+    before = {p["player_id"]: p for p in osq._spring_pool(conn, TEAM_ID, ed)}
+    ss_before = before[714]["stats"]["woba"]
+
+    # Write an exact stored wOBA for the SS that is clearly distinct from the
+    # estimate, then confirm the pool reads the stored value.
+    stored = 0.345
+    assert abs(ss_before - stored) > 1e-3, "pick a value distinct from the estimate"
+    conn.execute(
+        "UPDATE ratings SET proj_woba=? WHERE player_id=714 AND snapshot_date='2033-06-01'",
+        (stored,))
+    conn.commit()
+
+    after = {p["player_id"]: p for p in osq._spring_pool(conn, TEAM_ID, ed)}
+    assert abs(after[714]["stats"]["woba"] - stored) < 1e-6  # uses stored value
+    # A hitter still lacking a stored value keeps the estimate (unchanged).
+    assert after[711]["stats"]["woba"] == before[711]["stats"]["woba"]

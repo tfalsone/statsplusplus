@@ -117,6 +117,9 @@ class EvaluationResult:
     positional_percentile: float | None = None
     positional_median: int | None = None
 
+    # Exact model projected wOBA (hitters only; from the run-space tool->wOBA fit)
+    proj_woba: float | None = None
+
 
 # ---------------------------------------------------------------------------
 # Default tool weights — fallback when no calibrated config exists
@@ -623,6 +626,7 @@ from statsplusplus.evaluation.composite import (
     compute_composite_pitcher,
     compute_tool_only_score,
     compute_composite_mlb,
+    project_woba_hitter,
     compute_offensive_grade,
     compute_baserunning_value,
     compute_defensive_value,
@@ -2118,7 +2122,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
 
     # -- Ensure positional context columns exist (idempotent migration) --
     _existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(ratings)").fetchall()}
-    for _col, _typ in [("positional_percentile", "REAL"), ("positional_median", "INTEGER"), ("true_ceiling", "INTEGER")]:
+    for _col, _typ in [("positional_percentile", "REAL"), ("positional_median", "INTEGER"), ("true_ceiling", "INTEGER"), ("proj_woba", "REAL")]:
         if _col not in _existing_cols:
             conn.execute(f"ALTER TABLE ratings ADD COLUMN {_col} {_typ}")
 
@@ -2229,6 +2233,9 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
         # True ceiling (no age blend -- theoretical maximum)
         true_ceiling: int | None = None
 
+        # Exact model projected wOBA (hitters only; populated per branch)
+        proj_woba: float | None = None
+
         # Carrying tool bonus (populated per branch for hitters)
         ct_bonus: float = 0.0
         ct_breakdown: list[dict] = []
@@ -2314,6 +2321,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
             offensive_grade = compute_offensive_grade(hitter_tools, h_weights, hitter_transforms)
             baserunning_value = compute_baserunning_value(hitter_tools, h_weights)
             defensive_value = compute_defensive_value(defense_tools, def_weights)
+            proj_woba = project_woba_hitter(hitter_tools, _run_space)
 
             # Apply carrying tool bonus to offensive grade (two-way hitter side)
             # DISABLED: redundant with tool transform + interaction terms + position weights
@@ -2423,6 +2431,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
                 run_space=_run_space, bucket=bucket, positional_models=_positional_models,
             )
             composite_score = tool_only_score
+            proj_woba = project_woba_hitter(hitter_tools, _run_space)
 
             # Ceiling
             player_age = row_dict.get("age") or 25
@@ -2643,7 +2652,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
             composite_score, ceiling_score, tool_only_score, secondary_composite,
             offensive_grade, baserunning_value, defensive_value,
             durability_score, offensive_ceiling, true_ceiling,
-            positional_percentile, positional_median,
+            positional_percentile, positional_median, proj_woba,
             player_id, snapshot_date,
         ))
         history_updates.append((
@@ -2687,13 +2696,14 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
         # Store positional context in the ratings update tuple
         if pct is not None or pos_median is not None:
             old_tuple = ratings_updates[idx]
-            # Replace positional_percentile (index 10) and positional_median (index 11)
+            # Replace positional_percentile (index 10) and positional_median (index 11);
+            # carry proj_woba (12) and player_id/snapshot_date (13/14) unchanged.
             ratings_updates[idx] = (
                 old_tuple[0], old_tuple[1], old_tuple[2], old_tuple[3],
                 old_tuple[4], old_tuple[5], old_tuple[6],
                 old_tuple[7], old_tuple[8], old_tuple[9],
-                pct, pos_median,
-                old_tuple[12], old_tuple[13],
+                pct, pos_median, old_tuple[12],
+                old_tuple[13], old_tuple[14],
             )
 
         # Re-run divergence detection with positional context for hitters
@@ -2720,7 +2730,7 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
             secondary_composite = ?,
             offensive_grade = ?, baserunning_value = ?, defensive_value = ?,
             durability_score = ?, offensive_ceiling = ?, true_ceiling = ?,
-            positional_percentile = ?, positional_median = ?
+            positional_percentile = ?, positional_median = ?, proj_woba = ?
         WHERE player_id = ? AND snapshot_date = ?
     """, ratings_updates)
 

@@ -416,6 +416,23 @@ def offseason():
     options = osq.get_option_decisions(tid)
     rule5 = osq.get_rule5(tid)
     season_review = osq.get_season_review(tid)
+    # Spring Training — Opening Day builder. Load a saved plan if present, else
+    # the auto recommendation. Computed server-side for the initial Board
+    # render; the client re-projects edits via /api/spring-project.
+    try:
+        _saved = osq.load_spring_plan(tid)
+        if _saved:
+            spring = osq.get_spring_projection(tid, _saved["config"],
+                                               _saved["out_of_options"])
+            spring["saved"] = {"saved_at": _saved["saved_at"],
+                               "stale": _saved["stale"], "dropped": _saved["dropped"]}
+        else:
+            spring = osq.get_spring_projection(tid)
+            spring["saved"] = None
+    except Exception as _e:
+        import logging as _lg
+        _lg.getLogger("web").warning("spring projection failed: %s", _e)
+        spring = None
     ln = cfg.settings.get("league", "League")
     # Current manual sub-phase (empty = show all panels)
     phase = ""
@@ -454,6 +471,7 @@ def offseason():
         options=options,
         rule5=rule5,
         season_review=season_review,
+        spring=spring,
         phases=phases, current_phase=phase, show=show,
         finance=finance,
     )

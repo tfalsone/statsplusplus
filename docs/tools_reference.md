@@ -1,7 +1,7 @@
 # Tools Reference
 
 > **Status:** Living · **Owns:** CLI tools, importable query functions, data sources
-> **Writing standard:** prose · **Last verified against code:** Session 101
+> **Writing standard:** prose · **Last verified against code:** Session 108
 
 Quick-reference catalog of all CLI tools, importable libraries, and data sources available
 in the EMLB analytics platform. Intended for agent context — keeps tool discovery out of
@@ -645,6 +645,13 @@ panels show; all reuse existing valuation data.
 | `get_extension_candidates(team_id)` | High-surplus own players 1–2 years from free agency |
 | `get_option_decisions(team_id)` | Team/player/vesting option decisions (exercise/decline rec) |
 | `get_rule5(team_id)` | `{eligible?, forty_man{count,cap,open,full,cut_candidates}, draft_pos, protect, protect_tiers, targets}` — OOTP-validated eligibility (`pro_service_years ≥ years_protected_from_rule_5 − 1`, off-40-man, MLB-off-40man eligible). Protect side (triaged tiers, level-qualified stat lines, SP→RP readiness) + results-first draft targets (`_rule5_target_score`, need-fill as ★ flag) + both-axes 40-man cut candidates. |
+| `get_spring_projection(team_id, config=None, out_of_options=None)` | Spring Opening Day builder. Returns `{projection (record/run-diff/facet-run cascade + band), constructed, config, pool, contested, must_expose, warnings}`. `config=None` → auto "recommend my 26". Pool hitters carry a `stats` dict incl. exact stored `woba` (from `ratings.proj_woba`), `def`, `bsr`, and a slot-adjusted `slot_war` map. |
+| `spring_projection_delta(team_id, config, baseline=None)` | Re-project a config and return the signed delta vs `baseline` (auto if None) — the precise comparison signal the edit UI reads. |
+| `save_spring_plan / load_spring_plan / delete_spring_plan(team_id, ...)` | Persist/compare per-team Opening Day plans in `config/spring_plans.json` (load reconciles vanished players → `dropped`/`stale`). |
+
+**Spring projection engine (pure):** `statsplusplus.evaluation.team_projection` —
+`project_team(contribs, calib)`, `ProjectionCalibration`, `PlayerContribution`,
+`projection_delta`. Per-league constants via `calibrate.derive_projection_calibration`.
 
 ---
 

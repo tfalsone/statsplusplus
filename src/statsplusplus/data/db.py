@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS ratings (
     positional_percentile REAL, positional_median INTEGER,
     offensive_grade INTEGER, baserunning_value INTEGER,
     defensive_value INTEGER, durability_score INTEGER, offensive_ceiling INTEGER,
+    proj_woba REAL,
     PRIMARY KEY (player_id, snapshot_date)
 );
 
@@ -562,10 +563,12 @@ def _migrate_misc(conn: sqlite3.Connection) -> None:
     if pf_cols and "risk" not in pf_cols:
         conn.execute("ALTER TABLE prospect_fv ADD COLUMN risk TEXT")
 
-    # ratings.true_ceiling
+    # ratings.true_ceiling, ratings.proj_woba
     r_cols = {r[1] for r in conn.execute("PRAGMA table_info(ratings)").fetchall()}
     if "true_ceiling" not in r_cols:
         conn.execute("ALTER TABLE ratings ADD COLUMN true_ceiling INTEGER")
+    if "proj_woba" not in r_cols:
+        conn.execute("ALTER TABLE ratings ADD COLUMN proj_woba REAL")
 
     # contracts.last_year_player_option (base field, not expansion)
     c_cols = {r[1] for r in conn.execute("PRAGMA table_info(contracts)").fetchall()}
