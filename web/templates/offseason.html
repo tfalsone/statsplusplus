@@ -10,7 +10,7 @@
   {% for ph in phases %}
   <button class="phase-step{% if ph.key == current_phase %} current{% endif %}{% if current_phase and loop.index0 < phase_keys.index(current_phase) %} done{% endif %}"
           data-phase="{{ ph.key }}" title="{{ ph.label }}">
-    <span class="phase-dot">{{ ph.icon }}</span>
+    <span class="phase-dot">{{ ph.icon|safe }}</span>
     <span class="phase-label">{{ ph.label }}</span>
   </button>
   {% endfor %}
@@ -738,6 +738,9 @@
   .phase-step.done::before, .phase-step.current::before { background:var(--green); opacity:0.5; }
   .phase-step .phase-dot { width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center;
                 font-size:17px; background:var(--bg); border:2px solid var(--border); transition:all .12s; position:relative; z-index:1; }
+  /* Inline-SVG phase icons: size within the dot + inherit the step's color
+     (currentColor) so dim/done/current states tint the glyph automatically. */
+  .phase-step .phase-dot svg { width:18px; height:18px; display:block; color:inherit; }
   .phase-step:hover { color:var(--text); }
   .phase-step:hover .phase-dot { border-color:var(--green); }
   .phase-step.done { color:var(--text-dim); }

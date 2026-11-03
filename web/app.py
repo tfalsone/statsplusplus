@@ -29,6 +29,55 @@ setup_logging(Path(_PROJECT_ROOT) / "data" / "logs")
 
 log = get_logger("web")
 
+# Inline-SVG icons for the offseason phase stepper (see /offseason route). Line
+# glyphs on a 24x24 box, stroke=currentColor so each inherits the stepper dot's
+# dim / done / current color. Rendered with |safe in offseason.html.
+def _svg(body: str) -> str:
+    return (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+        'aria-hidden="true" focusable="false">' + body + "</svg>"
+    )
+
+
+_PHASE_ICONS = {
+    # Recap bar chart — the season in review.
+    "season_review": _svg(
+        '<line x1="5" y1="20" x2="5" y2="12"/>'
+        '<line x1="12" y1="20" x2="12" y2="6"/>'
+        '<line x1="19" y1="20" x2="19" y2="14"/>'
+    ),
+    # Balance scale — arbitration.
+    "arbitration": _svg(
+        '<line x1="12" y1="4" x2="12" y2="20"/>'
+        '<line x1="6" y1="20" x2="18" y2="20"/>'
+        '<line x1="5" y1="7" x2="19" y2="7"/>'
+        '<path d="M5 7 L2.5 13 h5 Z"/>'
+        '<path d="M19 7 L16.5 13 h5 Z"/>'
+    ),
+    # Toggle switch — options (exercise / decline).
+    "options": _svg(
+        '<rect x="3" y="8" width="18" height="8" rx="4"/>'
+        '<circle cx="9" cy="12" r="2.2" fill="currentColor" stroke="none"/>'
+    ),
+    # Signing tag — free agency.
+    "free_agency": _svg(
+        '<path d="M4 4 h7 l9 9 a2 2 0 0 1 0 2.8 l-4.2 4.2 a2 2 0 0 1 -2.8 0 l-9 -9 Z"/>'
+        '<circle cx="8" cy="8" r="1.4" fill="currentColor" stroke="none"/>'
+    ),
+    # Shield "5" — Rule 5.
+    "rule5": _svg(
+        '<path d="M12 3 l7 2.5 v6 c0 4.2 -3 7 -7 9 c-4 -2 -7 -4.8 -7 -9 v-6 Z"/>'
+        '<path d="M13.5 8.5 h-3 v2.6 h1.6 a1.6 1.6 0 1 1 -1.6 1.6"/>'
+    ),
+    # Sprout — spring training.
+    "spring": _svg(
+        '<path d="M12 21 V11"/>'
+        '<path d="M12 13 C12 9 8 8 5 8 C5 12 8 13 12 13 Z"/>'
+        '<path d="M12 11 C12 7.5 15.5 6.5 19 6.5 C19 10 15.5 11 12 11 Z"/>'
+    ),
+}
+
 app = Flask(__name__)
 app.json.sort_keys = False
 app.jinja_env.policies["json.dumps_kwargs"] = {"sort_keys": False}
@@ -443,16 +492,21 @@ def offseason():
     except Exception:
         phase = ""
     # Chronological phases + display labels + which panels each surfaces.
-    # Step numbers (1-6) as the stepper markers: color-emoji don't render in the
-    # app's monospace font stack (they showed as missing-glyph boxes) and clash
-    # with the terminal aesthetic; the label below each dot names the phase.
+    # Per-phase icons are INLINE SVG (not emoji): color-emoji don't render in the
+    # app's monospace font stack (they showed as missing-glyph boxes); inline SVG
+    # renders identically in any font and inherits the stepper's currentColor
+    # (dim / green-done / green-current), so it tracks the existing state styling.
+    # Each is a 24x24 line glyph (stroke=currentColor) evoking its phase:
+    #   season_review = recap bar chart · arbitration = balance scale ·
+    #   options = toggle switch · free_agency = signing tag ·
+    #   rule5 = shield "5" · spring = sprout.
     phases = [
-        {"key": "season_review", "label": "Season Review", "icon": "1"},
-        {"key": "arbitration", "label": "Arbitration", "icon": "2"},
-        {"key": "options", "label": "Options", "icon": "3"},
-        {"key": "free_agency", "label": "Free Agency", "icon": "4"},
-        {"key": "rule5", "label": "Rule 5", "icon": "5"},
-        {"key": "spring", "label": "Spring", "icon": "6"},
+        {"key": "season_review", "label": "Season Review", "icon": _PHASE_ICONS["season_review"]},
+        {"key": "arbitration", "label": "Arbitration", "icon": _PHASE_ICONS["arbitration"]},
+        {"key": "options", "label": "Options", "icon": _PHASE_ICONS["options"]},
+        {"key": "free_agency", "label": "Free Agency", "icon": _PHASE_ICONS["free_agency"]},
+        {"key": "rule5", "label": "Rule 5", "icon": _PHASE_ICONS["rule5"]},
+        {"key": "spring", "label": "Spring", "icon": _PHASE_ICONS["spring"]},
     ]
     # Panel gating (pure helper — see offseason_queries.panels_for_phase).
     # Trades is always shown separately in the template.

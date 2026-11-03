@@ -197,10 +197,16 @@ and crowding it. (2) Table: rows for players actually on the Opening Day 26
 (3) Staff WAR cell gained left padding so the two-line rate/contribution block
 doesn't crowd the `Auto` role select. (4) **Missing-glyph fix:** the phase-stepper
 used color-emoji icons (🎞️⚖️📄✍️🔒🌱) that don't render in the app's monospace
-font stack (they showed as missing-glyph boxes); replaced with step numbers 1-6
-(the label below each dot names the phase). Removed the decorative ❄ from the
-Offseason nav link, page title, and Settings toggle (same non-rendering issue, and
-it clashed with the terminal aesthetic). Full suite 1083 + 26 web smoke green.
+font stack (they showed as missing-glyph boxes). First swapped to step numbers
+1-6, then **restored proper per-phase icons as inline SVG** (`_PHASE_ICONS` in
+`web/app.py`, rendered `|safe` in `offseason.html`): line glyphs on a 24x24 box
+with `stroke="currentColor"` so each inherits the stepper dot's dim/done/current
+color — season-review bar chart, arbitration balance scale, options toggle, free-
+agency signing tag, Rule 5 shield, spring sprout. Inline SVG renders identically
+regardless of font (no missing-glyph boxes) while keeping the visual phase
+identity. Removed the decorative ❄ from the Offseason nav link, page title, and
+Settings toggle (same non-rendering issue, and it clashed with the terminal
+aesthetic). Full suite 1083 + 26 web smoke green.
 
 ---
 
