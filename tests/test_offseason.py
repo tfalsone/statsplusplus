@@ -1548,7 +1548,10 @@ def test_spring_lineup_cards_vs_each_hand(q):
     assert lu["R"] and lu["L"]
     for hand in ("R", "L"):
         for slot in lu[hand]:
-            assert set(slot) >= {"pos", "pid", "name", "bats", "ops", "is_platoon"}
+            assert set(slot) >= {"order", "pos", "pid", "name", "bats", "ops", "is_platoon"}
+        # Batting order is a valid 1..N permutation (manager-set 1-9).
+        orders = sorted(s["order"] for s in lu[hand])
+        assert orders == list(range(1, len(orders) + 1)), "order must be a 1..N permutation"
     # Default (no platoon configured) → same starter at each position in both.
     rmap = {s["pos"]: s["pid"] for s in lu["R"]}
     lmap = {s["pos"]: s["pid"] for s in lu["L"]}
@@ -1570,6 +1573,76 @@ def test_spring_lineup_cards_vs_each_hand(q):
     l1b = next(s for s in lu2["L"] if s["pos"] == "1B")
     assert r1b["pid"] == starter_1b and l1b["pid"] == partner
     assert r1b["is_platoon"] and l1b["is_platoon"]
+
+
+def _facet_hitter(pid, name, pos, bat_r, bat_l, bats="R", fld=2.0):
+    """A synthetic pool hitter dict carrying run-space `facets` with explicit
+    per-hand bat runs — so the auto-platoon decision (which reads the facets)
+    can be unit-tested without a full run-space calibration (absent in the
+    fixture DB). Mirrors the shape `_spring_pool` produces."""
+    anchor = {"runs_per_win": 9.5, "replacement_runs": 20.0}
+    return {
+        "player_id": pid, "name": name, "age": 27, "bucket": pos,
+        "level": "MLB", "is_pitcher": False, "bats": bats, "throws": "R",
+        "war_proj": (bat_r + bat_l) / 2.0 / 9.5 + 2.0, "composite": 55, "fv": 55,
+        "eligible": [pos, "DH"], "bats_hand": bats,
+        "ops_vs_r": 100 + (bat_r - bat_l), "ops_vs_l": 100 + (bat_l - bat_r),
+        "ovr_ops_plus": 100,
+        "facets": {
+            "bat": (bat_r + bat_l) / 2.0, "bat_R": bat_r, "bat_L": bat_l,
+            "br": 0.0, "fld": {pos: fld, "DH": 0.0}, "pos": {pos: 0.0, "DH": -17.0},
+            "rpw": 9.5, "anchor": anchor,
+        },
+        "slot_war": {pos: round(((bat_r * 0.71 + bat_l * 0.29) + fld + 20.0) / 9.5, 1),
+                     "DH": 0.0},
+    }
+
+
+def test_spring_auto_config_platoons_when_it_helps(q):
+    """The auto-26 auto-platoons a position when a rostered partner is clearly
+    better vs one hand than the everyday starter. A LF who rakes vs RHP but is
+    weak vs LHP, paired with a LF who crushes LHP, must produce a pa_alloc at LF
+    splitting them by hand. A position where one body is best vs both hands must
+    NOT be platooned. Unit-tested on a synthetic facet pool (the Phase-4 logic
+    reads the run-space facets, absent from the fixture DB)."""
+    # A full set of everyday starters (one strong body per position + DH) so
+    # Phase 1 fills the field; the LF is a lefty strong vs RHP but weak vs LHP.
+    pool = [
+        _facet_hitter(710, "C Guy", "C", 10.0, 9.0),
+        _facet_hitter(711, "1B Guy", "1B", 12.0, 11.0),
+        _facet_hitter(712, "2B Guy", "2B", 9.0, 8.0),
+        _facet_hitter(713, "3B Guy", "3B", 9.0, 8.0),
+        _facet_hitter(714, "SS Guy", "SS", 8.0, 7.0),
+        _facet_hitter(760, "Lefty Masher", "LF", bat_r=18.0, bat_l=-2.0, bats="L"),
+        _facet_hitter(716, "CF Guy", "CF", 12.0, 11.0),
+        _facet_hitter(717, "RF Guy", "RF", 10.0, 9.0),
+        _facet_hitter(718, "DH Guy", "DH", 11.0, 10.0),
+    ]
+    # Bench reserves — incl. the strong-vs-LHP LF platoon partner (761). Extra
+    # weak bats so 761 clearly makes a 4-man bench.
+    pool += [
+        _facet_hitter(761, "Southpaw Slayer", "LF", bat_r=-5.0, bat_l=16.0, bats="R"),
+        _facet_hitter(721, "Backup C", "C", 4.0, 3.0),
+        _facet_hitter(722, "Util", "2B", 3.0, 3.0),
+        _facet_hitter(723, "Util2", "3B", 2.0, 2.0),
+    ]
+    cfg = q._spring_auto_config(pool)
+    alloc = cfg.get("pa_alloc") or {}
+    lf = {int(k): v for k, v in (alloc.get("LF") or {}).items()}
+    assert 760 in lf and 761 in lf, f"LF should be a platoon, got {alloc}"
+    assert (lf[761].get("l", 0) or 0) > 0 and (lf[761].get("r", 0) or 0) == 0, \
+        "strong-vs-LHP partner takes the LHP wedge only"
+    assert (lf[760].get("r", 0) or 0) > 0 and (lf[760].get("l", 0) or 0) == 0, \
+        "strong-vs-RHP starter takes the RHP wedge only"
+    # CF has a single best-vs-both body → NOT platooned.
+    assert "CF" not in alloc, "a position with one best-vs-both body must not platoon"
+    # Fed through the projection, the Lineups view shows the LF platoon split.
+    contribs, constructed, _ = q._spring_contributions(pool, cfg)
+    lu = constructed["lineups"]
+    lf_r = next((s for s in lu["R"] if s["pos"] == "LF"), None)
+    lf_l = next((s for s in lu["L"] if s["pos"] == "LF"), None)
+    assert lf_r and lf_l and lf_r["pid"] == 760 and lf_l["pid"] == 761
+    assert lf_r["is_platoon"] and lf_l["is_platoon"]
 
 
 def test_spring_hitter_rows_carry_batting_hand(q):

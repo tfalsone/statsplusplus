@@ -151,12 +151,22 @@ effect applied in canonical order, so the moves sum exactly to the headline
 total. Season luck cancels between two configs, so the delta is precise; the
 ±`WIN_BAND_SD` band is a quiet context line. Five views render one shared config (Board / Decisions /
 Lineups / Field / Table, default Board), edited in place (patches header + active view,
-no full re-render). The **Lineups** view shows two projected starting lineups — vs RHP
-and vs LHP — derived from the PA pie (`_spring_lineup_cards` → `constructed.lineups`):
-per position, the starter vs each hand is whoever takes the most PA in that hand's
-wedge, so a platoon surfaces as different names in the two cards; each slot shows the
-starter's projected OPS+ vs that hand and the card header shows the L/R/S mix (batting
-order is not modeled — ≈0 WAR). Playing time is a derived PA "pie": a fixed slot budget (~658 PA, 467 vs
+no full re-render). The **Lineups** view shows two projected **1–9 batting orders** — vs RHP and vs
+LHP — derived from the PA pie (`_spring_lineup_cards` → `constructed.lineups`):
+per position the starter vs each hand is whoever takes the most PA in that hand's
+wedge (a platoon → different names in the two cards), and the nine starters are
+ordered 1–9 by vs-hand OPS+ into the highest-leverage batting slots (best bats at
+#1/#2/#4 per lineup research; the projection itself is order-independent). Each
+slot shows the batting number, player, position, batting-hand badge, and OPS+ vs
+that hand; the card header shows the L/R/S mix. The view doubles as a validation
+lens on the auto deployment. The **auto-config auto-platoons** (Phase 4 of
+`_spring_auto_config`): for each field/DH slot it checks whether splitting the
+slot — the best-vs-RHP rostered body on the ~71% RHP wedge, the best-vs-LHP body
+on the ~29% LHP wedge (hand-specific value via `_spring_slot_rate_war_hand`) —
+beats the everyday starter playing both hands by a worthwhile margin (~0.15 WAR),
+and if so writes a `pa_alloc` platoon (changing the projected record). Candidates
+are the slot's eligible rostered reserves; this is what corrects a lefty starter
+weak vs LHP being deployed against lefties. Playing time is a derived PA "pie": a fixed slot budget (~658 PA, 467 vs
 RHP / 191 vs LHP) filled by platoon assignment × realistic start-shares (backup
 catcher required), with per-player PA sliders, conservation (reallocating draws from
 other players), add/remove, and three-way splits. **Each slot's contribution is

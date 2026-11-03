@@ -1216,7 +1216,8 @@
   .sp-lu-body { padding:4px 0; }
   .sp-lu-row { display:flex; align-items:center; gap:8px; padding:4px 12px; }
   .sp-lu-row:not(:last-child) { border-bottom:1px solid rgba(255,255,255,0.04); }
-  .sp-lu-pos { width:30px; font-size:11px; color:var(--text-dim); text-transform:uppercase; }
+  .sp-lu-ord { width:20px; font-size:12px; font-weight:700; color:var(--text-dim); text-align:right; font-variant-numeric:tabular-nums; }
+  .sp-lu-pos { font-size:10px; color:var(--text-dim); border:1px solid var(--border); border-radius:3px; padding:0 4px; margin-left:4px; }
   .sp-lu-name { flex:1; }
   .sp-lu-ops { font-weight:700; font-variant-numeric:tabular-nums; min-width:34px; text-align:right; }
   .sp-lu-ops.pos { color:var(--green); } .sp-lu-ops.dim { color:var(--red); } .sp-lu-ops.mid { color:var(--text); }
@@ -2058,12 +2059,11 @@
       '<div class="sp-dgrid">'+(html || '<p class="empty">No contested spots — the roster is set.</p>')+'</div>';
   }
 
-  // ── LINEUPS (projected starters vs RHP / vs LHP) ──
-  // Two cards derived from the board's PA pie: who starts at each position
-  // against each hand. A platoon shows different names in the two cards; the
-  // slot's projected OPS+ vs that hand reads the strength. Batting ORDER is not
-  // modeled (≈0 WAR) — this is the OOTP vs-LHP/vs-RHP deployment card, by
-  // defensive position.
+  // ── LINEUPS (projected 1-9 batting order vs RHP / vs LHP) ──
+  // Two cards derived from the board's PA pie: the manager-set 1-9 batting order
+  // against each hand (best vs-hand bats at the high-leverage slots). A platoon
+  // shows a different name in the two cards; OPS+ vs that hand reads the
+  // strength. This is the validation lens on the auto deployment.
   function renderLineups() {
     var lu = (state.constructed && state.constructed.lineups) || {R:[], L:[]};
     function opsCls(v){ return v==null ? 'mid' : (v>=115?'pos':(v<90?'dim':'mid')); }
@@ -2073,8 +2073,8 @@
         var plat = r.is_platoon ? ' <span class="sp-plat-on" title="platoon slot — a different starter vs the other hand">PLATOON</span>' : '';
         var ops = (r.ops!=null) ? r.ops : '—';
         return '<div class="sp-lu-row">'
-             + '<span class="sp-lu-pos">'+r.pos+'</span>'
-             + '<span class="sp-lu-name">'+esc(r.name)+batsBadge(r.bats)+plat+'</span>'
+             + '<span class="sp-lu-ord">'+(r.order||'')+'</span>'
+             + '<span class="sp-lu-name">'+esc(r.name)+' <span class="sp-lu-pos">'+r.pos+'</span>'+batsBadge(r.bats)+plat+'</span>'
              + '<span class="sp-lu-ops '+opsCls(r.ops)+'" title="projected OPS+ vs '+hand+'HP">'+ops+'</span>'
              + '</div>';
       }).join('') : '<div class="sp-lu-row"><span class="empty">No lineup set.</span></div>';
@@ -2088,9 +2088,10 @@
     }
     document.getElementById('sv-lineups').innerHTML =
         '<div class="sp-lu-grid">' + card('R', lu.R) + card('L', lu.L) + '</div>'
-      + '<div class="sp-fieldnote">Projected STARTERS by position vs each opponent hand, '
-      + 'from your playing-time pie — a platoon shows a different name in each card. '
-      + 'Batting order isn’t modeled (≈0 WAR). OPS+ is the starter’s projection vs that hand.</div>';
+      + '<div class="sp-fieldnote">Projected 1–9 batting order vs each opponent hand, '
+      + 'from your playing-time pie — a PLATOON slot shows a different name in each card. '
+      + 'Order puts the best vs-hand bats in the high-leverage slots (projection is order-independent). '
+      + 'OPS+ is the starter’s projection vs that hand.</div>';
   }
 
   // ── FIELD (proper baseball diamond — depth-chart parity) ──

@@ -2275,8 +2275,69 @@ def _spring_auto_config(pool, out_of_options=None):
             else:
                 must_expose.append(pid)
 
-    return {"lineup": lineup, "bench": bench, "rotation": rotation,
-            "bullpen": bullpen, "_must_expose": must_expose}
+    # Phase 4 — auto-platoon. The everyday starter chosen above is the best
+    # OVERALL body, but a different rostered hitter may be clearly better vs ONE
+    # hand (e.g. a lefty starter is weak vs LHP). For each field/DH slot, check
+    # whether splitting the slot — the best-vs-RHP body on the ~71% RHP wedge and
+    # the best-vs-LHP body on the ~29% LHP wedge — beats the starter playing both
+    # hands. When it does by a worthwhile margin, write a `pa_alloc` platoon.
+    # Candidates are the slot's eligible, currently-rostered hitters (starter +
+    # bench reserves that can play there) — we never conjure a body or move a
+    # different position's starter. This is what makes the auto-26 actually
+    # platoon (and changes the projected record), validated by the Lineups view.
+    pa_alloc = {}
+    rostered_hitters = set(lineup.values()) | set(bench)
+
+    def _best_vs(pos, hand, candidate_ids):
+        best, best_v = None, float("-inf")
+        for pid in candidate_ids:
+            p = by_id.get(pid)
+            if not p or not _spring_viable_at(p, pos):
+                continue
+            v = _spring_slot_rate_war_hand(p, pos, hand)
+            if v > best_v:
+                best, best_v = pid, v
+        return best, best_v
+
+    for pos in _SPRING_FIELD + ["DH"]:
+        starter = lineup.get(pos)
+        if not starter:
+            continue
+        # Eligible platoon candidates: the starter + any rostered reserve who can
+        # play this slot and isn't an everyday starter elsewhere (so we don't
+        # strip another position). DH accepts any rostered bat.
+        cands = {starter}
+        for pid in bench:
+            p = by_id.get(pid)
+            if p and (pos == "DH" or _spring_viable_at(p, pos)):
+                cands.add(pid)
+        if len(cands) < 2:
+            continue
+        bestR, vR = _best_vs(pos, "R", cands)
+        bestL, vL = _best_vs(pos, "L", cands)
+        if not bestR or not bestL or bestR == bestL:
+            continue  # same body best vs both hands — no platoon
+        # Combined value of the platoon vs the incumbent starter playing both.
+        platoon_val = _SPRING_VS_RHP_FREQ * vR + _SPRING_VS_LHP_FREQ * vL
+        solo_val = (_SPRING_VS_RHP_FREQ * _spring_slot_rate_war_hand(by_id[starter], pos, "R")
+                    + _SPRING_VS_LHP_FREQ * _spring_slot_rate_war_hand(by_id[starter], pos, "L"))
+        # Only platoon when it clears a worthwhile WAR margin (avoid churn on
+        # noise). ~0.15 WAR over a season is a real, actionable edge.
+        if platoon_val - solo_val < 0.15:
+            continue
+        # Deploy each body on his hand's wedge. Keep the overall starter as the
+        # lineup[pos] "primary" (the better-overall of the two) for display.
+        lineup[pos] = bestR if _spring_slot_rate_war(by_id[bestR], pos) >= _spring_slot_rate_war(by_id[bestL], pos) else bestL
+        pa_alloc[pos] = {
+            bestR: {"r": _SPRING_PA_VS_RHP, "l": 0},
+            bestL: {"r": 0, "l": _SPRING_PA_VS_LHP},
+        }
+
+    out = {"lineup": lineup, "bench": bench, "rotation": rotation,
+           "bullpen": bullpen, "_must_expose": must_expose}
+    if pa_alloc:
+        out["pa_alloc"] = pa_alloc
+    return out
 
 
 # Map a lineup SLOT to its positional-adjustment key. Field corners (LF/RF)
@@ -2315,6 +2376,24 @@ def _spring_slot_rate_war(player, slot):
     if not f:
         return _spring_slot_war(player, slot)
     bat = f["bat_R"] * _SPRING_VS_RHP_FREQ + f["bat_L"] * _SPRING_VS_LHP_FREQ
+    runs = bat + f["br"] + f["fld"].get(slot, 0.0) + f["pos"].get(slot, 0.0)
+    rpw = f["rpw"] or 9.5
+    repl = (f["anchor"] or {}).get("replacement_runs", 20.0)
+    return (runs + repl) / rpw if rpw else 0.0
+
+
+def _spring_slot_rate_war_hand(player, slot, hand):
+    """Full-season RATE WAR for a hitter AT ``slot`` FACING a specific hand
+    ('R' or 'L') — the vs-hand bat facet + baserunning + fielding + positional
+    adj. This is the selection primitive for hand-aware lineup construction:
+    a lefty weak vs LHP scores low here vs 'L' even if his overall rate is fine,
+    so the best-vs-LHP player at a position can differ from the best overall.
+    Falls back to the hand-blended rate (then the scalar) when facets are
+    unavailable."""
+    f = player.get("facets")
+    if not f:
+        return _spring_slot_rate_war(player, slot)
+    bat = f["bat_L"] if hand == "L" else f["bat_R"]
     runs = bat + f["br"] + f["fld"].get(slot, 0.0) + f["pos"].get(slot, 0.0)
     rpw = f["rpw"] or 9.5
     repl = (f["anchor"] or {}).get("replacement_runs", 20.0)
@@ -2918,55 +2997,68 @@ def _spring_contributions(pool, config, staff_ip=None):
 _SPRING_LINEUP_ORDER = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"]
 
 
+# Batting-order assignment sequence: the best vs-hand bats go to the highest-
+# LEVERAGE lineup spots, not strictly 1→9. Modern lineup research (The Book)
+# puts the three best hitters at #1, #2, #4 (the #2 and #4 spots see the most
+# high-leverage PA), then #3, #5, and the rest descending. So we sort the nine
+# starters by vs-hand OPS+ and drop them into order slots in THIS priority:
+_SPRING_ORDER_PRIORITY = [2, 1, 4, 3, 5, 6, 7, 8, 9]
+
+
 def _spring_lineup_cards(constructed_lineup, by_id):
-    """Projected starting lineup vs RHP and vs LHP, derived from the board's
-    per-position PA pie (no new decisions — a VIEW of the deployment already set).
+    """Projected 1–9 batting lineup vs RHP and vs LHP — the lineup a manager
+    would actually set, derived from the board's per-position PA pie.
 
-    For each field position + DH and each opponent hand, the starter is the
-    player taking the most PA in THAT hand's wedge (`pa_r` / `pa_l`). A platoon
-    surfaces here as different names in the two cards (the strong-side bat vs the
-    hand he mashes, his partner vs the other). Returns::
+    For each field position + DH and each opponent hand, the starter vs that hand
+    is whoever takes the most PA in that hand's wedge (`pa_r` / `pa_l`) — so a
+    platoon surfaces as different names in the two cards. The nine starters are
+    then ORDERED 1–9 by vs-hand OPS+ into the highest-leverage batting slots
+    (best bats at #1/#2/#4 per lineup research), giving a real manager-set order
+    rather than a position list. Returns::
 
-        {"R": [{pos, pid, name, bats, ops, is_platoon}, ...],   # vs RHP
-         "L": [ ... ]}                                           # vs LHP
+        {"R": [{order, pos, pid, name, bats, ops, is_platoon}, ...],  # vs RHP, batting 1-9
+         "L": [ ... ]}                                                 # vs LHP
 
-    `ops` is the player's projected OPS+ vs that hand (from his split stats);
-    `is_platoon` marks a slot whose vs-R and vs-L starters differ. Positions with
-    no rostered starter are omitted (an incomplete lineup simply shows fewer
-    slots). Pure — reads only the constructed lineup + pool dicts.
+    `order` is the 1–9 batting slot; `ops` the starter's projected OPS+ vs that
+    hand; `is_platoon` marks a slot whose vs-R and vs-L starters differ. Pure.
     """
-    cards = {"R": [], "L": []}
-    for pos in _SPRING_LINEUP_ORDER:
-        entry = constructed_lineup.get(pos)
-        if not entry:
-            continue
-        rows = entry.get("players", []) or []
-        if not rows:
-            continue
-        # Who starts vs each hand = most PA in that hand's wedge (ties → the
-        # higher-PA overall row, which is rows[0] by construction).
-        def _starter(handkey):
+    def _hand_lineup(handkey, opskey):
+        starters = []
+        for pos in _SPRING_LINEUP_ORDER:
+            entry = constructed_lineup.get(pos)
+            rows = (entry or {}).get("players", []) or []
             cand = [r for r in rows if (r.get(handkey, 0) or 0) > 0]
             if not cand:
-                return None
-            return max(cand, key=lambda r: (r.get(handkey, 0) or 0))
-        vsR = _starter("pa_r")
-        vsL = _starter("pa_l")
-        platoon = bool(vsR and vsL and vsR["pid"] != vsL["pid"])
-        for hand, starter in (("R", vsR), ("L", vsL)):
-            if not starter:
                 continue
+            starter = max(cand, key=lambda r: (r.get(handkey, 0) or 0))
             p = by_id.get(starter["pid"], {})
             st = p.get("stats") or {}
-            ops = st.get("ops_vs_r") if hand == "R" else st.get("ops_vs_l")
-            cards[hand].append({
+            ops = st.get(opskey)
+            starters.append({
                 "pos": pos, "pid": starter["pid"],
                 "name": p.get("name", starter.get("name")),
                 "bats": p.get("bats"),
                 "ops": round(ops) if ops is not None else None,
-                "is_platoon": platoon,
+                "_ops_sort": ops if ops is not None else 100,
             })
-    return cards
+        # Order 1–9: best vs-hand OPS+ → highest-leverage slot.
+        starters.sort(key=lambda s: -s["_ops_sort"])
+        for i, s in enumerate(starters):
+            s["order"] = _SPRING_ORDER_PRIORITY[i] if i < len(_SPRING_ORDER_PRIORITY) else i + 1
+            del s["_ops_sort"]
+        starters.sort(key=lambda s: s["order"])
+        return starters
+
+    cardsR = _hand_lineup("pa_r", "ops_vs_r")
+    cardsL = _hand_lineup("pa_l", "ops_vs_l")
+    # Flag platoon slots (a position whose vs-R and vs-L starter differ).
+    byposR = {s["pos"]: s["pid"] for s in cardsR}
+    byposL = {s["pos"]: s["pid"] for s in cardsL}
+    for s in cardsR:
+        s["is_platoon"] = byposL.get(s["pos"]) not in (None, s["pid"])
+    for s in cardsL:
+        s["is_platoon"] = byposR.get(s["pos"]) not in (None, s["pid"])
+    return {"R": cardsR, "L": cardsL}
 
 
 def _spring_league_mean_war(conn, ed, cfg, pyth_exp):
