@@ -38,13 +38,19 @@ from statsplusplus.evaluation.constants import DEFENSIVE_WEIGHTS, OVR_TO_WAR_DEF
 # from the CLI (where the active league resolves fine), but the module is now
 # also imported at request time (derive_projection_calibration), so import must
 # have no global-league side effect.
-_scale_cache = None
+_cfg_cache = None
+
+def _league_cfg():
+    """The active-league LeagueConfig, resolved LAZILY and cached. Must not be
+    built at import (see _ratings_scale note). Used only by the CLI calibrate
+    path (single league per process), so the process-level cache is safe."""
+    global _cfg_cache
+    if _cfg_cache is None:
+        _cfg_cache = LeagueConfig()
+    return _cfg_cache
 
 def _ratings_scale():
-    global _scale_cache
-    if _scale_cache is None:
-        _scale_cache = LeagueConfig().ratings_scale
-    return _scale_cache
+    return _league_cfg().ratings_scale
 
 def norm(val):
     return _norm_pkg(val, _ratings_scale())
@@ -1391,7 +1397,7 @@ def _calibrate_arb_pct(conn, game_year, dpw):
         JOIN latest_ratings r ON r.player_id = p.player_id
         WHERE c.years = 1 AND c.salary_0 > ? AND c.salary_0 < 20000000
           AND p.age < 30 AND p.level = 1 AND {_cl}
-    """, (_cfg.minimum_salary, *_pr)).fetchall()
+    """, (_league_cfg().minimum_salary, *_pr)).fetchall()
 
     arb_data = defaultdict(list)
     for r in rows:
@@ -1463,7 +1469,7 @@ def _calibrate_arb_salary_model(conn, game_year, dpw):
     import math
     import statistics
 
-    min_sal = _cfg.minimum_salary
+    min_sal = _league_cfg().minimum_salary
 
     # Gather 1-year contract players with career WAR data
     from statsplusplus.data.db import primary_league_predicate
@@ -1951,7 +1957,7 @@ def calibrate(dry_run=False):
         avgs = json.load(f)
     dpw = avgs.get("dollar_per_war", DEFAULT_DOLLARS_PER_WAR)
 
-    role_map = {str(k): v for k, v in _cfg.role_map.items()}
+    role_map = {str(k): v for k, v in _league_cfg().role_map.items()}
 
     print(f"Calibrating model weights for game date {game_date}")
     print(f"  Using {CALIBRATION_YEARS} years of data ({game_year - CALIBRATION_YEARS}-{game_year - 1})")
@@ -2068,7 +2074,7 @@ def calibrate(dry_run=False):
 
     # Step 3b: Perpetual arb salary model (only for perpetual arb leagues)
     arb_salary_model = None
-    if _cfg.perpetual_arb:
+    if _league_cfg().perpetual_arb:
         print("\n=== ARB_SALARY_MODEL (perpetual arb) ===")
         arb_salary_model = _calibrate_arb_salary_model(conn, game_year, dpw)
         if arb_salary_model:
