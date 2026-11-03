@@ -46,6 +46,15 @@ left-handed bats), alongside the existing backup-catcher and over-allocation
 warnings. Test: `test_spring_bullpen_handedness_warning` (lefty present → quiet;
 all-right pen → warns). Full suite 1089 + 26 web smoke green.
 
+**Spring batter handedness badges.** `bats` (L/R/S from `latest_ratings`) is now
+carried on every pool hitter, lineup starter, and bench reserve and shown as an
+RHB/LHB/SHB badge on the Board lineup rows, the swap candidate pool, the bench
+chips, the Field cards, and the Table (lefties and switch-hitters highlighted) —
+so a GM can read lineup balance at a glance (e.g. spot a heavily right-handed
+lineup vs a tough RHP). Complements the pitcher RHP/LHP badges (distinct hue:
+blue bats vs orange throws). Test: `test_spring_hitter_rows_carry_batting_hand`.
+Full suite 1090 + 26 web smoke green.
+
 **Spring roster valued facet-by-facet in run space (fixes the out-of-position
 platoon-bat bug).** The spring allocator previously valued every hitter off the
 pre-bundled scalar `war_proj`, swapping the positional adjustment for the slot

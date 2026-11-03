@@ -1942,7 +1942,7 @@ def _spring_pool(conn, team_id, ed):
                r.pow_l, r.pow_r, r.eye_l, r.eye_r,
                r.c, r.ss, r.second_b, r.third_b, r.first_b, r.lf, r.cf, r.rf,
                r.ifr, r.ife, r.ifa, r.tdp, r.ofr, r.ofe, r.ofa,
-               r.c_frm, r.c_blk, r.c_arm, r.throws,
+               r.c_frm, r.c_blk, r.c_arm, r.throws, r.bats,
                r.defensive_value, r.baserunning_value, r.proj_woba
         FROM player_evaluation pe
         JOIN players p ON pe.player_id = p.player_id
@@ -1971,6 +1971,7 @@ def _spring_pool(conn, team_id, ed):
             "level_discount": LEVEL_DISCOUNT.get(lvl, 0.1),
             "speed": r["speed"] or 50,
             "throws": r["throws"],   # 'L' / 'R' — drives the LHP/RHP display + bullpen handedness check
+            "bats": r["bats"],       # 'L' / 'R' / 'S' — batter handedness badge (lineup balance)
         }
         if not is_pitcher:
             # Guard against players with no offensive ratings (LEFT JOIN NULLs /
@@ -2620,7 +2621,7 @@ def _spring_contributions(pool, config, staff_ip=None):
         return {
             "pid": pid, "name": by_id[pid]["name"],
             "war": round(_spring_slot_rate_war(by_id[pid], pos), 1),
-            "level": by_id[pid]["level"],
+            "level": by_id[pid]["level"], "bats": by_id[pid].get("bats"),
             "pt_pct": round(share * 100), "role": label,
             "pa_r": pa_r, "pa_l": pa_l, "pa": pa_r + pa_l,
             "stats": _st, "contrib_war": war,
@@ -2639,7 +2640,7 @@ def _spring_contributions(pool, config, staff_ip=None):
         pa = (pa_r or 0) + (pa_l or 0)
         return {
             "pid": pid, "name": by_id[pid]["name"], "war": round(rate, 1),
-            "level": by_id[pid]["level"],
+            "level": by_id[pid]["level"], "bats": by_id[pid].get("bats"),
             "pt_pct": round(pa / _SPRING_SLOT_PA * 100), "role": label,
             "pa_r": round(pa_r or 0), "pa_l": round(pa_l or 0), "pa": round(pa),
             "stats": _st, "contrib_war": war,
@@ -2885,7 +2886,7 @@ def _spring_contributions(pool, config, staff_ip=None):
     for pid in bench_pids:
         agg = hitter_pie.get(pid)
         bench_view.append({
-            "pid": pid, "name": by_id[pid]["name"],
+            "pid": pid, "name": by_id[pid]["name"], "bats": by_id[pid].get("bats"),
             "war": round(by_id[pid]["war_proj"], 1),       # full-season RATE (primary)
             "contrib_war": round(agg["contrib_war"], 1) if agg else 0.0,
             "pie_pa": agg["pa"] if agg else 0,

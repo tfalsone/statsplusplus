@@ -206,10 +206,13 @@ explicit 26:** the auto-config fills a full 8-man bullpen (ranked by RP-role
 value), the bench fills to 4, and the 26th spot is a GM choice between a 5th bench
 bat ("+ add reserve") and an 8th arm ("+ add arm", `springAddArm`); a `N / 26`
 count readout in the header (green at 26, amber under, red over) shows the roster
-size. **Pitcher handedness** (`throws` from `latest_ratings`) shows as an
-RHP/LHP badge on every staff row, candidate, and add-arm option (lefties
-highlighted); a bullpen with NO left-hander raises a `no_lhp_reliever` warning
-(a pen usually carries at least one lefty specialist). Plans persist per team in
+size. **Handedness badges** (from `latest_ratings`): pitchers show an RHP/LHP badge
+(`throws`) on every staff row, candidate, and add-arm option (lefties
+highlighted), and a bullpen with NO left-hander raises a `no_lhp_reliever`
+warning (a pen usually carries at least one lefty specialist); hitters show an
+RHB/LHB/SHB badge (`bats`, switch = S) on lineup starters, bench reserves, the
+swap pool, the Field cards, and the Table, with lefties/switch-hitters
+highlighted for at-a-glance lineup-balance reading. Plans persist per team in
 `config/spring_plans.json`. Endpoints: `/api/spring-plan`
 (GET/POST/DELETE), `/api/spring-project` (POST). The pool's wOBA stat surfaces the
 exact stored model projection (`ratings.proj_woba`, written by the evaluation engine

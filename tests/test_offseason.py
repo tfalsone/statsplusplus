@@ -652,10 +652,14 @@ def _seed_spring_pool(conn):
             "parent_team_id, level, pos, role, is_on_secondary) "
             "VALUES (?,?,?,?,?,?,?,?,?)",
             (pid, name, 27, TEAM_ID, 0, lvl, 7, 0, 1))
+        # Mix batting hands so lineup-balance display has something to show:
+        # the left-side 1B (711) and the DH-type bat (718) hit left, SS (714)
+        # switches, everyone else right.
+        _b = "L" if pid in (711, 718) else ("S" if pid == 714 else "R")
         conn.execute(
             f"INSERT OR REPLACE INTO ratings (player_id, snapshot_date, league_id, "
-            f"cntct, gap, pow, eye, speed, {fld}) VALUES (?,?,?,?,?,?,?,?,?)",
-            (pid, "2033-06-01", 1, 50, 50, 50, 50, 50, rating))
+            f"cntct, gap, pow, eye, speed, bats, {fld}) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (pid, "2033-06-01", 1, 50, 50, 50, 50, 50, _b, rating))
     for pid, name, bkt, lvl, pw in arms:
         conn.execute(
             "INSERT OR REPLACE INTO player_evaluation (player_id, eval_date, name, "
@@ -1530,6 +1534,26 @@ def test_spring_staff_ip_covers_a_real_season(q):
     assert 1200 <= total <= 1650, f"staff IP {total} should cover a real season"
     # The bullpen is a meaningful share of the innings (real pens throw ~40%).
     assert rp_ip >= 350, f"bullpen IP {rp_ip} too low for a full season"
+
+
+def test_spring_hitter_rows_carry_batting_hand(q):
+    """Lineup starters, bench reserves, and pool hitters carry `bats` (L/R/S)
+    for the lineup-balance handedness badge."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    # Pool hitters carry bats (L/R/S, or None when the rating is unset).
+    hitters = [p for p in res["pool"] if not p["is_pitcher"]]
+    assert hitters and all(h.get("bats") in ("L", "R", "S", None) for h in hitters)
+    # At least the seeded 710-series hitters have a real batting hand.
+    seeded = [h for h in hitters if h["player_id"] in range(710, 723)]
+    assert seeded and all(h["bats"] in ("L", "R", "S") for h in seeded)
+    # Lineup starter rows carry bats.
+    for entry in res["constructed"]["lineup"].values():
+        for r in entry.get("players", []):
+            assert r.get("bats") in ("L", "R", "S", None)
+    # The fixture seeds a known mix (711 L, 714 S, 718 L) — confirm it surfaces.
+    byid = {p["player_id"]: p for p in res["pool"]}
+    assert byid[711]["bats"] == "L" and byid[714]["bats"] == "S"
 
 
 def test_spring_bullpen_handedness_warning(q):

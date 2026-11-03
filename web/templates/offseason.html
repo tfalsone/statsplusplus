@@ -1200,6 +1200,9 @@
   /* pitcher throwing hand: RHP muted, LHP highlighted (the scarce, roster-shaping one) */
   .sp-throws { font-size:9px; color:var(--text-dim); border:1px solid var(--border); border-radius:3px; padding:0 3px; margin-left:4px; }
   .sp-throws-l { color:#c08457; border-color:#c08457; }
+  /* batter handedness: RHB muted, LHB/switch highlighted (lineup-balance read) */
+  .sp-bats { font-size:9px; color:var(--text-dim); border:1px solid var(--border); border-radius:3px; padding:0 3px; margin-left:4px; }
+  .sp-bats-l { color:#5a9bd4; border-color:#5a9bd4; }
   /* suggest-platoon callout inside a position panel (literal gold, pie palette) */
   .sp-sugg { margin:6px 0 2px 42px; border-left:2px solid #e0b64e; padding:4px 8px; background:rgba(224,182,78,0.08); border-radius:0 4px 4px 0; }
   .sp-sugg-lab { font-size:10px; color:#e0b64e; text-transform:uppercase; letter-spacing:.03em; }
@@ -1792,6 +1795,15 @@
     var cls = t === 'L' ? 'sp-throws sp-throws-l' : 'sp-throws';
     return ' <span class="'+cls+'" title="throws '+(t==='L'?'left':'right')+'">'+t+'HP</span>';
   }
+  // Batter handedness: 'L' / 'R' / 'S' (switch). Lefty + switch highlighted —
+  // they're what a lineup wants against a RHP-heavy league and vs a tough LHP.
+  // Drives at-a-glance lineup-balance reading.
+  function batsBadge(b){
+    if (b !== 'L' && b !== 'R' && b !== 'S') return '';
+    var title = b === 'S' ? 'switch-hitter' : ('bats ' + (b === 'L' ? 'left' : 'right'));
+    var cls = (b === 'L' || b === 'S') ? 'sp-bats sp-bats-l' : 'sp-bats';
+    return ' <span class="'+cls+'" title="'+title+'">'+b+'HB</span>';
+  }
 
   // Pitchers eligible for a staff group ('SP' or 'RP'), not already in it.
   function pitchersFor(group){
@@ -1914,7 +1926,7 @@
       var pool = '<div class="sp-candpool">' + (elig.length ? elig.map(function (c) {
           var tag = contestedIds[c.player_id] ? ' <span class="sp-mini">in the mix</span>' : '';
           return '<div class="sp-cand" onclick="springSwap(\''+pos+'\','+c.player_id+')">'
-               + '<span>'+esc(c.name)+lvlTag(c.level)+tag+platoonBadge(c)+'</span>'
+               + '<span>'+esc(c.name)+batsBadge(c.bats)+lvlTag(c.level)+tag+platoonBadge(c)+'</span>'
                + '<span class="sp-war '+warclsAt(c,pos)+'">'+poolHitValAt(c,pos)+'</span></div>';
         }).join('') : '<div class="sp-cand" style="cursor:default">no eligible alternatives</div>') + '</div>';
       var tierSel = p ? hitterTierSelect(p.pid) : '';
@@ -1927,7 +1939,7 @@
       var expand = '<div class="sp-expand">' + pool
                  + (p ? platoonPanel(pos) : '') + '</div>';
       return '<div><div class="sp-row" onclick="springToggleRow(this)"><span class="sp-pos">'+pos+'</span>'
-           + '<span class="sp-name">'+(p?esc(p.name):'—')+lvlTag(p&&p.level)+util+hot+warn+platBadge+'</span>'
+           + '<span class="sp-name">'+(p?esc(p.name):'—')+(p?batsBadge(p.bats):'')+lvlTag(p&&p.level)+util+hot+warn+platBadge+'</span>'
            + tierSel
            + '<span class="sp-war '+(p?hitCls(p):'')+'">'+(p?hitVal(p):'')+'</span></div>'
            + expand + '</div>';
@@ -1983,7 +1995,7 @@
       var contrib = (b.in_pie && b.in_pie.length)
         ? ' <span class="sp-bench-sub">'+b.contrib_war.toFixed(1)+' proj</span>'
         : ' <span class="sp-bench-sub">rate</span>';
-      return '<span class="sp-benchchip">'+esc(b.name)+' <b>'+b.war.toFixed(1)+'</b>'+contrib
+      return '<span class="sp-benchchip">'+esc(b.name)+batsBadge(b.bats)+' <b>'+b.war.toFixed(1)+'</b>'+contrib
            + utilBadge(b.pid) + inPie
            + '<button class="sp-drop" onclick="springDrop('+b.pid+')" title="remove from 26">✕</button></span>';
     }).join(' ');
@@ -2060,7 +2072,7 @@
       var rows = players.length ? players.map(function (pl, i) {
           var warn = (pos!=='DH' && !isEligible(pl.pid,pos)) ? ' <span class="sp-warn">⚠</span>' : '';
           var cls = 'sp-fp' + (i===0?' starter':' backup');
-          return '<div class="'+cls+'"><span class="sp-fp-name">'+esc(shortName(pl.name))+lvlTag(pl.level)+warn+'</span>'
+          return '<div class="'+cls+'"><span class="sp-fp-name">'+esc(shortName(pl.name))+batsBadge(pl.bats)+lvlTag(pl.level)+warn+'</span>'
                + '<span class="sp-war '+(hitStat==='war'?warcls(pl.war):'mid')+'">'+hitVal(pl)+'</span>'
                + '<span class="sp-fp-pt">'+(pl.pt_pct||0)+'%</span></div>';
         }).join('') : '<div class="sp-fp sp-empty">— empty —</div>';
@@ -2136,7 +2148,7 @@
       var on26tag = rostered ? ' <span class="sp-on26" title="on the Opening Day 26">26</span>' : '';
       return '<tr'+(rostered?' class="sp-trostered"':'')
            + ' data-sort-value="'+(rostered?1:0)+'">'
-           + '<td>'+esc(p.name)+platoonBadge(p)+on26tag+'</td><td>'+p.bucket+'</td><td>'+p.level+'</td>'
+           + '<td>'+esc(p.name)+(p.is_pitcher?throwsBadge(p.throws):batsBadge(p.bats))+platoonBadge(p)+on26tag+'</td><td>'+p.bucket+'</td><td>'+p.level+'</td>'
            + '<td class="sp-war '+warcls(p.war_proj)+'">'+p.war_proj.toFixed(1)+'</td>'
            + '<td data-sort-value="'+(s[projKey]!=null?s[projKey]:-999)+'">'+projVal+'</td>'
            + '<td>'+(p.fv||'')+'</td><td>'+(p.age||'')+'</td>'
