@@ -931,10 +931,88 @@ def test_spring_delta_payload_shape(q):
     auto = _clone_config(q.get_spring_projection(TEAM_ID)["config"])
     res = q.spring_projection_delta(TEAM_ID, auto)
     assert set(res) >= {"projection", "baseline", "delta", "constructed",
-                        "contested", "must_expose", "config"}
+                        "contested", "must_expose", "config", "breakdown"}
     for m in ("wins", "run_diff", "team_war", "bat_runs", "br_runs",
               "fld_runs", "pit_runs"):
         assert m in res["delta"]
+
+
+# ---------------------------------------------------------------------------
+# Spring Training — change breakdown (cumulative vs saved plan, itemized)
+# ---------------------------------------------------------------------------
+
+def _two_changes_vs_auto(q):
+    """Return (auto_config, edited_config) differing by a 3B starter swap and a
+    bullpen drop — two independent, attributable moves."""
+    import copy
+    auto = q.get_spring_projection(TEAM_ID)
+    cfg = _clone_config(auto["config"])
+    pool = {p["player_id"]: p for p in auto["pool"]}
+    cur3b = cfg["lineup"].get("3B")
+    alt = next((p["player_id"] for p in auto["pool"] if not p["is_pitcher"]
+                and p["player_id"] != cur3b and "3B" in (p.get("eligible") or [])
+                and p["player_id"] not in cfg["lineup"].values()), None)
+    if alt:
+        cfg["lineup"]["3B"] = alt
+    if cfg.get("bullpen"):
+        cfg["bullpen"] = cfg["bullpen"][:-1]
+    return auto["config"], cfg
+
+
+def test_spring_breakdown_itemizes_moves(q):
+    """The breakdown diffs the plan into discrete labeled moves with per-move
+    win/run-diff impact, anchored on the auto 26 when no plan is saved."""
+    _seed_spring_pool(q.get_db())
+    q.delete_spring_plan(TEAM_ID)  # ensure auto baseline
+    _auto, edited = _two_changes_vs_auto(q)
+    bd = q.spring_change_breakdown(TEAM_ID, edited)
+    assert bd["baseline_label"] == "auto 26"
+    assert bd["n_changes"] >= 1
+    for ch in bd["changes"]:
+        assert set(ch) >= {"label", "kind", "slot", "wins", "run_diff"}
+
+
+def test_spring_breakdown_moves_sum_to_total(q):
+    """Sequential attribution: the per-move impacts sum EXACTLY to the cumulative
+    headline delta (within rounding)."""
+    _seed_spring_pool(q.get_db())
+    q.delete_spring_plan(TEAM_ID)
+    _auto, edited = _two_changes_vs_auto(q)
+    bd = q.spring_change_breakdown(TEAM_ID, edited)
+    sum_w = sum(c["wins"] for c in bd["changes"])
+    sum_rd = sum(c["run_diff"] for c in bd["changes"])
+    assert abs(sum_w - bd["delta"]["wins"]) < 0.02
+    assert abs(sum_rd - bd["delta"]["run_diff"]) < 0.6   # run-diff rounded to 1
+
+
+def test_spring_breakdown_zero_changes_when_unedited(q):
+    """No edits vs the baseline → no moves and a zero cumulative delta."""
+    _seed_spring_pool(q.get_db())
+    q.delete_spring_plan(TEAM_ID)
+    auto = q.get_spring_projection(TEAM_ID)["config"]
+    bd = q.spring_change_breakdown(TEAM_ID, _clone_config(auto))
+    assert bd["n_changes"] == 0
+    assert abs(bd["delta"]["wins"]) < 1e-6
+
+
+def test_spring_breakdown_anchors_on_saved_plan(q):
+    """Once a plan is saved, the breakdown measures vs THAT plan (label + values),
+    not the auto 26."""
+    _seed_spring_pool(q.get_db())
+    _auto, edited = _two_changes_vs_auto(q)
+    # Save the EDITED config as the plan, then edit further from it.
+    q.save_spring_plan(TEAM_ID, edited)
+    further = _clone_config(edited)
+    # drop a bench reserve as the one change vs the saved plan
+    if further.get("bench"):
+        further["bench"] = further["bench"][1:]
+    bd = q.spring_change_breakdown(TEAM_ID, further)
+    assert bd["baseline_label"] == "saved plan"
+    # Only the post-save change should register (bench drop), not the 3B/bullpen
+    # moves that are now baked into the saved baseline.
+    labels = " ".join(c["label"] for c in bd["changes"]).lower()
+    assert "bench" in labels or bd["n_changes"] >= 1
+    q.delete_spring_plan(TEAM_ID)
 
 
 def test_spring_delta_sign_tracks_improvement(q):

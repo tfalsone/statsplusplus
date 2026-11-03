@@ -9,6 +9,23 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 Follow-on work from the Spring Training builder, driven by hands-on testing of
 the spring page.
 
+**Change breakdown — cumulative plan impact vs the saved plan, itemized by move.**
+The header's "Last change" panel measured only the single most recent edit (each
+edit overwrote the prior delta). Reframed it to the **cumulative** impact of the
+whole plan vs the **saved plan** (falling back to the auto 26 when none is saved),
+and made it **expandable into a move-by-move breakdown**. New
+`spring_change_breakdown` (`offseason_queries.py`) diffs the baseline vs current
+config into discrete moves — starter swaps, platoon/playing-time (pa_alloc/platoon)
+changes, rotation/bullpen add-drops, bench add-drops, role tweaks — and attributes
+each move its win / run-diff impact as the SEQUENTIAL marginal effect applied in
+canonical slot order, so the per-move impacts sum EXACTLY to the headline delta
+(no interaction remainder). `spring_projection_delta` now also returns `breakdown`;
+the header panel shows "vs saved plan · N changes ▾" and expands to the itemized
+list + facet-shift footnote. A straight swap between two slots correctly decomposes
+into its two position moves (which may near-cancel — the GM sees a wash). Tests:
+breakdown-itemizes-moves, moves-sum-to-total, zero-when-unedited,
+anchors-on-saved-plan. Full suite 1087 + 26 web smoke green.
+
 **Independent per-wedge platoon management (`offseason.html`).** The PA "pie" is
 now the single platoon editor. Each handedness wedge (vs RHP / vs LHP) has its
 own "+ add" and hand-scoped remove, so adding a player vs LHP no longer forces

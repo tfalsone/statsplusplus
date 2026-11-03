@@ -661,6 +661,9 @@
   {# Sticky projection header (shared across views) #}
   <div class="spring-proj" id="spring-proj"><!-- rendered by JS --></div>
 
+  {# Expandable move-by-move breakdown of the plan vs the saved baseline #}
+  <div id="spring-breakdown" class="spring-breakdown" style="display:none"><!-- rendered by JS --></div>
+
   {# View switcher #}
   <div class="spring-tabs">
     <button class="sv-tab on" data-v="board"     onclick="springView('board')">Board</button>
@@ -1115,6 +1118,25 @@
   .sp-delta.pos .l, .sp-delta.pos .big { color:var(--green); }
   .sp-delta.neg .l, .sp-delta.neg .big { color:var(--red); }
   .sp-delta .big { font-size:20px; font-weight:700; } .sp-delta .n { color:var(--text-dim); font-size:11px; }
+  .sp-delta[onclick] { cursor:pointer; } .sp-delta[onclick]:hover { filter:brightness(1.15); }
+
+  /* change breakdown panel (cumulative vs saved plan, itemized by move) */
+  .spring-breakdown { margin:0 16px 8px; background:var(--bg); border:1px solid var(--border);
+        border-radius:8px; padding:8px 12px; font-size:12px; }
+  .sp-bd-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px;
+        font-weight:600; text-transform:uppercase; font-size:11px; letter-spacing:.03em; color:var(--text-dim); }
+  .sp-bd-tot { font-weight:700; } .sp-bd-tot.pos { color:var(--green); } .sp-bd-tot.neg { color:var(--red); }
+  .sp-bd-cols { display:grid; grid-template-columns:40px 1fr 70px 80px; gap:8px; font-size:9px;
+        text-transform:uppercase; color:var(--text-dim); padding:0 0 3px; border-bottom:1px solid var(--border); text-align:right; }
+  .sp-bd-cols span:nth-child(2) { text-align:left; }
+  .sp-bd-row { display:grid; grid-template-columns:40px 1fr 70px 80px; gap:8px; align-items:center;
+        padding:3px 0; border-bottom:1px solid rgba(15,52,96,.4); }
+  .sp-bd-slot { font-size:10px; color:var(--text-dim); }
+  .sp-bd-label { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sp-bd-war, .sp-bd-rd { text-align:right; font-variant-numeric:tabular-nums; font-weight:600; }
+  .sp-bd-war.pos, .sp-bd-rd.pos { color:var(--green); } .sp-bd-war.neg, .sp-bd-rd.neg { color:var(--red); }
+  .sp-bd-war.zero, .sp-bd-rd.zero { color:var(--text-dim); }
+  .sp-bd-foot { margin-top:6px; font-size:10px; color:var(--text-dim); font-style:italic; }
 
   .spring-tabs { display:flex; gap:4px; align-items:center; padding:10px 16px; flex-wrap:wrap; }
   .sv-tab { padding:6px 15px; background:var(--bg); border:1px solid var(--border); border-radius:7px;
@@ -1790,16 +1812,24 @@
         var v = Math.round(p[f[0]]); var s = v>=0?'+':'';
         return '<div class="sp-fct"><div class="v">'+s+v+'</div><div class="l">'+f[1]+'</div></div>';
       }).join('');
-    var dhtml = '';
-    if (lastDelta) {
-      var dw = lastDelta.wins, drd = lastDelta.run_diff;
+    // Cumulative impact of the whole plan vs the saved plan (or auto 26 if none
+    // saved) — not just the last edit. Expands to an itemized move list whose
+    // per-move impacts sum to this headline (sequential attribution).
+    var bd = state.breakdown;
+    var dhtml;
+    if (bd && bd.n_changes > 0) {
+      var dw = bd.delta.wins, drd = bd.delta.run_diff;
       var cls = dw > 0.01 ? 'pos' : (dw < -0.01 ? 'neg' : '');
-      dhtml = '<div class="sp-delta '+cls+'"><div class="l">last change</div>'
+      var lab = 'vs ' + (bd.baseline_label || 'saved plan');
+      dhtml = '<div class="sp-delta '+cls+'" onclick="springToggleBreakdown()" '
+            + 'title="click for the move-by-move breakdown">'
+            + '<div class="l">'+esc(lab)+' · '+bd.n_changes+' change'+(bd.n_changes===1?'':'s')+' ▾</div>'
             + '<div class="big">'+(dw>=0?'+':'')+dw.toFixed(1)+' wins</div>'
             + '<div class="n">run diff '+(drd>=0?'+':'')+Math.round(drd)+' · precise</div></div>';
     } else {
-      dhtml = '<div class="sp-delta"><div class="l">vs auto</div>'
-            + '<div class="big">—</div><div class="n">edit to compare</div></div>';
+      var lab0 = bd ? ('vs ' + (bd.baseline_label || 'saved plan')) : 'vs auto';
+      dhtml = '<div class="sp-delta"><div class="l">'+esc(lab0)+'</div>'
+            + '<div class="big">—</div><div class="n">no changes yet</div></div>';
     }
     var band = Math.round(p.band_sd || 9);
     document.getElementById('spring-proj').innerHTML =
@@ -2059,7 +2089,45 @@
     }).join('');
     el.style.display = ws.length ? 'block' : 'none';
   }
-  function renderAll() { renderHeader(); renderWarnings(); renderBoard(); renderDecisions(); renderField(); renderTable(); }
+
+  // ── change breakdown (cumulative vs saved plan, itemized by move) ──
+  var breakdownOpen = false;
+  window.springToggleBreakdown = function () {
+    var bd = state.breakdown;
+    if (!bd || !bd.n_changes) return;   // nothing to expand
+    breakdownOpen = !breakdownOpen;
+    renderBreakdown();
+  };
+  function renderBreakdown() {
+    var el = document.getElementById('spring-breakdown');
+    if (!el) return;
+    var bd = state.breakdown;
+    if (!breakdownOpen || !bd || !bd.n_changes) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    var d = bd.delta;
+    function warCls(w){ return w > 0.01 ? 'pos' : (w < -0.01 ? 'neg' : 'zero'); }
+    var rows = bd.changes.map(function (ch) {
+      return '<div class="sp-bd-row">'
+           + '<span class="sp-bd-slot">'+esc(ch.slot)+'</span>'
+           + '<span class="sp-bd-label">'+esc(ch.label)+'</span>'
+           + '<span class="sp-bd-war '+warCls(ch.wins)+'">'+(ch.wins>=0?'+':'')+ch.wins.toFixed(2)+'</span>'
+           + '<span class="sp-bd-rd '+warCls(ch.run_diff)+'">'+(ch.run_diff>=0?'+':'')+ch.run_diff.toFixed(0)+' RD</span>'
+           + '</div>';
+    }).join('');
+    el.innerHTML =
+        '<div class="sp-bd-head"><span>Changes vs '+esc(bd.baseline_label||'saved plan')
+      + '</span><span class="sp-bd-tot '+warCls(d.wins)+'">'
+      + (d.wins>=0?'+':'')+d.wins.toFixed(1)+' wins · '+(d.run_diff>=0?'+':'')+Math.round(d.run_diff)+' run diff</span></div>'
+      + '<div class="sp-bd-cols"><span></span><span></span><span>wins</span><span>run diff</span></div>'
+      + rows
+      + '<div class="sp-bd-foot">Each move\'s impact is its marginal effect applied in order; '
+      + 'the moves sum to the total. Facet shifts: '
+      + 'hit '+(d.bat_runs>=0?'+':'')+d.bat_runs.toFixed(0)
+      + ' · run '+(d.br_runs>=0?'+':'')+d.br_runs.toFixed(0)
+      + ' · field '+(d.fld_runs>=0?'+':'')+d.fld_runs.toFixed(0)
+      + ' · pitch '+(d.pit_runs>=0?'+':'')+d.pit_runs.toFixed(0)+'.</div>';
+    el.style.display = 'block';
+  }
+  function renderAll() { renderHeader(); renderWarnings(); renderBreakdown(); renderBoard(); renderDecisions(); renderField(); renderTable(); }
 
   // ── view switch ──
   window.springView = function (v) {
@@ -2142,8 +2210,10 @@
         state.config = d.config;
         state.warnings = d.warnings || [];
         state.platoon_suggestions = d.platoon_suggestions || [];
+        state.breakdown = d.breakdown || null;   // cumulative vs saved plan
         lastDelta = d.delta;
         renderHeader(); renderWarnings();   // always refresh the payoff readout
+        renderBreakdown();                   // keep the move list in sync
         renderActive();                      // re-render ONLY the visible view
         restoreUI(ui);                       // reopen the panel you were editing
       });

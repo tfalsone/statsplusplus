@@ -3000,6 +3000,11 @@ def spring_projection_delta(team_id, config, baseline=None, out_of_options=None,
                "bat_runs", "br_runs", "fld_runs", "pit_runs",
                "runs_scored", "runs_allowed")
     delta = {m: round(a[m] - b[m], 2) for m in metrics}
+    # Cumulative, itemized breakdown of the WHOLE plan vs the saved plan (or auto
+    # 26 if none saved) — the header "Changes vs saved plan" panel. Independent
+    # of `baseline` above (which the caller may set to the pre-edit config for a
+    # single-edit delta); the breakdown always anchors on the persisted plan.
+    breakdown = spring_change_breakdown(team_id, config, out_of_options=out_of_options)
     return {
         "projection": after["projection"],
         "constructed": after["constructed"],
@@ -3010,6 +3015,225 @@ def spring_projection_delta(team_id, config, baseline=None, out_of_options=None,
         "platoon_suggestions": after.get("platoon_suggestions", []),
         "baseline": base_res["projection"],
         "delta": delta,
+        "breakdown": breakdown,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Change breakdown — cumulative impact of the whole plan vs a baseline, itemized
+# into discrete roster MOVES each with its own win / run-diff / facet impact.
+#
+# Attribution is SEQUENTIAL along a canonical move order: start from the baseline
+# config, apply the diffed moves one at a time, and credit each move the
+# incremental projection change it produces GIVEN the prior moves. This sums
+# EXACTLY to the headline total (unlike isolated-move attribution, which leaves
+# an interaction remainder), is deterministic (canonical order, not edit order),
+# and each line reads "applying this move changed wins by X".
+# ---------------------------------------------------------------------------
+
+# Canonical slot order for deterministic attribution (field, then DH, then staff).
+_SPRING_MOVE_ORDER = _SPRING_FIELD + ["DH", "SP", "RP", "BENCH"]
+
+
+def _spring_config_diff(base, cur, by_id):
+    """Diff two configs into an ordered list of discrete MOVES. Each move is a
+    dict {kind, slot, label, apply} where `apply(cfg)` mutates a config copy to
+    carry JUST that move (so moves can be applied cumulatively for attribution).
+
+    Move kinds: 'lineup' (starter swap at a field/DH slot), 'deploy' (platoon /
+    pa_alloc change at a slot the starter kept), 'rotation'/'bullpen' (staff set
+    change), 'bench' (reserve add/drop), 'role' (pitcher role / start_share).
+    """
+    import json as _json
+
+    def _name(pid):
+        p = by_id.get(pid)
+        return (p["name"] if p else ("#" + str(pid)))
+
+    moves = []
+
+    # --- Field + DH starter changes (lineup) ---
+    base_lineup = base.get("lineup", {}) or {}
+    cur_lineup = cur.get("lineup", {}) or {}
+    for pos in _SPRING_FIELD + ["DH"]:
+        b_pid, c_pid = base_lineup.get(pos), cur_lineup.get(pos)
+        if b_pid != c_pid:
+            if c_pid is None:
+                lab = f"Drop {pos} starter {_name(b_pid)}"
+            elif b_pid is None:
+                lab = f"Start {_name(c_pid)} at {pos}"
+            else:
+                lab = f"{pos}: {_name(b_pid)} → {_name(c_pid)}"
+            moves.append({"kind": "lineup", "slot": pos, "label": lab,
+                          "_set": ("lineup", pos, c_pid)})
+
+    # --- Deployment changes at a slot the STARTER kept (platoon / pa_alloc) ---
+    # Only surface where the lineup starter is unchanged (a starter swap already
+    # subsumes the deployment reset). Compare the pa_alloc + platoon per slot.
+    base_alloc = base.get("pa_alloc", {}) or {}
+    cur_alloc = cur.get("pa_alloc", {}) or {}
+    base_plat = base.get("platoon", {}) or {}
+    cur_plat = cur.get("platoon", {}) or {}
+    for pos in _SPRING_FIELD + ["DH"]:
+        if base_lineup.get(pos) != cur_lineup.get(pos):
+            continue  # subsumed by the starter swap above
+        a_changed = _json.dumps(base_alloc.get(pos), sort_keys=True) != \
+            _json.dumps(cur_alloc.get(pos), sort_keys=True)
+        p_changed = _json.dumps(base_plat.get(pos), sort_keys=True) != \
+            _json.dumps(cur_plat.get(pos), sort_keys=True)
+        if a_changed or p_changed:
+            moves.append({"kind": "deploy", "slot": pos,
+                          "label": f"{pos}: platoon / playing-time change",
+                          "_set_deploy": pos})
+
+    # --- Staff set changes (rotation, bullpen) ---
+    for key, slot, lbl in (("rotation", "SP", "Rotation"), ("bullpen", "RP", "Bullpen")):
+        b_set = list(base.get(key, []) or [])
+        c_set = list(cur.get(key, []) or [])
+        added = [p for p in c_set if p not in b_set]
+        removed = [p for p in b_set if p not in c_set]
+        for pid in added:
+            moves.append({"kind": key, "slot": slot,
+                          "label": f"{lbl}: add {_name(pid)}", "_set_list": key})
+        for pid in removed:
+            moves.append({"kind": key, "slot": slot,
+                          "label": f"{lbl}: drop {_name(pid)}", "_set_list": key})
+
+    # --- Bench reserve add/drop ---
+    b_bench = set(base.get("bench", []) or [])
+    c_bench = set(cur.get("bench", []) or [])
+    for pid in (c_bench - b_bench):
+        moves.append({"kind": "bench", "slot": "BENCH",
+                      "label": f"Bench: add {_name(pid)}", "_set_list": "bench"})
+    for pid in (b_bench - c_bench):
+        moves.append({"kind": "bench", "slot": "BENCH",
+                      "label": f"Bench: drop {_name(pid)}", "_set_list": "bench"})
+
+    # --- Pitcher role / start-share changes (grouped, low-level) ---
+    if _json.dumps(base.get("roles"), sort_keys=True) != _json.dumps(cur.get("roles"), sort_keys=True) \
+       or _json.dumps(base.get("start_share"), sort_keys=True) != _json.dumps(cur.get("start_share"), sort_keys=True):
+        moves.append({"kind": "role", "slot": "ROLE",
+                      "label": "Role / playing-time tweaks", "_set_roles": True})
+
+    # Order moves canonically by slot for deterministic sequential attribution.
+    order = {s: i for i, s in enumerate(_SPRING_MOVE_ORDER)}
+    moves.sort(key=lambda m: order.get(m["slot"], 99))
+    return moves
+
+
+def _apply_move(cfg, move, cur):
+    """Apply one diffed move's target state onto `cfg` (a working copy that
+    starts at baseline), pulling the final value from the CURRENT config `cur`.
+    Mutates and returns cfg."""
+    import copy
+    if "_set" in move:
+        key, pos, pid = move["_set"]
+        cfg.setdefault(key, {})
+        if pid is None:
+            cfg[key].pop(pos, None)
+        else:
+            cfg[key][pos] = pid
+        # A starter swap also resets that slot's stale deployment (mirror the
+        # client's clearSlotDeployment), then adopt the current one if present.
+        for dk in ("pa_alloc", "platoon"):
+            if cfg.get(dk):
+                cfg[dk].pop(pos, None)
+            if (cur.get(dk) or {}).get(pos) is not None:
+                cfg.setdefault(dk, {})[pos] = copy.deepcopy(cur[dk][pos])
+    elif "_set_deploy" in move:
+        pos = move["_set_deploy"]
+        for dk in ("pa_alloc", "platoon"):
+            if (cur.get(dk) or {}).get(pos) is not None:
+                cfg.setdefault(dk, {})[pos] = copy.deepcopy(cur[dk][pos])
+            elif cfg.get(dk):
+                cfg[dk].pop(pos, None)
+    elif "_set_list" in move:
+        key = move["_set_list"]
+        cfg[key] = list(cur.get(key, []) or [])      # adopt the current set
+    elif "_set_roles" in move:
+        cfg["roles"] = copy.deepcopy(cur.get("roles") or {})
+        cfg["start_share"] = copy.deepcopy(cur.get("start_share") or {})
+    return cfg
+
+
+def spring_change_breakdown(team_id, config, baseline=None, out_of_options=None,
+                            baseline_out_of_options=None):
+    """Cumulative impact of the whole plan vs a baseline, itemized by move.
+
+    Returns {projection, baseline, delta (cumulative total), changes:[{label,
+    kind, slot, wins, run_diff}], n_changes}. Each change's wins/run_diff is its
+    SEQUENTIAL marginal contribution (applied in canonical order atop prior
+    moves), so the change impacts sum exactly to the headline delta.
+
+    `baseline=None` → the saved plan's config if one exists, else the auto 26.
+    """
+    from statsplusplus.evaluation.team_projection import project_team
+    import copy, dataclasses
+
+    conn = get_db()
+    cfg_lc = get_cfg()
+    ed = _eval_date(conn)
+    pyth_exp = cfg_lc.settings.get("pyth_exp", 1.83)
+    pool = _spring_pool(conn, team_id, ed)
+    by_id = {p["player_id"]: p for p in pool}
+
+    # Resolve the baseline config: explicit > saved plan > auto 26.
+    base_ooo = baseline_out_of_options
+    saved = None if baseline is not None else load_spring_plan(team_id)
+    if baseline is None:
+        if saved is not None:
+            baseline = saved["config"]
+            if base_ooo is None:
+                base_ooo = saved.get("out_of_options")
+        else:
+            baseline = _spring_auto_config(pool, base_ooo)
+    base_label = "saved plan" if saved is not None else "auto 26"
+
+    # Calibration (shared across every incremental projection).
+    calib = _spring_calibration(conn, pyth_exp)
+    mean_war, mean_hit, mean_pit = _spring_league_mean_war(conn, ed, cfg_lc, pyth_exp)
+    if mean_war is not None:
+        calib = dataclasses.replace(calib, lg_mean_team_war=mean_war,
+                                    lg_mean_hit_war=mean_hit, lg_mean_pit_war=mean_pit)
+
+    def _rec(cfg_in):
+        contribs, _c, _o = _spring_contributions(pool, cfg_in)
+        return project_team(contribs, calib)
+
+    base_proj = _rec(baseline)
+    cur_proj = _rec(config)
+
+    # Walk the canonical move list, applying each atop the prior and crediting
+    # it the incremental (wins, run_diff) change.
+    moves = _spring_config_diff(baseline, config, by_id)
+    changes = []
+    work = copy.deepcopy(baseline)
+    prev_w, prev_rd = base_proj.wins, base_proj.run_diff
+    for mv in moves:
+        _apply_move(work, mv, config)
+        pr = _rec(work)
+        changes.append({
+            "label": mv["label"], "kind": mv["kind"], "slot": mv["slot"],
+            "wins": round(pr.wins - prev_w, 2),
+            "run_diff": round(pr.run_diff - prev_rd, 1),
+        })
+        prev_w, prev_rd = pr.wins, pr.run_diff
+
+    return {
+        "projection": dataclasses.asdict(cur_proj),
+        "baseline": dataclasses.asdict(base_proj),
+        "baseline_label": base_label,
+        "delta": {
+            "wins": round(cur_proj.wins - base_proj.wins, 2),
+            "run_diff": round(cur_proj.run_diff - base_proj.run_diff, 1),
+            "team_war": round(cur_proj.team_war - base_proj.team_war, 2),
+            "bat_runs": round(cur_proj.bat_runs - base_proj.bat_runs, 1),
+            "br_runs": round(cur_proj.br_runs - base_proj.br_runs, 1),
+            "fld_runs": round(cur_proj.fld_runs - base_proj.fld_runs, 1),
+            "pit_runs": round(cur_proj.pit_runs - base_proj.pit_runs, 1),
+        },
+        "changes": changes,
+        "n_changes": len(changes),
     }
 
 

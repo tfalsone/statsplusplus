@@ -141,9 +141,15 @@ from the record (so the two agree), split into hitting/baserunning/fielding/pitc
 facet runs by each player's run-space facet components. Per-league constants
 (`RUNS_PER_WIN`, `LG_TEAM_RUNS`, `WIN_BAND_SD`, replacement win%) are fit from team
 history by `calibrate.derive_projection_calibration` (defaults for thin-history
-leagues). The point-estimate record leads; the **delta vs the prior config** is the
-precise decision signal (season luck cancels between two configs); the ±`WIN_BAND_SD`
-band is a quiet context line. Four views render one shared config (Board / Decisions /
+leagues). The point-estimate record leads; the header's change panel shows the
+**cumulative delta of the whole plan vs the saved plan** (or the auto 26 when
+none is saved) — not just the last edit — and expands to a **move-by-move
+breakdown** (`spring_change_breakdown`): the config is diffed into discrete moves
+(starter swaps, platoon/playing-time changes, staff add/drops, bench add/drops,
+role tweaks) and each move's win / run-diff impact is its SEQUENTIAL marginal
+effect applied in canonical order, so the moves sum exactly to the headline
+total. Season luck cancels between two configs, so the delta is precise; the
+±`WIN_BAND_SD` band is a quiet context line. Four views render one shared config (Board / Decisions /
 Field / Table, default Board), edited in place (patches header + active view, no full
 re-render). Playing time is a derived PA "pie": a fixed slot budget (~658 PA, 467 vs
 RHP / 191 vs LHP) filled by platoon assignment × realistic start-shares (backup
