@@ -4,6 +4,52 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 108 (cont.) — Spring platoon redesign, reliever floor, and a capped stat-WAR blend
+
+Follow-on work from the Spring Training builder, driven by hands-on testing of
+the spring page.
+
+**Independent per-wedge platoon management (`offseason.html`).** The PA "pie" is
+now the single platoon editor. Each handedness wedge (vs RHP / vs LHP) has its
+own "+ add" and hand-scoped remove, so adding a player vs LHP no longer forces
+him into the vs-RHP wedge (the reported coupling). The redundant vs-R/vs-L
+dropdowns are retired; the PLATOON badge now DERIVES from the pie (different
+leaders by hand) via `pieLeaders()`/`isPlatoon()`. A swap or drop clears the
+affected slot's stale `pa_alloc`/`platoon` (`clearSlotDeployment`), fixing a bug
+where a swapped-in starter was silently ignored by a leftover literal pie.
+
+**Recommender reliever floor (`offseason_queries.py`).** The auto-26 no longer
+rosters below-replacement bullpen arms — the pen flexes short rather than padding
+with a negative-WAR reliever (`_SPRING_RP_MIN_WAR = 0.0`); an out-of-options
+credible arm takes an open pen slot before bumping. On vMLB the auto pen dropped a
+−0.6 WAR arm (7 → 6 positive arms).
+
+**Capped stat-WAR blend — fixes small-sample over-trust (hitters).** Investigating
+why a clearly-good hitter (Jim Dunn, vMLB) was recommended nowhere and *lowered*
+run diff when platooned, we traced it to the WAR projection: the stat-WAR blend
+reached full confidence at just 400 PA, so 333 PA of unlucky results (`stat_war`
+0.68) crushed his `peak_war` from a 2.4-tool profile to 1.08, while a
+near-identical teammate with only 127 PA kept his full tool value. A next-season
+hold-out across all three leagues showed the tool projection predicts future WAR
+better than the MLB WAR sample at EVERY sample size — the sample should never
+dominate. Fix: a new `stat_war_weight` (in `player_value.py`, constants in
+`constants.py`) governs ONLY the stat-WAR→tool-WAR blend, separate from
+`stat_confidence` (which still fades prospect discounts 0→1). It is slow and
+**capped at 0.30** (`PA_FULL=700, EXPONENT=1.2`): ~0.12 at 333 PA, ~0.25 at 600,
+plateau 0.30. Hold-out R² for next-season WAR rose 0.31 → 0.53. Jim Dunn recovered
+to `peak_war` 2.22 and his spring LHP platoon now correctly RAISES run diff (+5).
+The correction is symmetric — lucky-sample over-performers regress toward tools
+too. **Pitchers are unchanged** (still the legacy full-`stat_confidence` blend —
+the pitcher path is deferred to its own session; the IP-side helper is in place).
+Re-ran `fv_calc` on all three leagues (PPL: 111 up / 131 down / 243 ~same, mean
+−0.06). Tests: `TestStatWarWeight` + updated established/crossover assertions;
+full suite 1067 + 26 web smoke green.
+
+**Migration note:** `peak_war`/surplus for established hitters update on each
+league's next `fv_calc`/refresh (already re-run for emlb/vmlb/ppl here).
+
+---
+
 ## Session 108 — Spring Training "Opening Day Builder" + exact stored projected wOBA
 
 The offseason page's final `spring` sub-phase is now a full **Opening Day roster

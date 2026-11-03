@@ -12,12 +12,14 @@ from unittest.mock import patch
 
 from statsplusplus.evaluation.player_value import (
     stat_confidence,
+    stat_war_weight,
     compute_player_value,
     _PA_FULL_CONFIDENCE,
     _IP_FULL_CONFIDENCE,
     _PA_MIN_SIGNAL,
     _IP_MIN_SIGNAL,
 )
+from statsplusplus.evaluation.constants import STAT_WAR_WEIGHT_CAP
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +94,50 @@ class TestStatConfidence:
         pa_only = stat_confidence(200, 0.0)
         ip_only = stat_confidence(0, 80.0)
         assert conf == max(pa_only, ip_only)
+
+
+# ---------------------------------------------------------------------------
+# stat_war_weight tests — the CAPPED stat-WAR blend weight (distinct from
+# stat_confidence). Hold-out validated: tools beat the WAR sample at every
+# sample size, so this weight is slow and never exceeds the cap (~0.30).
+# ---------------------------------------------------------------------------
+
+class TestStatWarWeight:
+    def test_below_minimum_is_zero(self):
+        assert stat_war_weight(20, 0.0) == 0.0
+        assert stat_war_weight(0, 0.0) == 0.0
+
+    def test_never_exceeds_cap(self):
+        """Even an enormous sample tops out at the cap — the WAR sample must
+        never dominate the tool projection."""
+        for pa in (700, 1500, 3000, 10000):
+            assert stat_war_weight(pa, 0.0) <= STAT_WAR_WEIGHT_CAP + 1e-9
+        assert stat_war_weight(10000, 0.0) == STAT_WAR_WEIGHT_CAP
+
+    def test_small_sample_is_small_weight(self):
+        """The Jim Dunn case: ~330 PA earns only a modest weight (was 0.77
+        under the old full-confidence blend; now ~0.12)."""
+        w = stat_war_weight(333, 0.0)
+        assert 0.08 < w < 0.18
+
+    def test_monotonic_up_to_cap(self):
+        prev = -1.0
+        for pa in range(0, 1200, 50):
+            w = stat_war_weight(pa, 0.0)
+            assert w >= prev - 1e-12
+            prev = w
+
+    def test_much_lower_than_old_confidence_at_small_samples(self):
+        """The whole point of the fix: the blend weight is far below the legacy
+        stat_confidence at the problem sample sizes."""
+        for pa in (250, 333, 400):
+            assert stat_war_weight(pa, 0.0) < stat_confidence(pa, 0.0)
+
+    def test_ip_side_tracks_pa_side(self):
+        """Pitchers' IP path uses the same cap (helper is defined for both;
+        the blend only consults it for hitters today)."""
+        assert stat_war_weight(0, 400.0) == STAT_WAR_WEIGHT_CAP
+        assert 0.0 < stat_war_weight(0, 50.0) < STAT_WAR_WEIGHT_CAP
 
 
 # ---------------------------------------------------------------------------
@@ -202,10 +248,22 @@ class TestUnifiedSurplusEstablishedMLB:
         result = compute_player_value(**self._base_args())
         assert result["stat_confidence"] == 1.0
 
-    def test_peak_war_equals_stat_war(self):
-        """With full stat confidence, peak_war should equal stat_war."""
+    def test_peak_war_blends_capped_toward_stat_war(self):
+        """peak_war is the tool projection blended toward stat_war by the CAPPED
+        stat-WAR weight (hitters top out at 0.30), NOT equal to stat_war. A noisy
+        MLB WAR sample never dominates the tool projection — hold-out validated
+        that tools predict next-season WAR better at every sample size. (This
+        replaced the old peak_war==stat_war assertion when the full-confidence
+        blend over-trusted small samples — the Jim Dunn fix, Session 108.)"""
+        from statsplusplus.evaluation.player_value import stat_war_weight
         result = compute_player_value(**self._base_args())
-        assert result["peak_war"] == result["stat_war"]
+        sw = stat_war_weight(1500, 0.0)           # capped weight for a deep sample
+        assert sw == 0.30
+        expected = (1 - sw) * result["tool_war"] + sw * result["stat_war"]
+        assert abs(result["peak_war"] - expected) < 1e-6
+        # Sits strictly between the two projections (tool_war 3.2 > stat_war 3.0).
+        lo, hi = sorted((result["tool_war"], result["stat_war"]))
+        assert lo <= result["peak_war"] <= hi
 
     def test_dev_discount_fully_faded(self):
         """Dev discount should be ~1.0 for established player."""
@@ -226,8 +284,13 @@ class TestUnifiedSurplusEstablishedMLB:
         assert cheap["surplus"] > expensive["surplus"]
 
     def test_overpaid_player_low_surplus(self):
-        """A 1.0 WAR player on $15M/yr should have near-zero surplus."""
+        """A genuinely low-ability player (weak tools AND weak stats) on $15M/yr
+        should have near-zero surplus. Must drag down BOTH the tool projection
+        (low composite/FV) and the stat sample — since the capped stat-WAR blend
+        means one unlucky stat line alone no longer declares a strong-tools
+        player a 1-WAR scrub (that was the old over-trust bug)."""
         result = compute_player_value(**self._base_args(
+            fv_continuous=40.0, composite=42, ceiling=44,
             stat_war=1.0,
             salaries=[15_000_000, 15_000_000, 15_000_000]))
         assert result["surplus"] < 5_000_000
@@ -236,6 +299,15 @@ class TestUnifiedSurplusEstablishedMLB:
         """Should produce breakdown matching control length."""
         result = compute_player_value(**self._base_args())
         assert len(result["breakdown"]) == 3
+
+    def test_pitcher_blend_unchanged_full_confidence(self):
+        """Hitters-first scope: a pitcher with a full-confidence sample STILL
+        blends at full stat_confidence (peak_war == stat_war), unaffected by the
+        hitter stat-WAR cap. The pitcher path is deferred to its own session."""
+        result = compute_player_value(**self._base_args(
+            bucket="SP", career_pa=0, career_ip=600.0, stat_war=3.0))
+        assert result["stat_confidence"] == 1.0
+        assert abs(result["peak_war"] - result["stat_war"]) < 1e-6
 
 
 # ---------------------------------------------------------------------------
@@ -302,9 +374,14 @@ class TestUnifiedSurplusCrossover:
         assert result["peak_war"] == result["tool_war"]  # Stats ignored
 
     def test_gradient_smooth(self):
-        """Surplus should change smoothly as PA increases (no cliffs)."""
+        """Surplus should change smoothly as PA increases (no cliffs).
+
+        Sampled at 50-PA granularity: the capped stat-WAR blend and the (full
+        0→1) discount-fade evolve on different schedules, so a coarse 100-PA
+        step straddling the ~300-400 PA discount-fade region can look like a
+        cliff that finer sampling shows is a smooth climb."""
         surpluses = []
-        for pa in [0, 50, 100, 150, 200, 300, 400, 500]:
+        for pa in range(0, 550, 50):
             result = compute_player_value(**self._base_args(
                 career_pa=pa, stat_war=3.0))
             surpluses.append(result["surplus"])

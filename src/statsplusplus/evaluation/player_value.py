@@ -23,6 +23,12 @@ from statsplusplus.evaluation.constants import (
     STAT_CONFIDENCE_PA_MIN,
     STAT_CONFIDENCE_IP_MIN,
     STAT_CONFIDENCE_EXPONENT,
+    STAT_WAR_WEIGHT_PA_FULL,
+    STAT_WAR_WEIGHT_IP_FULL,
+    STAT_WAR_WEIGHT_EXPONENT,
+    STAT_WAR_WEIGHT_CAP,
+    STAT_WAR_WEIGHT_PA_MIN,
+    STAT_WAR_WEIGHT_IP_MIN,
     NEAR_MAXED_REALIZATION_THRESHOLD,
     NEAR_MAXED_DENOMINATOR,
     OPTION_VALUE_FV_FLOOR,
@@ -104,6 +110,34 @@ def stat_confidence(career_pa: int, career_ip: float) -> float:
         ip_conf = 0.0
 
     return float(max(pa_conf, ip_conf))
+
+
+def stat_war_weight(career_pa: int, career_ip: float) -> float:
+    """Weight given to the MLB stat-WAR sample when blending with the tool-based
+    WAR projection (``compute_player_value`` Step 2).
+
+    DISTINCT from ``stat_confidence``: that fades prospect discounts and the
+    FV→composite tool projection 0→1 as a player establishes himself (a proven
+    veteran should shed all prospect treatment). This, instead, answers a
+    narrower question — how much should a noisy MLB WAR sample OVERRIDE the
+    tool-based projection? A next-season hold-out across all leagues showed the
+    tool projection beats the WAR sample at every sample size, and the optimal
+    stat weight asymptotes to ~0.25-0.30, never 1.0. So this ramp is slow and
+    **capped**: ~0.12 at 333 PA, ~0.25 at 600 PA, plateauing at the cap (0.30).
+    This fixes the over-trust that halved good players' peak WAR off a
+    third-of-a-season of unlucky results (the Jim Dunn case).
+
+    Uses the larger of the PA- and IP-based weights (two-way / dual-signal).
+    """
+    if career_pa >= STAT_WAR_WEIGHT_PA_MIN:
+        pa_w = STAT_WAR_WEIGHT_CAP * min(1.0, (career_pa / STAT_WAR_WEIGHT_PA_FULL) ** STAT_WAR_WEIGHT_EXPONENT)
+    else:
+        pa_w = 0.0
+    if career_ip >= STAT_WAR_WEIGHT_IP_MIN:
+        ip_w = STAT_WAR_WEIGHT_CAP * min(1.0, (career_ip / STAT_WAR_WEIGHT_IP_FULL) ** STAT_WAR_WEIGHT_EXPONENT)
+    else:
+        ip_w = 0.0
+    return float(max(pa_w, ip_w))
 
 
 # ---------------------------------------------------------------------------
@@ -235,8 +269,23 @@ def compute_player_value(
         tool_war = min(tool_war, peak_war_from_fv(min(fv_continuous, 50.0), bucket, weights))
 
     # --- Step 2: Blend WAR projections ---
-    if stat_war is not None and sc > 0.0:
-        peak_war = (1.0 - sc) * tool_war + sc * stat_war
+    # HITTERS use the capped stat-WAR blend weight (see stat_war_weight): a noisy
+    # MLB WAR sample never dominates the tool projection — it tops out at ~0.30,
+    # reflecting that tools predict next-season WAR better at every sample size
+    # (hold-out validated). This fixes good hitters being halved by a third of a
+    # season of unlucky results (Jim Dunn). PITCHERS keep the legacy full-sc
+    # blend for now — the pitcher path (role-dependent stuff, the RP cap above,
+    # movement-driven WAR) needs its own validation before changing; scoped as
+    # hitters-first.
+    if stat_war is not None:
+        if bucket in ("SP", "RP"):
+            sw = sc  # legacy behavior, pitchers unchanged (hitters-first scope)
+        else:
+            sw = stat_war_weight(career_pa, career_ip)
+        if sw > 0.0:
+            peak_war = (1.0 - sw) * tool_war + sw * stat_war
+        else:
+            peak_war = tool_war
     else:
         peak_war = tool_war
 

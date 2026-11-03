@@ -1,7 +1,7 @@
 # Player Valuation Model
 
 > **Status:** Living · **Owns:** surplus/valuation model (`src/statsplusplus/evaluation/{surplus,player_value}.py`)
-> **Writing standard:** prose · **Last verified against code:** Session 94
+> **Writing standard:** prose · **Last verified against code:** Session 108
 
 Plain-language explanation of how Stats++ values prospects and MLB players.
 For the full pipeline, see `evaluation_system_overview.md`. For implementation
@@ -203,12 +203,18 @@ actual contract cost over remaining team control.
   Ovr 60 C produces ~3.7 WAR. These tables are calibrated from the league's own
   data via `calibrate.py`.
 
-For most players, stat WAR drives the projection. Pitchers who convert between
-SP and RP use their prior role's stats scaled by IP ratio (SP→RP × 0.46,
-RP→SP × 2.15) rather than being treated as unproven. For young players (under
-peak age) whose ratings suggest more upside than their stats show, the model
-blends in ratings WAR — up to 50% at age 21, fading to 0% by peak age. This
-prevents undervaluing young players with limited track records.
+**For hitters, the ratings-based projection leads; the MLB stat sample is a
+capped adjustment.** A next-season hold-out showed ratings predict future WAR
+better than a player's own recent WAR at every sample size, so the stat sample
+is blended in at a slow, capped weight that never exceeds ~0.30 (≈0.12 at a third
+of a season, ≈0.25 at a full season). This stops an unlucky part-season from
+halving a good hitter's projection — and symmetrically stops a lucky part-season
+from inflating a weak one. (This is separate from "prospect vs established"
+treatment, which still fully fades the prospect discounts once a player has a real
+track record.) **Pitchers** currently still let stat WAR drive the projection for
+established arms (the pitcher path is being revisited separately). Pitchers who
+convert between SP and RP use their prior role's stats scaled by IP ratio (SP→RP ×
+0.46, RP→SP × 2.15) rather than being treated as unproven.
 
 **Salary** comes from the actual contract if one exists. For pre-arb players, the
 model estimates remaining control years from games-based fractional service time —

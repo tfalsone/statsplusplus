@@ -274,6 +274,24 @@ STAT_CONFIDENCE_PA_MIN: int = 50
 STAT_CONFIDENCE_IP_MIN: float = 15.0
 STAT_CONFIDENCE_EXPONENT: float = 1.4
 
+# Stat-WAR BLEND weight — how much an MLB WAR sample overrides the tool-based
+# projection in `compute_player_value` Step 2 (DISTINCT from STAT_CONFIDENCE
+# above, which still fades prospect discounts / tool-projection 0→1 for
+# established players). The old code reused the 0→1 confidence here, hitting
+# full weight at 400 PA — but a hold-out (predict next-season WAR) showed the
+# tool projection beats the WAR sample at every sample size, and the optimal
+# stat weight asymptotes to ~0.25-0.30, NEVER 1.0 (even 900+ PA prefers ~0.25).
+# 333 PA of noise was getting 0.77 weight and halving good players' peak_war
+# (the Jim Dunn case). This ramp is slow and CAPPED: ~0.12 at 333 PA, ~0.25 at
+# 600 PA, plateauing at 0.30. See docs/task_list.md (stat_confidence spike) and
+# the Session-108 investigation.
+STAT_WAR_WEIGHT_PA_FULL: float = 700.0
+STAT_WAR_WEIGHT_IP_FULL: float = 210.0   # ~3x the per-season IP-to-PA ratio of the PA floor
+STAT_WAR_WEIGHT_EXPONENT: float = 1.2
+STAT_WAR_WEIGHT_CAP: float = 0.30
+STAT_WAR_WEIGHT_PA_MIN: int = 50
+STAT_WAR_WEIGHT_IP_MIN: float = 15.0
+
 # ---------------------------------------------------------------------------
 # Player value model parameters
 # ---------------------------------------------------------------------------
