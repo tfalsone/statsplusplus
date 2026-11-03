@@ -27,6 +27,7 @@ from statsplusplus.evaluation.constants import (
     STAT_WAR_WEIGHT_IP_FULL,
     STAT_WAR_WEIGHT_EXPONENT,
     STAT_WAR_WEIGHT_CAP,
+    STAT_WAR_WEIGHT_CAP_RP,
     STAT_WAR_WEIGHT_PA_MIN,
     STAT_WAR_WEIGHT_IP_MIN,
     NEAR_MAXED_REALIZATION_THRESHOLD,
@@ -112,7 +113,7 @@ def stat_confidence(career_pa: int, career_ip: float) -> float:
     return float(max(pa_conf, ip_conf))
 
 
-def stat_war_weight(career_pa: int, career_ip: float) -> float:
+def stat_war_weight(career_pa: int, career_ip: float, cap: float = STAT_WAR_WEIGHT_CAP) -> float:
     """Weight given to the MLB stat-WAR sample when blending with the tool-based
     WAR projection (``compute_player_value`` Step 2).
 
@@ -120,21 +121,25 @@ def stat_war_weight(career_pa: int, career_ip: float) -> float:
     FV→composite tool projection 0→1 as a player establishes himself (a proven
     veteran should shed all prospect treatment). This, instead, answers a
     narrower question — how much should a noisy MLB WAR sample OVERRIDE the
-    tool-based projection? A next-season hold-out across all leagues showed the
-    tool projection beats the WAR sample at every sample size, and the optimal
-    stat weight asymptotes to ~0.25-0.30, never 1.0. So this ramp is slow and
-    **capped**: ~0.12 at 333 PA, ~0.25 at 600 PA, plateauing at the cap (0.30).
-    This fixes the over-trust that halved good players' peak WAR off a
-    third-of-a-season of unlucky results (the Jim Dunn case).
+    tool-based projection? A next-season hold-out (hitters AND pitchers, all
+    leagues) showed the tool projection beats the WAR sample at every sample
+    size, and the optimal stat weight asymptotes to a modest cap, never 1.0. So
+    this ramp is slow and **capped**: ~0.12 at 333 PA / 100 IP, ~0.25 at 600 PA /
+    ~210 IP, plateauing at ``cap``.
+
+    ``cap`` is the plateau the ramp approaches. Default 0.30 (hitters and
+    starting pitchers). Relievers pass ``STAT_WAR_WEIGHT_CAP_RP`` (0.15): an RP's
+    small, noisy IP sample barely predicts next season, so it gets even less
+    override of the tool projection.
 
     Uses the larger of the PA- and IP-based weights (two-way / dual-signal).
     """
     if career_pa >= STAT_WAR_WEIGHT_PA_MIN:
-        pa_w = STAT_WAR_WEIGHT_CAP * min(1.0, (career_pa / STAT_WAR_WEIGHT_PA_FULL) ** STAT_WAR_WEIGHT_EXPONENT)
+        pa_w = cap * min(1.0, (career_pa / STAT_WAR_WEIGHT_PA_FULL) ** STAT_WAR_WEIGHT_EXPONENT)
     else:
         pa_w = 0.0
     if career_ip >= STAT_WAR_WEIGHT_IP_MIN:
-        ip_w = STAT_WAR_WEIGHT_CAP * min(1.0, (career_ip / STAT_WAR_WEIGHT_IP_FULL) ** STAT_WAR_WEIGHT_EXPONENT)
+        ip_w = cap * min(1.0, (career_ip / STAT_WAR_WEIGHT_IP_FULL) ** STAT_WAR_WEIGHT_EXPONENT)
     else:
         ip_w = 0.0
     return float(max(pa_w, ip_w))
@@ -261,27 +266,27 @@ def compute_player_value(
             blend_w = max(0.0, (realization - _nm_threshold) / _nm_denom) ** 2
             tool_war = tool_war * (1 - blend_w) + composite_war * blend_w
 
-    # RP cap: for prospect RPs (low stat_confidence), cap tool_war at the
-    # FV-based maximum. This prevents the composite blend from inflating
-    # RP projections beyond what the FV grade system intends.
-    # Established RPs (high sc) are driven by stat_war, so no cap needed.
-    if bucket == "RP" and sc < 0.75 and fv_continuous > 0:
+    # RP cap: cap RP tool_war at the FV-based maximum so the composite blend
+    # can't inflate RP projections beyond what the FV grade system intends.
+    # Formerly gated on sc < 0.75, on the premise that established RPs were
+    # "driven by stat_war" so the cap wasn't needed. That premise is gone: the
+    # capped stat-WAR blend (below) now leaves even established RPs leaning
+    # ~85% on tool_war, so the cap must apply at ALL stat_confidence.
+    if bucket == "RP" and fv_continuous > 0:
         tool_war = min(tool_war, peak_war_from_fv(min(fv_continuous, 50.0), bucket, weights))
 
     # --- Step 2: Blend WAR projections ---
-    # HITTERS use the capped stat-WAR blend weight (see stat_war_weight): a noisy
-    # MLB WAR sample never dominates the tool projection — it tops out at ~0.30,
-    # reflecting that tools predict next-season WAR better at every sample size
-    # (hold-out validated). This fixes good hitters being halved by a third of a
-    # season of unlucky results (Jim Dunn). PITCHERS keep the legacy full-sc
-    # blend for now — the pitcher path (role-dependent stuff, the RP cap above,
-    # movement-driven WAR) needs its own validation before changing; scoped as
-    # hitters-first.
+    # The noisy MLB WAR sample only MODESTLY overrides the tool projection — it
+    # never dominates, because a next-season-WAR hold-out (hitters AND pitchers,
+    # all leagues) showed tools predict future WAR better at every sample size.
+    # `stat_war_weight` ramps slowly to a cap: 0.30 for hitters and starting
+    # pitchers, 0.15 for relievers (an RP's small IP sample barely predicts next
+    # season — tool R² 0.54 vs stat R² 0.12). This fixes both the undervalued
+    # good hitter off a third of a season (Jim Dunn) and good relievers crushed
+    # off 40-50 noisy IP (Session 98/108).
     if stat_war is not None:
-        if bucket in ("SP", "RP"):
-            sw = sc  # legacy behavior, pitchers unchanged (hitters-first scope)
-        else:
-            sw = stat_war_weight(career_pa, career_ip)
+        cap = STAT_WAR_WEIGHT_CAP_RP if bucket == "RP" else STAT_WAR_WEIGHT_CAP
+        sw = stat_war_weight(career_pa, career_ip, cap=cap)
         if sw > 0.0:
             peak_war = (1.0 - sw) * tool_war + sw * stat_war
         else:

@@ -134,10 +134,19 @@ class TestStatWarWeight:
             assert stat_war_weight(pa, 0.0) < stat_confidence(pa, 0.0)
 
     def test_ip_side_tracks_pa_side(self):
-        """Pitchers' IP path uses the same cap (helper is defined for both;
-        the blend only consults it for hitters today)."""
+        """The IP path ramps like the PA path, to the default cap."""
         assert stat_war_weight(0, 400.0) == STAT_WAR_WEIGHT_CAP
         assert 0.0 < stat_war_weight(0, 50.0) < STAT_WAR_WEIGHT_CAP
+
+    def test_cap_override_lowers_plateau(self):
+        """A lower cap (relievers) plateaus lower and is <= the default cap at
+        every sample size."""
+        from statsplusplus.evaluation.constants import STAT_WAR_WEIGHT_CAP_RP
+        assert STAT_WAR_WEIGHT_CAP_RP < STAT_WAR_WEIGHT_CAP
+        assert stat_war_weight(0, 400.0, cap=STAT_WAR_WEIGHT_CAP_RP) == STAT_WAR_WEIGHT_CAP_RP
+        for ip in (30, 80, 150, 400):
+            assert (stat_war_weight(0, ip, cap=STAT_WAR_WEIGHT_CAP_RP)
+                    <= stat_war_weight(0, ip) + 1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -300,14 +309,34 @@ class TestUnifiedSurplusEstablishedMLB:
         result = compute_player_value(**self._base_args())
         assert len(result["breakdown"]) == 3
 
-    def test_pitcher_blend_unchanged_full_confidence(self):
-        """Hitters-first scope: a pitcher with a full-confidence sample STILL
-        blends at full stat_confidence (peak_war == stat_war), unaffected by the
-        hitter stat-WAR cap. The pitcher path is deferred to its own session."""
+    def test_pitcher_blend_capped_like_hitters(self):
+        """Starting pitchers now use the SAME capped stat-WAR blend as hitters:
+        a deep IP sample tops out at 0.30 weight, so peak_war stays tool-anchored
+        (NOT equal to stat_war). stat_confidence still reaches 1.0 (fades prospect
+        discounts) but no longer drives the WAR blend. (Session 108 pitcher pass.)"""
+        from statsplusplus.evaluation.player_value import stat_war_weight
+        from statsplusplus.evaluation.constants import STAT_WAR_WEIGHT_CAP
         result = compute_player_value(**self._base_args(
             bucket="SP", career_pa=0, career_ip=600.0, stat_war=3.0))
-        assert result["stat_confidence"] == 1.0
-        assert abs(result["peak_war"] - result["stat_war"]) < 1e-6
+        assert result["stat_confidence"] == 1.0          # discounts fully faded
+        sw = stat_war_weight(0, 600.0, cap=STAT_WAR_WEIGHT_CAP)
+        assert sw == STAT_WAR_WEIGHT_CAP                  # deep sample -> cap
+        expected = (1 - sw) * result["tool_war"] + sw * result["stat_war"]
+        assert abs(result["peak_war"] - expected) < 1e-6
+
+    def test_reliever_blend_uses_lower_cap(self):
+        """Relievers get an even lower stat-WAR cap (0.15): an RP's small, noisy
+        IP sample barely predicts next season, so it overrides the tool
+        projection less than a starter's. A good-tools RP with an unlucky IP
+        sample keeps most of his tool value."""
+        from statsplusplus.evaluation.player_value import stat_war_weight
+        from statsplusplus.evaluation.constants import STAT_WAR_WEIGHT_CAP_RP
+        result = compute_player_value(**self._base_args(
+            bucket="RP", career_pa=0, career_ip=300.0, stat_war=0.2))
+        sw = stat_war_weight(0, 300.0, cap=STAT_WAR_WEIGHT_CAP_RP)
+        assert sw == STAT_WAR_WEIGHT_CAP_RP              # plateaued at RP cap
+        # peak_war leans heavily on tool_war, not the 0.2 stat sample.
+        assert result["peak_war"] > 0.6 * result["tool_war"]
 
 
 # ---------------------------------------------------------------------------

@@ -211,10 +211,12 @@ of a season, ≈0.25 at a full season). This stops an unlucky part-season from
 halving a good hitter's projection — and symmetrically stops a lucky part-season
 from inflating a weak one. (This is separate from "prospect vs established"
 treatment, which still fully fades the prospect discounts once a player has a real
-track record.) **Pitchers** currently still let stat WAR drive the projection for
-established arms (the pitcher path is being revisited separately). Pitchers who
-convert between SP and RP use their prior role's stats scaled by IP ratio (SP→RP ×
-0.46, RP→SP × 2.15) rather than being treated as unproven.
+track record.) **Pitchers** work the same way — the ratings projection leads and
+the WAR sample is a capped adjustment: starters cap at ~0.30 like hitters;
+relievers at ~0.15, because a reliever's small, noisy IP sample barely predicts
+his next season. Pitchers who convert between SP and RP use their prior role's
+stats scaled by IP ratio (SP→RP × 0.46, RP→SP × 2.15) rather than being treated
+as unproven.
 
 **Salary** comes from the actual contract if one exists. For pre-arb players, the
 model estimates remaining control years from games-based fractional service time —

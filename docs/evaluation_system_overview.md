@@ -351,25 +351,33 @@ should shed all prospect treatment, so this still reaches 1.0.
 | ~250 PA / ~80 IP | ~0.50 | Half-faded. |
 | ~400 PA / ~120 IP | ~1.00 | Established. Prospect discounts gone. |
 
-**stat_war_weight** (hitters) controls only how much the noisy MLB WAR *sample*
-overrides the tool-based WAR projection. It is **slow and CAPPED** — it never
-exceeds ~0.30, because a hold-out (predict next-season WAR) showed the tool
-projection beats the WAR sample at every sample size, in all three leagues. A
-third of a season of unlucky results must not halve a good player's projection
-(the Jim Dunn case: 333 PA was getting 0.77 weight; it now gets ~0.12).
+**stat_war_weight** controls only how much the noisy MLB WAR *sample* overrides
+the tool-based WAR projection. It is **slow and CAPPED** — it never approaches
+1.0, because a next-season-WAR hold-out (hitters AND pitchers, all three leagues)
+showed the tool projection beats the WAR sample at every sample size. A third of
+a season of unlucky results must not halve a good player's projection (the Jim
+Dunn case: 333 PA was getting 0.77 weight; it now gets ~0.12), and a hot sample
+must not inflate one into a fantasy (a stat-only 9-WAR ace projection off one
+lucky season settles to a still-elite ~6).
 
 | Career MLB sample | stat_war_weight | Meaning |
 |---|---|---|
-| < 50 PA | 0.00 | Noise ignored. |
-| ~330 PA | ~0.12 | Tools lead strongly. |
-| ~600 PA | ~0.25 | Tools still lead. |
-| ≥ ~700 PA | 0.30 (cap) | Deepest samples still capped — tools lead. |
+| < 50 PA / 15 IP | 0.00 | Noise ignored. |
+| ~330 PA / ~100 IP | ~0.12 | Tools lead strongly. |
+| ~600 PA / ~180 IP | ~0.25 | Tools still lead. |
+| plateau | 0.30 | Hitters + starting pitchers cap. |
 
-Pitchers currently keep the legacy full-`stat_confidence` WAR blend (the pitcher
-path — role-dependent stuff, movement-driven WAR — needs its own validation;
-scoped as hitters-first). This design removes the hard border between a
-"prospect" model and an "MLB" model: a player moves smoothly from one to the
-other as the sample grows, while his WAR projection stays tool-anchored.
+**Relievers** get a LOWER cap (**0.15**): an RP's small, noisy IP sample barely
+predicts his next season (hold-out: tool R² 0.54 vs stat R² 0.12, optimal flat
+weight ~0.02-0.05), so it overrides the tool projection even less than a
+starter's. (Because the WAR blend no longer lets stats dominate an established
+RP, the RP tool-WAR cap — which keeps the composite blend from inflating RP
+projections — now applies at all sample sizes, not just for prospects.)
+
+This design removes the hard border between a "prospect" model and an "MLB"
+model: a player moves smoothly from one to the other as the sample grows (via
+`stat_confidence` fading his prospect discounts), while his WAR projection stays
+tool-anchored (via the capped `stat_war_weight`).
 
 The system also projects the WAR for each future year. It ages each facet on its
 own curve. Baserunning declines first and fastest. The bat declines last. Defense

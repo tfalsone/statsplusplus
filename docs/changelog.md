@@ -45,8 +45,25 @@ Re-ran `fv_calc` on all three leagues (PPL: 111 up / 131 down / 243 ~same, mean
 −0.06). Tests: `TestStatWarWeight` + updated established/crossover assertions;
 full suite 1067 + 26 web smoke green.
 
-**Migration note:** `peak_war`/surplus for established hitters update on each
-league's next `fv_calc`/refresh (already re-run for emlb/vmlb/ppl here).
+**Capped stat-WAR blend — pitchers (follow-on).** Extended the capped blend to
+pitchers, confirmed by its own next-season-WAR hold-out: tool R² beat stat R² for
+both roles (SP 0.47 vs 0.26; RP 0.54 vs 0.12) and the old full-confidence ramp
+(0.31) was far worse than any capped ramp (~0.50). Starters use the same 0.30 cap
+as hitters; **relievers use a lower 0.15 cap** (`STAT_WAR_WEIGHT_CAP_RP`) — an
+RP's small IP sample barely predicts his next season (optimal flat weight
+~0.02-0.05). `stat_war_weight` gained an optional `cap` arg; Step 2 now routes all
+players through it (RP → RP cap). The RP tool-WAR cap (guards against the composite
+blend inflating RP projections) was gated on `sc < 0.75` on the premise that
+established RPs were "driven by stat_war" — no longer true, so it now applies at
+all sample sizes. Re-ran fv_calc on all three leagues: the correction is symmetric
+— unlucky-sample arms recover toward tools (good relievers no longer buried, the
+Session-98 case), and lucky-sample arms regress (e.g. an emlb SP projecting 9.4 WAR
+off one hot season settles to a still-elite 6.0, ordering preserved). Tests:
+`test_pitcher_blend_capped_like_hitters`, `test_reliever_blend_uses_lower_cap`,
+`test_cap_override_lowers_plateau`. Full suite 1069 green.
+
+**Migration note:** `peak_war`/surplus for established hitters AND pitchers update
+on each league's next `fv_calc`/refresh (already re-run for emlb/vmlb/ppl here).
 
 ---
 

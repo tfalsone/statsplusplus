@@ -286,9 +286,14 @@ STAT_CONFIDENCE_EXPONENT: float = 1.4
 # 600 PA, plateauing at 0.30. See docs/task_list.md (stat_confidence spike) and
 # the Session-108 investigation.
 STAT_WAR_WEIGHT_PA_FULL: float = 700.0
-STAT_WAR_WEIGHT_IP_FULL: float = 210.0   # ~3x the per-season IP-to-PA ratio of the PA floor
+STAT_WAR_WEIGHT_IP_FULL: float = 210.0   # ~1.2 full SP seasons
 STAT_WAR_WEIGHT_EXPONENT: float = 1.2
-STAT_WAR_WEIGHT_CAP: float = 0.30
+STAT_WAR_WEIGHT_CAP: float = 0.30        # hitters + starting pitchers
+# Relievers get a LOWER cap: an RP's small, noisy IP sample carries almost no
+# next-season signal (hold-out: tool R² 0.54 vs stat R² 0.12, optimal flat
+# weight ~0.02-0.05). 0.15 keeps a little stat influence while staying far below
+# the old ~1.0 that crushed good relievers off 40-50 noisy IP (Session 98/108).
+STAT_WAR_WEIGHT_CAP_RP: float = 0.15
 STAT_WAR_WEIGHT_PA_MIN: int = 50
 STAT_WAR_WEIGHT_IP_MIN: float = 15.0
 
