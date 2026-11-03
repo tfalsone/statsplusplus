@@ -149,9 +149,14 @@ breakdown** (`spring_change_breakdown`): the config is diffed into discrete move
 role tweaks) and each move's win / run-diff impact is its SEQUENTIAL marginal
 effect applied in canonical order, so the moves sum exactly to the headline
 total. Season luck cancels between two configs, so the delta is precise; the
-±`WIN_BAND_SD` band is a quiet context line. Four views render one shared config (Board / Decisions /
-Field / Table, default Board), edited in place (patches header + active view, no full
-re-render). Playing time is a derived PA "pie": a fixed slot budget (~658 PA, 467 vs
+±`WIN_BAND_SD` band is a quiet context line. Five views render one shared config (Board / Decisions /
+Lineups / Field / Table, default Board), edited in place (patches header + active view,
+no full re-render). The **Lineups** view shows two projected starting lineups — vs RHP
+and vs LHP — derived from the PA pie (`_spring_lineup_cards` → `constructed.lineups`):
+per position, the starter vs each hand is whoever takes the most PA in that hand's
+wedge, so a platoon surfaces as different names in the two cards; each slot shows the
+starter's projected OPS+ vs that hand and the card header shows the L/R/S mix (batting
+order is not modeled — ≈0 WAR). Playing time is a derived PA "pie": a fixed slot budget (~658 PA, 467 vs
 RHP / 191 vs LHP) filled by platoon assignment × realistic start-shares (backup
 catcher required), with per-player PA sliders, conservation (reallocating draws from
 other players), add/remove, and three-way splits. **Each slot's contribution is

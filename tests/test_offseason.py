@@ -1536,6 +1536,42 @@ def test_spring_staff_ip_covers_a_real_season(q):
     assert rp_ip >= 350, f"bullpen IP {rp_ip} too low for a full season"
 
 
+def test_spring_lineup_cards_vs_each_hand(q):
+    """`constructed.lineups` gives a projected starter per position vs RHP and
+    vs LHP, derived from the PA pie. An everyday roster shows the same names in
+    both cards; a platoon shows different starters at that slot."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    res = q.get_spring_projection(TEAM_ID)
+    lu = res["constructed"]["lineups"]
+    assert set(lu) == {"R", "L"}
+    assert lu["R"] and lu["L"]
+    for hand in ("R", "L"):
+        for slot in lu[hand]:
+            assert set(slot) >= {"pos", "pid", "name", "bats", "ops", "is_platoon"}
+    # Default (no platoon configured) → same starter at each position in both.
+    rmap = {s["pos"]: s["pid"] for s in lu["R"]}
+    lmap = {s["pos"]: s["pid"] for s in lu["L"]}
+    common = set(rmap) & set(lmap)
+    assert common and all(rmap[p] == lmap[p] for p in common), "no platoon → same starters"
+    # Configure a platoon at 1B (starter vs RHP, a partner vs LHP) and confirm
+    # the two cards diverge at 1B with the slot flagged is_platoon.
+    starter_1b = rmap.get("1B")
+    partner = next((p["player_id"] for p in res["pool"]
+                    if not p["is_pitcher"] and "1B" in p.get("eligible", [])
+                    and p["player_id"] != starter_1b), None)
+    assert starter_1b and partner
+    cfg = dict(res["config"])
+    cfg["pa_alloc"] = dict(cfg.get("pa_alloc") or {})
+    cfg["pa_alloc"]["1B"] = {starter_1b: {"r": q._SPRING_PA_VS_RHP, "l": 0},
+                             partner: {"r": 0, "l": q._SPRING_PA_VS_LHP}}
+    lu2 = q.get_spring_projection(TEAM_ID, cfg)["constructed"]["lineups"]
+    r1b = next(s for s in lu2["R"] if s["pos"] == "1B")
+    l1b = next(s for s in lu2["L"] if s["pos"] == "1B")
+    assert r1b["pid"] == starter_1b and l1b["pid"] == partner
+    assert r1b["is_platoon"] and l1b["is_platoon"]
+
+
 def test_spring_hitter_rows_carry_batting_hand(q):
     """Lineup starters, bench reserves, and pool hitters carry `bats` (L/R/S)
     for the lineup-balance handedness badge."""

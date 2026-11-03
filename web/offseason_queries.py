@@ -2909,7 +2909,64 @@ def _spring_contributions(pool, config, staff_ip=None):
         "active_hitters": active_hitters,
         "hitter_pie": {str(k): v for k, v in hitter_pie.items()},
     }
+    constructed["lineups"] = _spring_lineup_cards(constructed_lineup, by_id)
     return contribs, constructed, overalloc
+
+
+# Standard defensive field order for the lineup cards (batting ORDER is out of
+# scope — ~0 WAR — so we list by position, the OOTP vs-LHP/vs-RHP card layout).
+_SPRING_LINEUP_ORDER = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"]
+
+
+def _spring_lineup_cards(constructed_lineup, by_id):
+    """Projected starting lineup vs RHP and vs LHP, derived from the board's
+    per-position PA pie (no new decisions — a VIEW of the deployment already set).
+
+    For each field position + DH and each opponent hand, the starter is the
+    player taking the most PA in THAT hand's wedge (`pa_r` / `pa_l`). A platoon
+    surfaces here as different names in the two cards (the strong-side bat vs the
+    hand he mashes, his partner vs the other). Returns::
+
+        {"R": [{pos, pid, name, bats, ops, is_platoon}, ...],   # vs RHP
+         "L": [ ... ]}                                           # vs LHP
+
+    `ops` is the player's projected OPS+ vs that hand (from his split stats);
+    `is_platoon` marks a slot whose vs-R and vs-L starters differ. Positions with
+    no rostered starter are omitted (an incomplete lineup simply shows fewer
+    slots). Pure — reads only the constructed lineup + pool dicts.
+    """
+    cards = {"R": [], "L": []}
+    for pos in _SPRING_LINEUP_ORDER:
+        entry = constructed_lineup.get(pos)
+        if not entry:
+            continue
+        rows = entry.get("players", []) or []
+        if not rows:
+            continue
+        # Who starts vs each hand = most PA in that hand's wedge (ties → the
+        # higher-PA overall row, which is rows[0] by construction).
+        def _starter(handkey):
+            cand = [r for r in rows if (r.get(handkey, 0) or 0) > 0]
+            if not cand:
+                return None
+            return max(cand, key=lambda r: (r.get(handkey, 0) or 0))
+        vsR = _starter("pa_r")
+        vsL = _starter("pa_l")
+        platoon = bool(vsR and vsL and vsR["pid"] != vsL["pid"])
+        for hand, starter in (("R", vsR), ("L", vsL)):
+            if not starter:
+                continue
+            p = by_id.get(starter["pid"], {})
+            st = p.get("stats") or {}
+            ops = st.get("ops_vs_r") if hand == "R" else st.get("ops_vs_l")
+            cards[hand].append({
+                "pos": pos, "pid": starter["pid"],
+                "name": p.get("name", starter.get("name")),
+                "bats": p.get("bats"),
+                "ops": round(ops) if ops is not None else None,
+                "is_platoon": platoon,
+            })
+    return cards
 
 
 def _spring_league_mean_war(conn, ed, cfg, pyth_exp):

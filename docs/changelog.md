@@ -46,6 +46,21 @@ left-handed bats), alongside the existing backup-catcher and over-allocation
 warnings. Test: `test_spring_bullpen_handedness_warning` (lefty present → quiet;
 all-right pen → warns). Full suite 1089 + 26 web smoke green.
 
+**Spring Lineups view — projected starters vs RHP / vs LHP.** A new "Lineups"
+tab renders two 9-slot lineup cards (vs RHP, vs LHP) derived from the board's
+playing-time pie — no new decisions, a VIEW of the deployment already set.
+`_spring_lineup_cards(constructed_lineup, by_id)` (pure) picks, per position +
+DH and per opponent hand, the starter taking the most PA in that hand's wedge
+(`pa_r`/`pa_l`); a platoon surfaces as different names in the two cards (flagged
+`is_platoon`). Each slot shows position, player, batting-hand badge, and the
+starter's projected OPS+ vs that hand (color-coded strong/weak); the card header
+shows the L/R/S handedness mix + the opponent-hand PA frequency (~71% / ~29%).
+Returned as `constructed.lineups` `{"R":[...], "L":[...]}`. Batting ORDER is not
+modeled (≈0 WAR, per the design spec) — this is the OOTP vs-LHP/vs-RHP deployment
+card by defensive position. Test: `test_spring_lineup_cards_vs_each_hand`
+(everyday → same starters both cards; a configured 1B platoon → divergent
+starters flagged is_platoon). Full suite 1091 + 26 web smoke green.
+
 **Spring batter handedness badges.** `bats` (L/R/S from `latest_ratings`) is now
 carried on every pool hitter, lineup starter, and bench reserve and shown as an
 RHB/LHB/SHB badge on the Board lineup rows, the swap candidate pool, the bench
