@@ -1175,6 +1175,12 @@
   .sp-bench-add { background:var(--surface); color:var(--text-dim); border:1px dashed var(--border);
         border-radius:4px; font-size:11px; padding:2px 6px; margin-top:4px; cursor:pointer; }
   .sp-bench-add:hover { border-color:var(--green); color:var(--text); }
+  .sp-staff-add { margin-top:6px; }
+  /* 26-man roster count readout in the header record sub-line */
+  .sp-rostercount { font-weight:600; }
+  .sp-rostercount.ok { color:var(--green); }
+  .sp-rostercount.under { color:#d8a657; }
+  .sp-rostercount.over { color:var(--red); }
   /* board */
   .sp-grid3 { display:grid; grid-template-columns:1.1fr 1fr 1fr; gap:16px; align-items:start; }
   @media(max-width:900px){ .sp-grid3{grid-template-columns:1fr;} .spring-proj{grid-template-columns:1fr; gap:10px;} }
@@ -1807,6 +1813,40 @@
     return '<select class="sp-bench-add" onchange="if(this.value)springAddBench(Number(this.value))">'+o+'</select>';
   }
 
+  // "+ add arm": a pitcher not already on the staff, RP-eligible, ranked by his
+  // RP-role value (rp_war — what he's worth in a bullpen role, not a starter's
+  // full-season WAR). Lets the GM carry an 8th reliever as the 26th man.
+  function armAddControl(){
+    var onStaff = {};
+    (state.config.rotation||[]).forEach(function(pid){ onStaff[pid]=1; });
+    (state.config.bullpen||[]).forEach(function(pid){ onStaff[pid]=1; });
+    var opts = state.pool.filter(function(p){
+        return p.is_pitcher && !onStaff[p.player_id] && (p.eligible||[]).indexOf('RP') !== -1;
+      }).sort(function(a,b){ return (b.rp_war||b.war_proj) - (a.rp_war||a.war_proj); }).slice(0, 40);
+    if (!opts.length) return '';
+    var o = '<option value="">+ add arm…</option>' + opts.map(function(p){
+      var lvl = (p.level && p.level !== 'MLB') ? ' '+p.level : '';
+      var v = (p.rp_war!=null?p.rp_war:p.war_proj);
+      return '<option value="'+p.player_id+'">'+esc(shortName(p.name))
+           + ' ('+v.toFixed(1)+')'+lvl+'</option>';
+    }).join('');
+    return '<select class="sp-bench-add" onchange="if(this.value)springAddArm(Number(this.value))">'+o+'</select>';
+  }
+
+  // 26-man roster count: lineup starters + bench reserves + rotation + bullpen,
+  // counting each unique body once (a platoon partner in a pie but not on the
+  // explicit bench still occupies a spot). Returns {n, over} for the readout.
+  function rosterCount(){
+    var ids = {};
+    var L = state.config.lineup || {};
+    Object.keys(L).forEach(function(k){ if (L[k]) ids[L[k]]=1; });
+    (state.constructed && state.constructed.active_hitters || []).forEach(function(pid){ ids[pid]=1; });
+    (state.config.bench||[]).forEach(function(pid){ ids[pid]=1; });
+    (state.config.rotation||[]).forEach(function(pid){ ids[pid]=1; });
+    (state.config.bullpen||[]).forEach(function(pid){ ids[pid]=1; });
+    return Object.keys(ids).length;
+  }
+
   // ── sticky projection header ──
   function renderHeader() {
     var p = state.projection;
@@ -1838,9 +1878,11 @@
     document.getElementById('spring-proj').innerHTML =
         '<div><div class="sp-rec-lab">Projected · true talent</div>'
       + '<div class="sp-rec-big">'+Math.round(p.wins)+'<span style="color:var(--text-dim)">–</span>'+Math.round(p.losses)+'</div>'
-      + '<div class="sp-rec-sub">'+(p.run_diff>=0?'+':'')+Math.round(p.run_diff)+' run diff · '+Math.round(p.team_war)+' WAR</div>'
+      + '<div class="sp-rec-sub">'+(p.run_diff>=0?'+':'')+Math.round(p.run_diff)+' run diff · '+Math.round(p.team_war)+' WAR'
+      + ' · <span id="spring-roster-count" class="sp-rostercount"></span></div>'
       + '<div class="sp-band">typically ±'+band+' wins (season luck) — not applied to edits</div></div>'
       + '<div class="sp-facets">'+facets+'</div>' + dhtml;
+    renderRosterCount();
   }
 
   // ── BOARD ──
@@ -1941,7 +1983,23 @@
       + 'platoon pie shows his projected contribution)</span><br>'
       + (bench||'<span class="sp-bench-sub">no reserves</span>') + ' ' + benchAddControl() + '</div></div>'
       + '<div><div class="sp-colh">Rotation</div>'+rot+'</div>'
-      + '<div><div class="sp-colh">Bullpen</div>'+pen+'</div></div>';
+      + '<div><div class="sp-colh">Bullpen</div>'+pen
+      + '<div class="sp-staff-add">'+armAddControl()+'</div></div></div>';
+    renderRosterCount();
+  }
+
+  // Roster-count readout: "N / 26" (green when exactly 26, amber otherwise) so
+  // an under/over-filled roster is visible. The 26th spot is a flex choice
+  // between a 5th bench bat ("+ add reserve") and an 8th arm ("+ add arm").
+  function renderRosterCount(){
+    var el = document.getElementById('spring-roster-count');
+    if (!el) return;
+    var n = rosterCount();
+    el.textContent = n + ' / 26';
+    el.className = 'sp-rostercount ' + (n === 26 ? 'ok' : (n < 26 ? 'under' : 'over'));
+    el.title = n === 26 ? 'Full 26-man roster'
+             : (n < 26 ? ('Roster has ' + (26 - n) + ' open spot(s) — add a reserve or an arm')
+                       : ('Roster is ' + (n - 26) + ' over — drop a player'));
   }
 
   // ── DECISIONS ──
@@ -2419,6 +2477,20 @@
     var before = JSON.parse(JSON.stringify(state.config));
     state.config.bench = state.config.bench || [];
     if (state.config.bench.indexOf(pid) === -1) state.config.bench.push(pid);
+    reproject(before);
+  };
+
+  // Add an arm to the bullpen (the flexible 26th-spot alternative to a 5th
+  // bench bat). Appends to config.bullpen; the server assigns a default role
+  // and role-scaled IP. Mirrors springAddBench.
+  window.springAddArm = function (pid) {
+    if (!pid) return;
+    var before = JSON.parse(JSON.stringify(state.config));
+    var cfg = state.config;
+    // Ensure he isn't double-rostered as a starter.
+    cfg.rotation = (cfg.rotation || []).filter(function (x) { return x !== pid; });
+    cfg.bullpen = cfg.bullpen || [];
+    if (cfg.bullpen.indexOf(pid) === -1) cfg.bullpen.push(pid);
     reproject(before);
   };
 

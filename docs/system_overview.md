@@ -187,13 +187,26 @@ explicit `config.bench` reserves), so no rostered body goes unaccounted. The
 (primary — his value if pressed into duty, since a pure unused reserve's projected
 contribution is ~0) plus his projected pie contribution + a "plays {pos}" tag when
 he's actually filling a platoon/backup pie. An "+ add reserve" control adds bench
-depth (hitters not already rostered). **Staff (rotation/bullpen) rows** carry the
-same rate-vs-contribution honesty: each shows the pitcher's full-season WAR RATE
-(primary) plus his role-scaled projected contribution (`war × role share`) and
-projected innings (`share × full-role IP baseline` — `_SPRING_SP_FULL_IP` 190,
-`_SPRING_RP_FULL_IP` 65), so a 50%-share middle reliever no longer displays a
-full-season WAR he won't accrue. Plans persist per team in
-`config/spring_plans.json`. Endpoints: `/api/spring-plan`
+depth (hitters not already rostered). **Staff (rotation/bullpen) rows** are valued
+by the ROLE each arm fills (not a bundled native-role projection): a pitcher's
+`war_proj` is converted to a per-IP rate over his native-role full-season
+workload, then re-applied to the IP he'll throw in his assigned role — so a
+starter considered for the bullpen is valued on relief innings (~65), not a
+starter's ~190 (`_spring_contributions._war_per_ip`). Each row shows a per-full-
+slot WAR RATE (role-valued talent) plus his calibrated role-IP CONTRIBUTION and
+projected innings. **Staff IP is calibrated per league** (`_spring_staff_ip` —
+the top-5 starter + top-8 reliever IP averaged across MLB teams in
+`team_pitching_stats`, so the rostered staff covers a realistic season: ~780 SP +
+~536 RP ≈ 1300 IP in vMLB, NOT the ~1080 the old flat 65-IP-per-arm RP baseline
+implied; the remaining ~150 IP to a full ~1444 team total is taxi-squad/callup
+innings off the 26). Role IP is distributed by each role's share weight over a
+FULL staff's weight sum, so a SHORT staff (e.g. a 7-man pen) under-covers the
+season rather than inflating each remaining arm's innings. **The roster is an
+explicit 26:** the auto-config fills a full 8-man bullpen (ranked by RP-role
+value), the bench fills to 4, and the 26th spot is a GM choice between a 5th bench
+bat ("+ add reserve") and an 8th arm ("+ add arm", `springAddArm`); a `N / 26`
+count readout in the header (green at 26, amber under, red over) shows the roster
+size. Plans persist per team in `config/spring_plans.json`. Endpoints: `/api/spring-plan`
 (GET/POST/DELETE), `/api/spring-project` (POST). The pool's wOBA stat surfaces the
 exact stored model projection (`ratings.proj_woba`, written by the evaluation engine
 from the tool→wOBA fit), falling back to an OPS+ × league-wOBA estimate for leagues

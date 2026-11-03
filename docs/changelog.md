@@ -9,6 +9,33 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 Follow-on work from the Spring Training builder, driven by hands-on testing of
 the spring page.
 
+**Spring pitching: full 26-man roster, role-based pitcher WAR, calibrated staff
+IP.** Three connected fixes from hands-on testing. (1) **26th-spot / roster
+count.** The auto-config used to drop below-replacement bullpen arms, leaving the
+roster at 25 with no way to grow the pen. It now fills a full 8-man bullpen
+(ranked by RP-role value), and the 26th spot is an explicit GM choice between a
+5th bench bat ("+ add reserve") and an 8th arm — new "+ add arm" control
+(`armAddControl` + `springAddArm`) in the Bullpen column, mirroring the bench
+add. A `N / 26` count readout in the header (green at 26, amber under, red over)
+makes roster size visible. (2) **Role-based pitcher valuation.** Staff arms were
+valued off `war_proj` — a full-season projection in the pitcher's NATIVE role —
+so a starter considered for relief showed his ~190-IP starter WAR and out-ranked
+true relievers in the swap menu. Now `_spring_contributions._war_per_ip` converts
+`war_proj` to a per-IP rate over the native-role workload and re-applies it to the
+role the arm actually fills; pool rows expose `sp_war`/`rp_war` so the add-arm and
+swap menus rank relievers by relief value. (3) **Staff IP covers a real season.**
+The old flat `role_share × 65` RP baseline projected ~32 IP/arm (~225 total RP IP
+— the whole staff covered ~1080 of a ~1444-IP season). New `_spring_staff_ip`
+calibrates per league from `team_pitching_stats`: the top-5 starter and top-8
+reliever IP averaged across MLB teams (vMLB ~780 SP + ~536 RP ≈ 1300 rostered IP;
+the gap to the full team total is taxi-squad/callup innings off the 26). Role IP
+distributes by share weight over a FULL staff's weight sum, so a short staff
+under-covers rather than inflating each remaining arm. Result on vMLB: closer ~88
+IP, setups ~78, middles ~63 (was ~32–46). Tests updated to the new semantics
+(`test_spring_recommend_fills_full_bullpen`, `_staff_ip_covers_a_real_season`,
+`_pitcher_valued_by_role_not_native_workload`); full suite 1088 + 26 web smoke
+green.
+
 **Spring roster valued facet-by-facet in run space (fixes the out-of-position
 platoon-bat bug).** The spring allocator previously valued every hitter off the
 pre-bundled scalar `war_proj`, swapping the positional adjustment for the slot

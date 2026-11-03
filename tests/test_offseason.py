@@ -771,20 +771,25 @@ def test_spring_recommend_roster_sizes(q):
     assert len(allpids) == len(set(allpids)), "a player is double-rostered"
 
 
-def test_spring_recommend_skips_below_replacement_reliever(q):
-    """A below-replacement reliever (negative WAR) is NOT auto-rostered even when
-    there's an open bullpen spot — a replacement-level call-up (~0 WAR) is
-    strictly better than carrying a negative arm. Remove the fixture's RP pool
-    down to 6 positive arms so two pen slots are open, then add a negative arm
-    that the OLD code (top-8-by-WAR) would have grabbed; confirm it's left out
-    and the pen simply runs short."""
+def test_spring_recommend_fills_full_bullpen(q):
+    """The auto 26-man fills a FULL 8-man bullpen so the roster totals 26 (the
+    26th spot is an explicit field-vs-pen choice the GM makes via the add-arm /
+    add-reserve controls — a short pen that silently left the roster at 25 was
+    the reported bug). The pen is ranked by RP-ROLE value (rp_war), not a
+    starter's native full-season WAR, so relievers are valued on relief innings.
+    When fewer arms than slots exist, the pen simply carries what's available."""
     conn = q.get_db()
     _seed_spring_pool(conn)
-    # Drop two fixture relievers (746, 747) so only 6 positive arms remain.
+    cfg = q.get_spring_projection(TEAM_ID)["config"]
+    # With a full fixture RP pool, the bullpen fills to the 8-man default.
+    assert len(cfg["bullpen"]) == 8, "auto roster should carry a full 8-man pen"
+    # Drop two fixture relievers (746, 747) so only ~6 positive arms remain, plus
+    # a clearly below-replacement arm. The pen still fills (26-man guarantee) —
+    # it does NOT run short just because an arm is below replacement; the GM can
+    # drop it for a 5th bench bat.
     for pid in (746, 747):
         conn.execute("DELETE FROM player_evaluation WHERE player_id=?", (pid,))
         conn.execute("DELETE FROM players WHERE player_id=?", (pid,))
-    # Add a clearly below-replacement arm — now it WOULD rank in the top 8.
     conn.execute(
         "INSERT OR REPLACE INTO player_evaluation (player_id, eval_date, name, "
         "bucket, age, composite, ceiling, level, team_id, parent_team_id, peak_war) "
@@ -796,13 +801,9 @@ def test_spring_recommend_skips_below_replacement_reliever(q):
         "VALUES (?,?,?,?,?,?,?,?,?)",
         (770, "Negative Arm", 29, TEAM_ID, 0, "1", 1, 13, 1))
     conn.commit()
-    cfg = q.get_spring_projection(TEAM_ID)["config"]
-    assert 770 not in cfg["bullpen"], "a negative-WAR arm must not be auto-rostered"
-    # The pen runs short rather than padding with the negative arm.
-    assert len(cfg["bullpen"]) == 6
-    # Every auto-rostered reliever is above the replacement floor.
-    byid = {p["player_id"]: p for p in q.get_spring_projection(TEAM_ID)["pool"]}
-    assert all(byid[pid]["war_proj"] > 0 for pid in cfg["bullpen"] if pid in byid)
+    cfg2 = q.get_spring_projection(TEAM_ID)["config"]
+    # The pen carries every available arm toward the 8-man target (fills up).
+    assert len(cfg2["bullpen"]) >= 6
 
 
 def test_spring_below_replacement_reliever_fits_open_slot_if_flagged(q):
@@ -1495,33 +1496,49 @@ def test_spring_caps_cross_position_over_allocation(q):
 
 
 def test_spring_staff_rows_carry_contribution_and_proj_ip(q):
-    """Rotation + bullpen rows carry full-season `war` (rate), role-scaled
-    `contrib_war` (= war × role share, ≤ war), and `proj_ip` (share × full-role
-    IP baseline). A reliever's contribution is well below his rate; a starter's
-    is closer."""
+    """Rotation + bullpen rows carry a per-full-slot `war` (role-valued talent
+    rate), a calibrated-role-IP `contrib_war` (value over his projected role
+    innings), and `proj_ip`. A starter's projected IP exceeds a reliever's."""
     _seed_spring_pool(q.get_db())
     res = q.get_spring_projection(TEAM_ID)
     con = res["constructed"]
     for r in con["rotation"] + con["bullpen"]:
         assert set(r) >= {"war", "contrib_war", "proj_ip", "role", "pt_pct"}
-        # Contribution never exceeds the full-season rate (share ≤ 1).
-        assert r["contrib_war"] <= r["war"] + 1e-6
         assert r["proj_ip"] > 0
-    # SP projected IP should exceed RP projected IP (full-role baselines differ).
+    # SP projected IP should exceed RP projected IP (starters throw more).
     if con["rotation"] and con["bullpen"]:
         max_rp_ip = max(r["proj_ip"] for r in con["bullpen"])
         min_sp_ip = min(r["proj_ip"] for r in con["rotation"])
         assert min_sp_ip > max_rp_ip
 
 
-def test_spring_reliever_contribution_below_rate(q):
-    """A bullpen arm's role share (<=0.70) means his projected contribution is
-    materially below his full-season rate — the honesty fix the display ports."""
+def test_spring_staff_ip_covers_a_real_season(q):
+    """The projected staff IP sums to a realistic full season (~1300-1600 team
+    IP), NOT the ~1080 the old flat 65-IP-per-RP baseline implied. Confirms the
+    bullpen carries a real reliever workload (issue: RP IP far too low)."""
     _seed_spring_pool(q.get_db())
     con = q.get_spring_projection(TEAM_ID)["constructed"]
-    for r in con["bullpen"]:
-        if r["war"] > 0.3:   # meaningful arm, avoid near-zero rounding noise
-            assert r["contrib_war"] < r["war"]
+    sp_ip = sum(r["proj_ip"] for r in con["rotation"])
+    rp_ip = sum(r["proj_ip"] for r in con["bullpen"])
+    total = sp_ip + rp_ip
+    assert 1200 <= total <= 1650, f"staff IP {total} should cover a real season"
+    # The bullpen is a meaningful share of the innings (real pens throw ~40%).
+    assert rp_ip >= 350, f"bullpen IP {rp_ip} too low for a full season"
+
+
+def test_spring_pitcher_valued_by_role_not_native_workload(q):
+    """A pitcher's role-based value scales with the role he FILLS: a given arm's
+    contribution over a full rotation slot (more IP) exceeds his contribution
+    over a bullpen slot (fewer IP). Confirms the role-based-valuation fix — a
+    starter isn't credited a starter's full-season WAR when used in relief."""
+    _seed_spring_pool(q.get_db())
+    pool = q._spring_pool(q.get_db(), TEAM_ID, q._eval_date(q.get_db()))
+    sp = next((p for p in pool if p["is_pitcher"] and p["bucket"] == "SP"
+               and "RP" in p.get("eligible", [])), None)
+    if sp is not None:
+        # The pool exposes both role valuations; SP-role value > RP-role value
+        # for the same arm (a full rotation workload beats a bullpen workload).
+        assert sp["sp_war"] >= sp["rp_war"]
 
 
 def test_spring_bench_view_carries_rate_and_contribution(q):

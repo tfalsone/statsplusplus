@@ -1692,6 +1692,70 @@ def _spring_calibration(conn, pyth_exp):
     return _SPRING_CALIB_CACHE[key]
 
 
+# Fallback full-season staff IP split (generic MLB shape) when a league has no
+# usable team pitching history to calibrate from. ~1444 team IP, ~57/43 SP/RP.
+_SPRING_SP_TOTAL_IP_DEFAULT = 830.0
+_SPRING_RP_TOTAL_IP_DEFAULT = 615.0
+
+
+def _spring_staff_ip(conn):
+    """Per-league SP and RP total-IP targets the OPENING-DAY staff covers, from
+    the league's own MLB pitching history. Returns ``(sp_total_ip,
+    rp_total_ip)`` — the innings the 5-man rotation and the 8-man bullpen each
+    cover over a season.
+
+    Measured as the TOP-N arms per team, NOT the whole staff: a team uses ~12
+    relievers across a season (callups, DL churn), but the Opening-Day 8-man pen
+    realistically covers only the top-8 share (~87% of RP innings in vMLB, ~536
+    of ~614 IP). Attributing the full team RP total to just 8 rostered arms
+    overstates each one's workload (a closer at 110+ IP). So we average the top-5
+    starter and top-8 reliever IP across MLB teams — what a real Opening-Day
+    staff actually throws (the remaining ~13% comes from the taxi squad, off the
+    26). Falls back to the generic split for thin-history leagues. Cached.
+    """
+    key = (id(conn), "staff_ip")
+    if key in _SPRING_CALIB_CACHE:
+        return _SPRING_CALIB_CACHE[key]
+    sp_total = rp_total = None
+    try:
+        yr = conn.execute(
+            "SELECT MAX(year) y FROM pitching_stats WHERE league_id IS NULL"
+        ).fetchone()["y"]
+        if yr is not None:
+            rows = conn.execute("""
+                SELECT team_id, SUM(outs)/3.0 ip, MAX(gs) gs
+                FROM pitching_stats
+                WHERE year=? AND league_id IS NULL AND split_id=1
+                GROUP BY team_id, player_id
+            """, (yr,)).fetchall()
+            from collections import defaultdict
+            team_sp: dict = defaultdict(list)
+            team_rp: dict = defaultdict(list)
+            for r in rows:
+                if not r["ip"]:
+                    continue
+                gs = r["gs"] or 0
+                (team_sp if gs >= 10 else team_rp)[r["team_id"]].append(r["ip"])
+            sp_vals, rp_vals = [], []
+            for tid in set(team_sp) | set(team_rp):
+                sps = sorted(team_sp.get(tid, []), reverse=True)
+                rps = sorted(team_rp.get(tid, []), reverse=True)
+                # MLB staffs only (a full season of innings).
+                if sum(sps) + sum(rps) < 1000:
+                    continue
+                sp_vals.append(sum(sps[:_SPRING_SP_SLOTS]))
+                rp_vals.append(sum(rps[:_SPRING_RP_SLOTS]))
+            if len(sp_vals) >= 4 and len(rp_vals) >= 4:
+                sp_total = sum(sp_vals) / len(sp_vals)
+                rp_total = sum(rp_vals) / len(rp_vals)
+    except Exception:
+        sp_total = rp_total = None
+    out = (sp_total if sp_total else _SPRING_SP_TOTAL_IP_DEFAULT,
+           rp_total if rp_total else _SPRING_RP_TOTAL_IP_DEFAULT)
+    _SPRING_CALIB_CACHE[key] = out
+    return out
+
+
 # Slot -> run-space defensive bucket (fielding_runs / def_curve keys). Field
 # corners share the outfield "COF" curve; CF/IF/C key 1:1; 1B & DH carry no
 # fielding runs (handled inside fielding_runs). Mirrors _SPRING_SLOT_ADJ_KEY
@@ -1855,6 +1919,10 @@ def _spring_pool(conn, team_id, ed):
     # pre-bundled scalar war_proj. Missing (league not re-run on this model
     # version) → _spring_facets falls back to the scalar path gracefully.
     _rs = _spring_run_space(league_dir)
+    # Per-league full-season SP/RP total IP — used for role-based pitcher WAR on
+    # the pool rows (sp_war / rp_war): value an arm at the workload of the role
+    # he'd fill, so the swap menu ranks relievers by relief value.
+    _sp_total_ip, _rp_total_ip = _spring_staff_ip(conn)
     # League ERA/FIP anchors for the pitcher stat projections (display only).
     import json as _json
     _lg_era, _lg_fip = 4.5, 4.5
@@ -1991,6 +2059,17 @@ def _spring_pool(conn, team_id, ed):
         else:
             # Pitchers: an SP can also work in relief; an RP is RP-only.
             d["eligible"] = ["SP", "RP"] if bucket == "SP" else ["RP"]
+            # Role-based WAR (issue: swap menu should rank by the role a pitcher
+            # would FILL, not his native-role full-season value). `war_proj` is
+            # the native-role full-season projection; convert to a per-IP rate
+            # over the native full-season workload and re-scale to the target
+            # role's full-season IP, so an SP shown as a bullpen candidate is
+            # valued on a reliever's innings (~65), not a starter's (~190).
+            native_full_ip = (_sp_total_ip / 5.0) if bucket == "SP" else (_rp_total_ip / _SPRING_RP_SLOTS)
+            native_full_ip = max(1.0, native_full_ip)
+            _war_per_ip = (d["war_proj"] or 0.0) / native_full_ip
+            d["sp_war"] = round(_war_per_ip * (_sp_total_ip / 5.0), 1)
+            d["rp_war"] = round(_war_per_ip * (_rp_total_ip / _SPRING_RP_SLOTS), 1)
             # Projected ERA/FIP from the composite score (depth-chart parity).
             comp = r["composite"] or 50
             d["stats"] = {
@@ -2101,8 +2180,16 @@ def _spring_auto_config(pool, out_of_options=None):
     # replacement-level call-up (~0 WAR), so don't auto-roster him. The GM can
     # still add one manually if he has a reason to.
     rotation = [p["player_id"] for p in sps[:_SPRING_SP_SLOTS]]
-    bullpen = [p["player_id"] for p in rps[:_SPRING_RP_SLOTS]
-               if p["war_proj"] > _SPRING_RP_MIN_WAR]
+    # Bullpen: prefer above-replacement arms, but always fill a full 8-man pen so
+    # the roster totals 26 (the GM can drop the 8th for a 5th bench bat — the
+    # 26th spot is an explicit field-vs-pen choice, surfaced via the "+ add arm"
+    # / "+ add reserve" controls). Rank relievers by their RP-role value
+    # (`rp_war`) rather than native `war_proj`, so a starter-ish arm isn't over-
+    # rated by a starter's full-season projection.
+    def _rp_val(p):
+        return p.get("rp_war", p["war_proj"]) if p["bucket"] == "RP" else p.get("rp_war", p["war_proj"])
+    rps_ranked = sorted(rps, key=_rp_val, reverse=True)
+    bullpen = [p["player_id"] for p in rps_ranked[:_SPRING_RP_SLOTS]]
     used.update(rotation)
     used.update(bullpen)
 
@@ -2399,7 +2486,7 @@ def _spring_suggest_platoon(pool, config, pos):
     }
 
 
-def _spring_contributions(pool, config):
+def _spring_contributions(pool, config, staff_ip=None):
     """Turn a config into playing-time-weighted PlayerContribution list.
 
     Playing time is modeled as PLATOON ASSIGNMENT × START-SHARE (spec §4), not a
@@ -2692,31 +2779,81 @@ def _spring_contributions(pool, config):
     def _role_of(pid):
         return roles.get(pid) or roles.get(str(pid))
 
-    constructed_rotation, constructed_pen = [], []
+    # ── Staff IP + role-based pitcher valuation (issues: season coverage +
+    # role-appropriate WAR) ──
+    # Full-season SP/RP total IP for THIS league (calibrated; generic fallback),
+    # so the projected staff covers a real season (~1444 team IP, ~57/43 SP/RP
+    # in vMLB) instead of the old flat 65-IP-per-arm (~225 RP IP total).
+    sp_total_ip, rp_total_ip = staff_ip or (_SPRING_SP_TOTAL_IP_DEFAULT, _SPRING_RP_TOTAL_IP_DEFAULT)
+    _RP_DEFAULT = ["closer", "setup", "setup", "middle", "middle", "middle", "long", "long"]
+
     rotation_ids = [pid for pid in config.get("rotation", []) if pid in by_id]
+    bullpen_ids = [pid for pid in config.get("bullpen", []) if pid in by_id]
+
+    # Resolve each arm's role + role-share weight, then DISTRIBUTE the group's
+    # total IP across the rostered arms proportional to their weights — so the
+    # staff sums to the real season regardless of how many arms are carried.
+    rot_roles = [(_role_of(pid) or ("sp" + str(min(i + 1, 5)))) for i, pid in enumerate(rotation_ids)]
+    pen_roles = [(_role_of(pid) or (_RP_DEFAULT[i] if i < len(_RP_DEFAULT) else "middle"))
+                 for i, pid in enumerate(bullpen_ids)]
+    rot_w = [_SPRING_PITCHER_ROLE_SHARE.get(r, 0.90) for r in rot_roles]
+    pen_w = [_SPRING_PITCHER_ROLE_SHARE.get(r, 0.50) for r in pen_roles]
+    # Normalize by a FULL staff's role-weight sum (5 SP / 8 RP default shares),
+    # NOT the actual rostered count — so a SHORT staff UNDER-covers the season
+    # (its innings aren't magically absorbed by the remaining arms; the gap is
+    # the taxi-squad/callup innings a thin roster leans on) rather than inflating
+    # each arm's IP. A full 8-man pen distributes the whole RP total; a 7-man pen
+    # covers ~7/8 of it.
+    _FULL_ROT_W = sum(_SPRING_PITCHER_ROLE_SHARE["sp" + str(i)] for i in range(1, _SPRING_SP_SLOTS + 1))
+    _FULL_PEN_W = sum(_SPRING_PITCHER_ROLE_SHARE.get(r, 0.50)
+                      for r in ["closer", "setup", "setup", "middle", "middle", "middle", "long", "long"][:_SPRING_RP_SLOTS])
+    sum_rot_w = max(sum(rot_w), _FULL_ROT_W) if rot_w else _FULL_ROT_W
+    sum_pen_w = max(sum(pen_w), _FULL_PEN_W) if pen_w else _FULL_PEN_W
+
+    # Reference full-role workloads for the per-IP RATE (a stable "value per a
+    # standard full season in this role" figure, independent of how the staff's
+    # IP happens to split). SP ~ a full starter season; RP ~ a full bullpen
+    # season. The CONTRIBUTION uses the calibrated role IP (which sums to the
+    # real season); the RATE uses these references so it reads as talent, not
+    # workload.
+    _SP_REF_IP = sp_total_ip / 5.0          # a full rotation slot
+    _RP_REF_IP = rp_total_ip / _SPRING_RP_SLOTS  # a full bullpen slot (8-man pen)
+
+    def _war_per_ip(pid, native_bucket):
+        """A pitcher's WAR per inning, from his NATIVE-role full-season
+        projection. `war_proj` is a full season in his native role; divide by
+        that native workload to get a rate that can be re-applied to ANY role's
+        innings — so a starter considered for the pen is valued on relief
+        innings, not starter innings (the role-based-valuation fix)."""
+        native_full = _SP_REF_IP if native_bucket == "SP" else _RP_REF_IP
+        return (by_id[pid]["war_proj"] or 0.0) / max(1.0, native_full)
+
+    constructed_rotation, constructed_pen = [], []
     for i, pid in enumerate(rotation_ids):
-        role = _role_of(pid) or ("sp" + str(min(i + 1, 5)))
-        share = _SPRING_PITCHER_ROLE_SHARE.get(role, 0.90)
-        contrib = by_id[pid]["war_proj"] * share
+        role = rot_roles[i]
+        proj_ip = rot_w[i] / sum_rot_w * sp_total_ip
+        wpi = _war_per_ip(pid, by_id[pid].get("bucket"))
+        contrib = wpi * proj_ip            # value over his projected rotation IP
+        rate = wpi * _SP_REF_IP            # value per a full rotation slot (talent)
         contribs.append(PlayerContribution(pid, by_id[pid]["name"], contrib, is_pitcher=True))
         constructed_rotation.append({"pid": pid, "name": by_id[pid]["name"],
-                                     "war": round(by_id[pid]["war_proj"], 1),   # full-season RATE
-                                     "contrib_war": round(contrib, 1),          # role-scaled contribution
-                                     "proj_ip": round(share * _SPRING_SP_FULL_IP),
-                                     "role": role, "pt_pct": round(share * 100),
+                                     "war": round(rate, 1),            # per-full-slot rate (role-valued)
+                                     "contrib_war": round(contrib, 1), # calibrated role-IP contribution
+                                     "proj_ip": round(proj_ip),
+                                     "role": role, "pt_pct": round(rot_w[i] / sum_rot_w * 100),
                                      "stats": by_id[pid].get("stats") or {}})
-    _RP_DEFAULT = ["closer", "setup", "setup", "middle", "middle", "middle", "long", "long"]
-    bullpen_ids = [pid for pid in config.get("bullpen", []) if pid in by_id]
-    for i, pid in enumerate(bullpen_ids[:8]):
-        role = _role_of(pid) or (_RP_DEFAULT[i] if i < len(_RP_DEFAULT) else "middle")
-        share = _SPRING_PITCHER_ROLE_SHARE.get(role, 0.50)
-        contrib = by_id[pid]["war_proj"] * share
+    for i, pid in enumerate(bullpen_ids):
+        role = pen_roles[i]
+        proj_ip = pen_w[i] / sum_pen_w * rp_total_ip
+        wpi = _war_per_ip(pid, by_id[pid].get("bucket"))
+        contrib = wpi * proj_ip            # value over his projected bullpen IP
+        rate = wpi * _RP_REF_IP            # value per a full bullpen slot (talent)
         contribs.append(PlayerContribution(pid, by_id[pid]["name"], contrib, is_pitcher=True))
         constructed_pen.append({"pid": pid, "name": by_id[pid]["name"],
-                                "war": round(by_id[pid]["war_proj"], 1),        # full-season RATE
-                                "contrib_war": round(contrib, 1),               # role-scaled contribution
-                                "proj_ip": round(share * _SPRING_RP_FULL_IP),
-                                "role": role, "pt_pct": round(share * 100),
+                                "war": round(rate, 1),             # per-full-slot rate (role-valued)
+                                "contrib_war": round(contrib, 1),  # calibrated role-IP contribution
+                                "proj_ip": round(proj_ip),
+                                "role": role, "pt_pct": round(pen_w[i] / sum_pen_w * 100),
                                 "stats": by_id[pid].get("stats") or {}})
 
     # Per-hitter aggregate across all pies: projected-contribution WAR (what the
@@ -2781,6 +2918,7 @@ def _spring_league_mean_war(conn, ed, cfg, pyth_exp):
     key = (id(conn), "lgwar")
     if key in _SPRING_CALIB_CACHE:
         return _SPRING_CALIB_CACHE[key]
+    _staff_ip = _spring_staff_ip(conn)
     tids = [int(t) for t in cfg.team_abbr_map.keys()]
     totals, hits, pits = [], [], []
     for tid in tids:
@@ -2788,7 +2926,7 @@ def _spring_league_mean_war(conn, ed, cfg, pyth_exp):
         if not pool:
             continue
         cfg_auto = _spring_auto_config(pool)
-        contribs, _, _ = _spring_contributions(pool, cfg_auto)
+        contribs, _, _ = _spring_contributions(pool, cfg_auto, _staff_ip)
         totals.append(sum(c.war for c in contribs))
         hits.append(sum(c.war for c in contribs if not c.is_pitcher))
         pits.append(sum(c.war for c in contribs if c.is_pitcher))
@@ -2965,7 +3103,8 @@ def get_spring_projection(team_id, config=None, out_of_options=None):
         config = _spring_auto_config(pool, out_of_options)
     must_expose = config.get("_must_expose", [])
 
-    contribs, constructed, overalloc = _spring_contributions(pool, config)
+    staff_ip = _spring_staff_ip(conn)
+    contribs, constructed, overalloc = _spring_contributions(pool, config, staff_ip)
 
     calib = _spring_calibration(conn, pyth_exp)
     mean_war, mean_hit, mean_pit = _spring_league_mean_war(conn, ed, cfg, pyth_exp)
@@ -3000,7 +3139,7 @@ def get_spring_projection(team_id, config=None, out_of_options=None):
         trial_alloc = dict(config.get("pa_alloc") or {})
         trial_alloc[pos] = sug["pa_alloc"]
         trial["pa_alloc"] = trial_alloc
-        t_contribs, _, _ = _spring_contributions(pool, trial)
+        t_contribs, _, _ = _spring_contributions(pool, trial, staff_ip)
         t_proj = project_team(t_contribs, calib)
         dwins = round(t_proj.wins - base_wins, 2)
         if dwins > 0.05:   # only worthwhile suggestions
@@ -3427,8 +3566,10 @@ def spring_change_breakdown(team_id, config, baseline=None, out_of_options=None,
         calib = dataclasses.replace(calib, lg_mean_team_war=mean_war,
                                     lg_mean_hit_war=mean_hit, lg_mean_pit_war=mean_pit)
 
+    staff_ip = _spring_staff_ip(conn)
+
     def _rec(cfg_in):
-        contribs, _c, _o = _spring_contributions(pool, cfg_in)
+        contribs, _c, _o = _spring_contributions(pool, cfg_in, staff_ip)
         return project_team(contribs, calib)
 
     base_proj = _rec(baseline)
