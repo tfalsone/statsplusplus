@@ -1154,6 +1154,15 @@
   .sp-candpool { margin:2px 0 6px 42px; border-left:2px solid var(--green); padding-left:8px; }
   /* platoon badge (derived from the pie) */
   .sp-plat-on { font-size:9px; color:var(--gold); border:1px solid var(--gold); border-radius:3px; padding:0 4px; margin-left:4px; }
+  /* platoon-split badge (a real L/R split bat) — literal blue (pie palette) */
+  .sp-plat-split { font-size:9px; color:#5a9bd4; border:1px solid #5a9bd4; border-radius:3px; padding:0 4px; margin-left:4px; white-space:nowrap; }
+  /* suggest-platoon callout inside a position panel (literal gold, pie palette) */
+  .sp-sugg { margin:6px 0 2px 42px; border-left:2px solid #e0b64e; padding:4px 8px; background:rgba(224,182,78,0.08); border-radius:0 4px 4px 0; }
+  .sp-sugg-lab { font-size:10px; color:#e0b64e; text-transform:uppercase; letter-spacing:.03em; }
+  .sp-sugg-body { font-size:12px; }
+  .sp-sugg-apply { margin-left:6px; background:#e0b64e; color:#0d1b2a; border:none; border-radius:4px; font-size:11px; font-weight:600; padding:2px 10px; cursor:pointer; }
+  .sp-sugg-apply:hover { filter:brightness(1.1); }
+  .sp-sugg-why { font-size:10px; color:var(--text-dim); font-style:italic; margin-top:2px; }
   /* PA pie (handedness wedges) */
   .sp-pie { margin:4px 0 6px 42px; }
   .sp-wedge { margin-bottom:5px; }
@@ -1697,7 +1706,34 @@
         + 'Adjust each wedge independently above.</div>'
       : '<div class="sp-pie-hint">Everyday — same player leads both wedges. '
         + 'Add a strong-side bat to a single wedge to platoon.</div>';
-    return '<div class="sp-pie">'+pieWedge(pos,'R',entry)+pieWedge(pos,'L',entry)+plat+'</div>';
+    return '<div class="sp-pie">'+pieWedge(pos,'R',entry)+pieWedge(pos,'L',entry)+plat
+         + suggestPlatoonControl(pos)+'</div>';
+  }
+
+  // ── suggest-platoon ──
+  // The server flags each field slot where platooning in a strong-side partner
+  // would improve the projection, with the win delta. Render a one-click apply.
+  function suggestionFor(pos){
+    return (state.platoon_suggestions || []).find(function(s){ return s.pos === pos; });
+  }
+  function suggestPlatoonControl(pos){
+    var s = suggestionFor(pos);
+    if (!s) return '';
+    var pn = esc(shortName(s.partner_name || (byId[s.partner] && byId[s.partner].name) || ''));
+    return '<div class="sp-sugg">'
+         + '<span class="sp-sugg-lab">💡 Platoon suggestion</span> '
+         + '<span class="sp-sugg-body">Pair <b>'+pn+'</b> vs '+s.partner_hand+'HP '
+         + '<span class="sp-war mid">+'+s.delta_wins.toFixed(1)+' wins</span></span> '
+         + '<button class="sp-sugg-apply" onclick="event.stopPropagation();springApplyPlatoon(\''+pos+'\')">Apply</button>'
+         + '<div class="sp-sugg-why">'+esc(s.reason)+'</div></div>';
+  }
+  // A compact platoon badge for a hitter row: strong hand + OPS+ split.
+  function platoonBadge(p){
+    var pl = p && p.platoon;
+    if (!pl || !pl.real) return '';
+    return ' <span class="sp-plat-split" title="projects '+pl.strong_ops
+         + ' OPS+ vs '+pl.strong+'HP — a '+pl.split+'-point platoon split">'
+         + 'vs'+pl.strong+'HP +'+pl.split+'</span>';
   }
 
   // Pitchers eligible for a staff group ('SP' or 'RP'), not already in it.
@@ -1755,7 +1791,7 @@
       var pool = '<div class="sp-candpool">' + (elig.length ? elig.map(function (c) {
           var tag = contestedIds[c.player_id] ? ' <span class="sp-mini">in the mix</span>' : '';
           return '<div class="sp-cand" onclick="springSwap(\''+pos+'\','+c.player_id+')">'
-               + '<span>'+esc(c.name)+lvlTag(c.level)+tag+'</span>'
+               + '<span>'+esc(c.name)+lvlTag(c.level)+tag+platoonBadge(c)+'</span>'
                + '<span class="sp-war '+warclsAt(c,pos)+'">'+poolHitValAt(c,pos)+'</span></div>';
         }).join('') : '<div class="sp-cand" style="cursor:default">no eligible alternatives</div>') + '</div>';
       var tierSel = p ? hitterTierSelect(p.pid) : '';
@@ -1919,7 +1955,7 @@
       var s = p.stats || {};
       var projKey = p.is_pitcher ? (pitStat==='war'?'era':pitStat) : (hitStat==='war'?'ops_plus':hitStat);
       var projVal = fmtStat(s[projKey], projKey);
-      return '<tr><td>'+esc(p.name)+'</td><td>'+p.bucket+'</td><td>'+p.level+'</td>'
+      return '<tr><td>'+esc(p.name)+platoonBadge(p)+'</td><td>'+p.bucket+'</td><td>'+p.level+'</td>'
            + '<td class="sp-war '+warcls(p.war_proj)+'">'+p.war_proj.toFixed(1)+'</td>'
            + '<td data-sort-value="'+(s[projKey]!=null?s[projKey]:-999)+'">'+projVal+'</td>'
            + '<td>'+(p.fv||'')+'</td><td>'+(p.age||'')+'</td>'
@@ -2026,6 +2062,7 @@
         state.contested = d.contested;
         state.config = d.config;
         state.warnings = d.warnings || [];
+        state.platoon_suggestions = d.platoon_suggestions || [];
         lastDelta = d.delta;
         renderHeader(); renderWarnings();   // always refresh the payoff readout
         renderActive();                      // re-render ONLY the visible view
@@ -2146,6 +2183,21 @@
     if (otherSum > 0) {
       others.forEach(function(x){ cur[x][k] = Math.round((cur[x][k] || 0) / otherSum * remain); });
     }
+    reproject(before);
+  };
+  // Apply the server's suggested platoon for a position: set its pie to the
+  // suggestion's pa_alloc (primary on his strong hand, partner on the weak one)
+  // and reproject. The partner may be a bench bat — he stays wherever he is on
+  // the roster; the pie just allocates his PA at this slot.
+  window.springApplyPlatoon = function (pos) {
+    var s = suggestionFor(pos);
+    if (!s) return;
+    var before = JSON.parse(JSON.stringify(state.config));
+    state.config.pa_alloc = state.config.pa_alloc || {};
+    // Normalize keys to ints (server sends string pids in JSON).
+    var alloc = {};
+    Object.keys(s.pa_alloc).forEach(function (k) { alloc[Number(k)] = s.pa_alloc[k]; });
+    state.config.pa_alloc[pos] = alloc;
     reproject(before);
   };
   // Add an eligible player to ONE handedness wedge of a position's pie. Adding

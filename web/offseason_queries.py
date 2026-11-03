@@ -1823,6 +1823,9 @@ def _spring_pool(conn, team_id, ed):
                 "def": r["defensive_value"],
                 "bsr": r["baserunning_value"],
             }
+            # Platoon profile (strong/weak hand + split) so the board can flag a
+            # real platoon bat and the suggest-platoon action can use it.
+            d["platoon"] = _spring_platoon_profile(d)
         else:
             # Pitchers: an SP can also work in relief; an RP is RP-only.
             d["eligible"] = ["SP", "RP"] if bucket == "SP" else ["RP"]
@@ -2077,6 +2080,112 @@ def _spring_hand_factor(player, hand):
     if not ovr or not split:
         return 1.0
     return max(0.6, min(1.6, split / ovr))
+
+
+# ── platoon intelligence ──
+# A "real" platoon bat: the projected OPS+ gap between his strong and weak hand
+# is at least this many points. ~15 OPS+ is a meaningful, exploitable split
+# (roughly a .030 wOBA swing) without flagging ordinary noise.
+_SPRING_PLATOON_SPLIT_PTS = 15
+# ...and his STRONG side must clear this OPS+ (an exploitable strong side must
+# actually be good — a bat that's 80 vs L / 60 vs R is not a platoon weapon).
+_SPRING_PLATOON_STRONG_MIN = 105
+
+
+def _spring_platoon_profile(player):
+    """A hitter's platoon profile from his projected split OPS+ (ops_vs_l /
+    ops_vs_r — already on every pool hitter). Returns::
+
+        {"split": <abs OPS+ gap>, "strong": "L"|"R", "weak": "L"|"R",
+         "strong_ops": <OPS+ vs strong hand>, "real": bool}
+
+    ``real`` is True when the gap is meaningful AND the strong side is genuinely
+    above average — i.e. a bat worth deploying ONLY against that hand. Returns
+    None for pitchers or missing splits.
+    """
+    if player.get("is_pitcher"):
+        return None
+    vl = player.get("ops_vs_l")
+    vr = player.get("ops_vs_r")
+    if vl is None or vr is None:
+        return None
+    split = abs(vl - vr)
+    strong = "L" if vl >= vr else "R"
+    strong_ops = max(vl, vr)
+    real = split >= _SPRING_PLATOON_SPLIT_PTS and strong_ops >= _SPRING_PLATOON_STRONG_MIN
+    return {"split": round(split), "strong": strong, "weak": ("R" if strong == "L" else "L"),
+            "strong_ops": round(strong_ops), "real": real}
+
+
+def _spring_suggest_platoon(pool, config, pos):
+    """Suggest the best platoon PAIR for a position: keep the stronger-overall
+    bat as the primary (plays his strong hand + the open share), and pair a
+    strong-side partner against the hand the primary is weak at.
+
+    Returns a dict the UI can preview/apply::
+
+        {"pos", "primary": pid, "partner": pid, "partner_hand": "L"|"R",
+         "pa_alloc": {pid: {"r":PA,"l":PA}, ...}, "reason": str}
+
+    or None when no worthwhile platoon exists (e.g. the starter has no real
+    weak side, or no eligible partner is clearly better on that hand).
+    """
+    by_id = {p["player_id"]: p for p in pool}
+    starter_pid = (config.get("lineup") or {}).get(pos)
+    starter = by_id.get(starter_pid)
+    if not starter or pos == "DH":
+        return None
+    # The primary's weaker hand — the one we want a partner to cover.
+    sprof = _spring_platoon_profile(starter)
+    if not sprof:
+        return None
+    weak_hand = sprof["weak"]   # hand the starter is WORSE against
+    weak_key = "ops_vs_l" if weak_hand == "L" else "ops_vs_r"
+    starter_weak_ops = starter.get(weak_key) or 100
+
+    # Candidates: eligible-here bats (not the starter) who are meaningfully
+    # better than the starter against his weak hand, ranked by that strength.
+    cands = []
+    for p in pool:
+        if p["player_id"] == starter_pid or p.get("is_pitcher"):
+            continue
+        if not _spring_viable_at(p, pos):
+            continue
+        cand_ops = p.get(weak_key)
+        if cand_ops is None:
+            continue
+        edge = cand_ops - starter_weak_ops
+        if edge >= _SPRING_PLATOON_SPLIT_PTS and cand_ops >= _SPRING_PLATOON_STRONG_MIN:
+            cands.append((edge, cand_ops, p))
+    if not cands:
+        return None
+    cands.sort(key=lambda t: (-t[0], -t[1], -t[2]["war_proj"]))
+    _, _, partner = cands[0]
+
+    # Build the pie: partner takes the weak-hand wedge; primary takes his strong
+    # wedge fully + the leftover of the weak wedge (a strict platoon gives the
+    # partner the whole weak wedge, but keep a realistic start-share for the
+    # primary so he isn't benched entirely vs that hand).
+    r_total, l_total = _SPRING_PA_VS_RHP, _SPRING_PA_VS_LHP
+    alloc = {}
+    if weak_hand == "L":
+        alloc[starter_pid] = {"r": r_total, "l": round(l_total * 0.25)}
+        alloc[partner["player_id"]] = {"r": 0, "l": l_total - round(l_total * 0.25)}
+    else:
+        alloc[starter_pid] = {"r": round(r_total * 0.25), "l": l_total}
+        alloc[partner["player_id"]] = {"r": r_total - round(r_total * 0.25), "l": 0}
+
+    return {
+        "pos": pos,
+        "primary": starter_pid,
+        "partner": partner["player_id"],
+        "partner_name": partner["name"],
+        "partner_hand": weak_hand,
+        "pa_alloc": alloc,
+        "reason": (f"{partner['name']} projects {cands[0][1]:.0f} OPS+ vs {weak_hand}HP "
+                   f"vs {starter['name']}'s {starter_weak_ops:.0f} "
+                   f"(+{cands[0][0]:.0f}) — platoon the {weak_hand}HP wedge."),
+    }
 
 
 def _spring_contributions(pool, config):
@@ -2517,6 +2626,37 @@ def get_spring_projection(team_id, config=None, out_of_options=None):
     contested = _spring_contested_spots(pool, config, out_of_options)
 
     by_id = {p["player_id"]: p for p in pool}
+
+    # Platoon suggestions: for each field slot NOT already platooned (its pie has
+    # a single hitter filling both wedges), propose the best strong-side partner
+    # for the starter's weak hand, with the projected WIN delta of applying it.
+    # Only surfaced when it actually helps (delta > 0). Lets the GM see
+    # "platooning here is worth +0.4 wins" and apply it in one click.
+    platoon_suggestions = []
+    base_wins = proj.wins
+    for pos in _SPRING_FIELD:
+        entry = constructed.get("lineup", {}).get(pos)
+        if not entry:
+            continue
+        # Skip positions already deploying 2+ hitters (already a platoon/share).
+        if len([r for r in entry.get("players", []) if (r.get("pa_r", 0) + r.get("pa_l", 0)) > 0]) >= 2:
+            continue
+        sug = _spring_suggest_platoon(pool, config, pos)
+        if not sug:
+            continue
+        # Project the win delta of applying this platoon's pa_alloc.
+        trial = dict(config)
+        trial_alloc = dict(config.get("pa_alloc") or {})
+        trial_alloc[pos] = sug["pa_alloc"]
+        trial["pa_alloc"] = trial_alloc
+        t_contribs, _ = _spring_contributions(pool, trial)
+        t_proj = project_team(t_contribs, calib)
+        dwins = round(t_proj.wins - base_wins, 2)
+        if dwins > 0.05:   # only worthwhile suggestions
+            sug["delta_wins"] = dwins
+            sug["delta_run_diff"] = round(t_proj.run_diff - proj.run_diff, 1)
+            platoon_suggestions.append(sug)
+    platoon_suggestions.sort(key=lambda s: -s["delta_wins"])
     # Roster-validity warnings. A catcher starts only ~67% of games — a team
     # MUST carry a backup C (you can't cover 162 with one). Flag if the C slot
     # has no backup and there's no second catcher-eligible player rostered.
@@ -2538,6 +2678,7 @@ def get_spring_projection(team_id, config=None, out_of_options=None):
         "warnings": warnings,
         "config": config,
         "pool": pool,
+        "platoon_suggestions": platoon_suggestions,
         # Flagged out-of-options players the recommender could NOT fit — the GM
         # must knowingly expose (waivers) or override.
         "must_expose": [{"pid": pid, "name": by_id[pid]["name"],
@@ -2735,6 +2876,7 @@ def spring_projection_delta(team_id, config, baseline=None, out_of_options=None,
         "config": after["config"],
         "must_expose": after["must_expose"],
         "warnings": after.get("warnings", []),
+        "platoon_suggestions": after.get("platoon_suggestions", []),
         "baseline": base_res["projection"],
         "delta": delta,
     }

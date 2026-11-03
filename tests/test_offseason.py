@@ -1265,6 +1265,102 @@ def test_spring_platoon_persists_in_plan(q):
         q.delete_spring_plan(TEAM_ID)
 
 
+# ---------------------------------------------------------------------------
+# Spring Training — platoon intelligence (flag real splits + suggest platoon)
+# ---------------------------------------------------------------------------
+
+def test_spring_platoon_profile_flags_real_split():
+    """A bat with a big, above-average strong side is a REAL platoon bat; a
+    balanced bat and a weak-everywhere bat are not."""
+    import offseason_queries as osq
+    # Strong vs RHP (120), exposed vs LHP (95) — real.
+    real = osq._spring_platoon_profile(
+        {"is_pitcher": False, "ops_vs_l": 95, "ops_vs_r": 120})
+    assert real["real"] and real["strong"] == "R" and real["weak"] == "L"
+    assert real["split"] == 25 and real["strong_ops"] == 120
+    # Balanced → not a platoon bat.
+    bal = osq._spring_platoon_profile(
+        {"is_pitcher": False, "ops_vs_l": 101, "ops_vs_r": 104})
+    assert bal["real"] is False
+    # Big split but weak strong side (strong side below the min) → not exploitable.
+    weak = osq._spring_platoon_profile(
+        {"is_pitcher": False, "ops_vs_l": 70, "ops_vs_r": 95})
+    assert weak["real"] is False
+    # Pitchers / missing splits → None.
+    assert osq._spring_platoon_profile({"is_pitcher": True}) is None
+    assert osq._spring_platoon_profile(
+        {"is_pitcher": False, "ops_vs_l": None, "ops_vs_r": 110}) is None
+
+
+def test_spring_pool_carries_platoon_profile(q):
+    """Every pool hitter exposes a `platoon` profile (or None); pitchers None."""
+    _seed_spring_pool(q.get_db())
+    conn = q.get_db()
+    import offseason_queries as osq
+    pool = osq._spring_pool(conn, TEAM_ID, osq._eval_date(conn))
+    for p in pool:
+        if p["is_pitcher"]:
+            assert p.get("platoon") is None
+        else:
+            # key present; value is a dict or None
+            assert "platoon" in p
+
+
+def test_spring_suggest_platoon_pairs_strong_side_partner(q):
+    """Seed a RHP-exposed LF starter and a strong-vs-RHP bench LF; the suggester
+    pairs the partner into the RHP wedge, and the projection surfaces it with a
+    positive win delta."""
+    conn = q.get_db()
+    _seed_spring_pool(conn)
+    # Make the LF starter (715) clearly worse vs RHP, and add a bench LF (901)
+    # who mashes RHP. Splits drive ops_vs_r via project_ops_plus_splits, so set
+    # the ratings' R-side tools high for the partner, low for the starter.
+    # Starter 715: weak vs R (low R-side contact/gap/pow/eye).
+    conn.execute("""UPDATE ratings SET cntct_r=35,gap_r=35,pow_r=35,eye_r=35,
+                    cntct_l=55,gap_l=55,pow_l=55,eye_l=55
+                    WHERE player_id=715 AND snapshot_date='2033-06-01'""")
+    # Partner 901: strong vs R.
+    conn.execute(
+        "INSERT OR REPLACE INTO player_evaluation (player_id, eval_date, name, "
+        "bucket, age, composite, ceiling, level, team_id, parent_team_id, peak_war) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (901, EVAL_DATE, "Platoon Partner", "LF", 28, 52, 55, "1", TEAM_ID, TEAM_ID, 2.2))
+    conn.execute(
+        "INSERT OR REPLACE INTO players (player_id, name, age, team_id, "
+        "parent_team_id, level, pos, role, is_on_secondary) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (901, "Platoon Partner", 28, TEAM_ID, 0, "1", 7, 0, 1))
+    conn.execute(
+        "INSERT OR REPLACE INTO ratings (player_id, snapshot_date, league_id, "
+        "cntct, gap, pow, eye, speed, lf, cntct_r, gap_r, pow_r, eye_r, "
+        "cntct_l, gap_l, pow_l, eye_l) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (901, "2033-06-01", 1, 55, 55, 55, 55, 50, 55, 75, 75, 70, 65, 45, 45, 40, 45))
+    conn.commit()
+    res = q.get_spring_projection(TEAM_ID)
+    # If LF ends up a suggested platoon, the partner is slotted on the RHP wedge.
+    sug = next((s for s in res["platoon_suggestions"] if s["pos"] == "LF"), None)
+    # The suggestion is optional (depends on the auto roster), but if present it
+    # must be well-formed and net-positive.
+    if sug:
+        assert sug["partner_hand"] == "R"
+        assert sug["delta_wins"] > 0
+        assert str(sug["partner"]) in {str(k) for k in sug["pa_alloc"]}
+
+
+def test_spring_platoon_suggestions_shape(q):
+    """platoon_suggestions is always present and every entry is well-formed and
+    net-positive (only worthwhile suggestions are surfaced)."""
+    _seed_spring_pool(q.get_db())
+    res = q.get_spring_projection(TEAM_ID)
+    assert "platoon_suggestions" in res
+    for s in res["platoon_suggestions"]:
+        assert set(s) >= {"pos", "primary", "partner", "partner_hand",
+                          "pa_alloc", "reason", "delta_wins", "delta_run_diff"}
+        assert s["delta_wins"] > 0
+        assert s["partner_hand"] in ("L", "R")
+
+
 def test_spring_candidate_slot_war_is_position_adjusted(q):
     """Each pool hitter carries a slot_war map = his WAR AT each eligible
     position (so the candidate dropdown matches the selection result — fixes

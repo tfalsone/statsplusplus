@@ -65,6 +65,20 @@ off one hot season settles to a still-elite 6.0, ordering preserved). Tests:
 **Migration note:** `peak_war`/surplus for established hitters AND pitchers update
 on each league's next `fv_calc`/refresh (already re-run for emlb/vmlb/ppl here).
 
+**Spring platoon intelligence.** The board now flags **real platoon bats** and
+suggests platoons. Every pool hitter carries a `platoon` profile
+(`_spring_platoon_profile` from projected split OPS+ — strong/weak hand + split,
+`real` when the split is meaningful AND the strong side is above average), shown as
+a `vs{hand}HP +N` badge on candidate and table rows. `get_spring_projection` returns
+`platoon_suggestions`: for each field slot not already platooned,
+`_spring_suggest_platoon` finds the best strong-side partner for the starter's weak
+hand, projects the win delta of applying it, and surfaces only net-positive ones. The
+expanded position panel shows a "💡 Platoon suggestion … +X wins" callout with a
+one-click **Apply** that writes the suggested `pa_alloc`. Suggestions refresh on every
+edit (carried through `spring_projection_delta`). Tests: `_spring_platoon_profile`
+unit cases, pool-carries-profile, suggest-pairs-strong-side, suggestions-shape. Full
+suite 1073 + 26 web smoke green. (Display-only — no eval change.)
+
 ---
 
 ## Session 108 — Spring Training "Opening Day Builder" + exact stored projected wOBA

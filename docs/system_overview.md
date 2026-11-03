@@ -154,7 +154,14 @@ Plans persist per team in `config/spring_plans.json`. Endpoints: `/api/spring-pl
 (GET/POST/DELETE), `/api/spring-project` (POST). The pool's wOBA stat surfaces the
 exact stored model projection (`ratings.proj_woba`, written by the evaluation engine
 from the tool→wOBA fit), falling back to an OPS+ × league-wOBA estimate for leagues
-not yet re-run.
+not yet re-run. **Platoon intelligence:** every pool hitter carries a `platoon`
+profile (`_spring_platoon_profile` from projected split OPS+ — strong/weak hand +
+split; `real` when the gap is meaningful AND the strong side is above average),
+surfaced as a `vs{hand}HP +N` badge on candidate/table rows. `get_spring_projection`
+also returns `platoon_suggestions`: for each field slot not already platooned,
+`_spring_suggest_platoon` proposes the best strong-side partner for the starter's
+weak hand, projects the win delta of applying it, and surfaces only net-positive
+ones — the board shows a one-click "Apply" that writes the suggested `pa_alloc`.
 
 **Offseason budget (finance settings):** driven by per-league finance settings
 (`statsplusplus.config.finance_settings`, stored as
