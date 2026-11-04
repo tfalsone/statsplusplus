@@ -4,6 +4,55 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 109 — Defensive-runs curve centering + centered clamp
+
+Fixed a systematic over-valuation of positional defense in the run-space model,
+found via a spot-check (vMLB Kevin Mead, a bat-light AA infielder graded a 2.5-WAR
+regular). Facet decomposition showed his bat was correctly below average; the
+inflation was entirely fielding + positional credit from an over-generous SS
+fielding curve. Two coupled fixes to how the per-position `def_curve` is centered
+and clamped.
+
+- **Center on the scored (bucket) population, not the listed-position roster**
+  (`data/calibrate.py`). The per-position fielding curve must center so a
+  league-average fielder maps to ~0 runs. It was centering on players whose game
+  position matches (`players.pos`), but the curve is APPLIED to whatever the
+  evaluation engine buckets there (`assign_bucket`). Those populations differ — only
+  ~half of eval-SS are listed SS, and the listed set skews ~2.5–3.0 grade points
+  lower — so the center sat below the scored population and pushed nearly everyone
+  positive (86–100% of each position was credited above-average defense; SS/CF were
+  100% positive). Now a shared `_bucket_center` helper centers each IF/OF/C curve on
+  the `assign_bucket` population. Post-fix, every position centers at ~0 runs across
+  all three leagues (confirmed via the engine's own `norm_continuous`/scale path).
+  The curve already carried a `center_grade` parameter and docstring describing
+  exactly this failure mode — the center was simply being fed the wrong population.
+- **Centered extrapolation clamp** (`evaluation/facet_runs.py`). The clamp that
+  bounds slope extrapolation was the 5th/95th percentile of the calibration sample's
+  RAW observed runs — a frame that, once the curve is re-centered on the population,
+  no longer matches the curve. For third base the observed target is dominated by a
+  universal error tax (every 3B commits 13–21 errors × −0.5 runs), so its 95th
+  percentile sat near zero and the clamp bit at a LEAGUE-AVERAGE grade (52–55),
+  flattening the entire upper half of the 3B population. New
+  `FIELDING_CLAMP_GRADE_BAND = 15` + `centered_clamp()` express the clamp as
+  ±slope×15 grade points from the center, in the same frame as the curve. The
+  legacy observed-run clamp is kept for the no-center path (backward compatible).
+  Now every position clamps at a uniform grade ~67–76 (true outliers only); 0–3% of
+  each position's population reaches it (was 26–91% at 3B / eMLB SS), and elite
+  80-grade gloves cap at a realistic ~+20 runs (~+2 WAR).
+- **Effect** (recalibrate → engine → fv_calc, all three leagues): pitchers
+  unchanged (fielding-only). Composite shifts concentrate at the formerly-inflated
+  defensive positions — SS −0.5 to −1.2, CF −0.7 to −1.2, 2B/COF/C smaller, 3B/1B
+  ~flat or slightly up; overall mean −0.1 to −0.2, ~17–23% of players move, mostly
+  ±1 tier. 3B composite spread restored (elite-vs-average now separated). The
+  motivating case, Kevin Mead, drops from composite 54 / 2.5 WAR to 52 / 2.0 WAR —
+  a below-average-glove utility infielder, as expected. Full suite 1119 passed.
+- **Ground-truth backing.** The fielding runs track observed defensive runs
+  (correlation 0.57–0.79 at SS/3B/CF); the raw observed runs-per-grade slope is
+  2.2–4.4, so the model slope (already ~0.5× that) is not too steep — a slope-shrink
+  was investigated and rejected (would under-value premium defense and erase real
+  per-league differences). See the task list for that negative result and the
+  bucket-vs-value follow-up.
+
 ## Session 108 (cont.) — Spring platoon redesign, reliever floor, and a capped stat-WAR blend
 
 Follow-on work from the Spring Training builder, driven by hands-on testing of

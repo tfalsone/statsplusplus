@@ -1,7 +1,7 @@
 # Player Evaluation System — High-Level Overview
 
 > **Status:** Living · **Owns:** evaluation pipeline (`src/statsplusplus/evaluation/`, `src/statsplusplus/data/{evaluation_engine,fv_calc,calibrate}.py`)
-> **Writing standard:** ASD-STE100 · **Last verified against code:** Session 108
+> **Writing standard:** ASD-STE100 · **Last verified against code:** Session 109
 
 This document explains how the evaluation system works today. It is the single
 entry point for the evaluation pipeline. It replaces the out-of-date
@@ -133,7 +133,14 @@ The four facets are:
   not range-led); outfield = range + error + arm (vs ZR + error + arm runs — the OF
   arm captures throwing value that range cannot). Per-tool weights come from each
   tool's run-per-rating-point slope, shrunk toward a cross-league positional prior.
-  First base and designated hitter get zero fielding runs. (Note: defensive run VALUE
+  First base and designated hitter get zero fielding runs. Each curve is **centered
+  on the population the engine actually scores at that position** (the `assign_bucket`
+  bucket population), so a league-average fielder maps to ~0 runs — not on the game's
+  listed-position roster (a more selective, lower-grade subset that shifted the whole
+  scored population positive). The extrapolation **clamp** is likewise expressed in the
+  centered frame (±15 grade points from center), so it bounds only true outliers rather
+  than inheriting an error-dominated calibration sample's run distribution (which for
+  third base clamped league-average gloves). (Note: defensive run VALUE
   is league-dependent — e.g. framing is worth far more in a modern run environment
   than in a deep retro league — which the per-league calibration reflects. How much
   range/arm a position DEMANDS to be playable is a separate axis, not this value model.)
