@@ -2,6 +2,17 @@
   "_comment": "Curated, user-facing release highlights for the in-app 'What's New' popup and the changelog page's highlights column. Keyed by version (no leading v). Newest entries are shown first; the popup surfaces every entry newer than the user's last-seen version. Tone mirrors the Discord patch notes: short, friendly, one line per highlight. Maintain alongside each release (see the release checklist in .kiro/steering/dev-agent.md). Keep the raw per-session technical detail in docs/changelog.md; this file is the curated highlights only.",
   "versions": [
     {
+      "version": "1.25.0",
+      "date": "2026-11-03",
+      "title": "More accurate fielding valuation",
+      "highlights": [
+        "Defensive value is now measured against the players who actually man each position, so a league-average glove grades as average instead of everyone looking above-average.",
+        "Third basemen are no longer capped: a genuinely good defender at the hot corner now stands out from an average one.",
+        "Elite defenders still shine and weak gloves now correctly grade below average — the full range is back.",
+        "Pitchers and hitting are unaffected; this is a fielding-only refinement."
+      ]
+    },
+    {
       "version": "1.24.0",
       "date": "2026-11-03",
       "title": "Spring Training Opening Day builder",
