@@ -57,6 +57,10 @@ After the push, `scripts/release.py verify-release` (read-only, via `gh`) confir
 `Build Release` run passed, the release zip exists with `MANIFEST.txt` and the right
 version, and `releases/latest` points at the tag.
 
+Workflow actions are kept on Node 24 majors (`actions/checkout@v5`,
+`actions/setup-python@v6`, `softprops/action-gh-release@v3`) because GitHub is deprecating
+the Node 20 runtime. The release action's new major was only exercised by the next tag push.
+
 ## Proposed stages
 
 ### Stage 1 — "Alpha": commit/PR CI (fast, every push, hermetic)
