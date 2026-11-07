@@ -19,8 +19,6 @@ BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 VERSION_RE = re.compile(r'^version = "(\d+)\.(\d+)\.(\d+)"$', re.MULTILINE)
-# Local Discord bookkeeping file (tracked despite /data/ being ignored); never blocks a release.
-IGNORED_DIRTY = {"data/discord_posts.json"}
 
 
 def git(root, *args, check=True):
@@ -72,7 +70,6 @@ def preflight(root, tag, branch, fetch):
     if git(root, "branch", "--show-current").stdout.strip() != branch:
         problems.append(f"not on {branch}")
     dirty = [ln[3:] for ln in git(root, "status", "--porcelain").stdout.splitlines()]
-    dirty = [f for f in dirty if f not in IGNORED_DIRTY]
     if dirty:
         problems.append(f"working tree not clean: {', '.join(dirty)}")
     if fetch:

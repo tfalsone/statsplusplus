@@ -35,6 +35,7 @@ def repo(tmp_path):
     (work / "docs" / "whats_new.json").write_text(json.dumps({"_comment": "c", "versions": [
         {"version": "1.2.3", "date": "2026-01-01", "title": "old", "highlights": ["a"]}]}, indent=2))
     (work / "notes.md").write_text(NOTES)
+    (work / ".gitignore").write_text("/data/\n")
     _git(work, "add", ".")
     _git(work, "commit", "-m", "init")
     _git(work, "remote", "add", "origin", str(origin))
@@ -94,17 +95,27 @@ def test_prepare_refuses_dirty_tree_and_wrong_branch(repo):
     assert subprocess.check_output(["git", "tag"], cwd=repo, text=True) == ""
 
 
-def test_discord_posts_embed_and_records_state(repo, tmp_path):
-    posts = tmp_path / "posts.json"
+def test_untracked_ignored_posts_file_does_not_block(repo, capsys):
+    (repo / "data").mkdir()
+    (repo / "data" / "discord_posts.json").write_text("{}")
+    release.prepare(_args(repo, dry_run=True), root=repo)
+    assert "not clean" not in capsys.readouterr().out
+
+
+def test_discord_posts_embed_and_records_state(repo):
+    (repo / "data").mkdir()
+    posts = repo / "data" / "discord_posts.json"
     args = MagicMock(notes_file=str(repo / "notes.md"), title=None, preview=False)
     with patch.object(discord_post, "_load_config", return_value={"webhook_url": "u"}), \
          patch.object(discord_post, "_post_webhook") as post:
-        release.discord(args, root=repo, posts_path=posts)
+        release.discord(args, root=repo)
     embed = post.call_args[0][1]
     assert embed["title"] == "Stats++ v1.2.3 — Shiny thing"
     assert "• First highlight." in embed["description"]
     saved = json.loads(posts.read_text())
     assert saved["title"] == embed["title"] and saved["last_posted_commit"]
+    out = subprocess.check_output(["git", "status", "--porcelain"], cwd=repo, text=True)
+    assert out == ""  # untracked + ignored: never dirties the tree
 
 
 def test_build_embed_limits():

@@ -376,9 +376,10 @@ python3 scripts/release.py discord --notes-file notes.md --preview              
 python3 scripts/release.py discord --notes-file notes.md                          # post + update data/discord_posts.json
 ```
 
-`prepare` refuses a dirty tree (except `data/discord_posts.json`), a branch other than
+`prepare` refuses a dirty tree, a branch other than
 `--branch` (default `main`), a branch behind `origin`, or an existing tag. It never pushes;
 it prints the push commands. `--title` overrides the notes title; `--skip-tests` skips pytest.
+`data/discord_posts.json` is local, untracked state (covered by the `/data/` ignore rule).
 
 ### `scripts/discord_post.py`
 
