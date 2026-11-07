@@ -1,7 +1,7 @@
 # StatsPlus API — Wiki Analysis & Action Items
 
 > **Status:** Living · **Owns:** API endpoint coverage and field usage (`src/statsplusplus/client/`, `src/statsplusplus/data/refresh.py`)
-> **Writing standard:** prose · **Last verified against code:** Session 89
+> **Writing standard:** prose · **Last verified against code:** Session 110
 
 Analysis of the updated StatsPlus API wiki (saved at
 `docs/StatsPlus APIs _ StatsPlus Wiki.html`). Captures the authentication,

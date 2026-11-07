@@ -1,7 +1,7 @@
 # StatsPlus Client Reference
 
 > **Status:** Living · **Owns:** StatsPlus API client and stored fields (`src/statsplusplus/client/`, `src/statsplusplus/data/refresh.py`)
-> **Writing standard:** prose · **Last verified against code:** Session 104
+> **Writing standard:** prose · **Last verified against code:** Session 110
 
 Python API client at `src/statsplusplus/client/statsplus.py`. Credentials resolved
 from league context (`data/app_config.json` → per-league `state.json`) or explicit

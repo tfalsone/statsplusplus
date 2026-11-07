@@ -431,7 +431,9 @@ def compute_defensive_value(
 # Hitter composite
 # ---------------------------------------------------------------------------
 
-def project_woba_hitter(tools, run_space):
+def project_woba_hitter(
+    tools: dict[str, Any], run_space: dict[str, Any] | None
+) -> float | None:
     """The model's projected wOBA for a hitter from the calibrated tool->wOBA
     fit (contact/gap/power/eye). Returns None if calibration is unavailable or
     a core tool is missing. This is the exact wOBA the run-space composite uses
@@ -444,14 +446,20 @@ def project_woba_hitter(tools, run_space):
         return None
     con = tools.get("contact"); gap = tools.get("gap")
     pw = tools.get("power"); eye = tools.get("eye")
-    if None in (con, gap, pw, eye):
+    if con is None or gap is None or pw is None or eye is None:
         return None
-    return (fit[0] + fit[1] * float(con) + fit[2] * float(gap)
-            + fit[3] * float(pw) + fit[4] * float(eye))
+    return float(fit[0] + fit[1] * float(con) + fit[2] * float(gap)
+                 + fit[3] * float(pw) + fit[4] * float(eye))
 
 
-def _run_space_hitter_composite(tools, defense, bucket, run_space, positional_models,
-                                observed=None):
+def _run_space_hitter_composite(
+    tools: dict[str, Any],
+    defense: dict[str, Any] | None,
+    bucket: str | None,
+    run_space: dict[str, Any] | None,
+    positional_models: dict[str, Any] | None,
+    observed: dict[str, Any] | None = None,
+) -> int | None:
     """Run-space composite (20-80) or None if calibration is incomplete.
 
     Projects wOBA from tools via the calibrated tool->wOBA fit, combines facet
@@ -477,10 +485,12 @@ def _run_space_hitter_composite(tools, defense, bucket, run_space, positional_mo
         return None
     con = tools.get("contact"); gap = tools.get("gap")
     pw = tools.get("power"); eye = tools.get("eye")
-    if None in (con, gap, pw, eye):
+    if con is None or gap is None or pw is None or eye is None:
         return None
     from statsplusplus.evaluation import facet_runs as _fr
     proj_woba = project_woba_hitter(tools, run_space)
+    if proj_woba is None:  # unreachable: same guards as above
+        return None
     lg_woba = run_space.get("lg_woba", 0.320)
     woba_scale = run_space.get("woba_scale", 1.28)
     rpw = run_space.get("anchor", {}).get("runs_per_win", 9.5)
@@ -518,10 +528,10 @@ def compute_composite_hitter(
     defense: dict[str, float | int | None],
     def_weights: dict[str, float],
     transforms: dict[str, list[float]] | None = None,
-    run_space: dict | None = None,
+    run_space: dict[str, Any] | None = None,
     bucket: str | None = None,
-    positional_models: dict | None = None,
-    observed: dict | None = None,
+    positional_models: dict[str, Any] | None = None,
+    observed: dict[str, Any] | None = None,
 ) -> int:
     """Compute hitter Composite_Score from tool ratings and weights.
 

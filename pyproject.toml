@@ -106,16 +106,4 @@ disallow_incomplete_defs = false
 disallow_untyped_calls = false
 disallow_any_generics = false
 
-[[tool.mypy.overrides]]  # 15 errors: 11 type-arg, 2 untyped-def, 2 untyped-call
-module = ["statsplusplus.evaluation.dev_speed"]
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-disallow_untyped_calls = false
-disallow_any_generics = false
 
-[[tool.mypy.overrides]]  # 7 errors: 3 type-arg, 2 untyped-def, 2 untyped-call
-module = ["statsplusplus.evaluation.composite"]
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-disallow_untyped_calls = false
-disallow_any_generics = false

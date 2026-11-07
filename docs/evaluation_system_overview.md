@@ -1,7 +1,7 @@
 # Player Evaluation System — High-Level Overview
 
 > **Status:** Living · **Owns:** evaluation pipeline (`src/statsplusplus/evaluation/`, `src/statsplusplus/data/{evaluation_engine,fv_calc,calibrate}.py`)
-> **Writing standard:** ASD-STE100 · **Last verified against code:** Session 109
+> **Writing standard:** ASD-STE100 · **Last verified against code:** Session 110
 
 This document explains how the evaluation system works today. It is the single
 entry point for the evaluation pipeline. It replaces the out-of-date

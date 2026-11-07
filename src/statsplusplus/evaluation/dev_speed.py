@@ -64,7 +64,11 @@ def _years_between(d1: str, d2: str) -> float:
     return (date(y2, m2, day2) - date(y1, m1, day1)).days / 365.25
 
 
-def component_delta(snaps: list[dict], key: str) -> tuple[Optional[float], Optional[float], Optional[float]]:
+# {signal: {(group, band): (mean, sd, n)}}
+Baseline = dict[str, dict[tuple[str, str], tuple[float, float, int]]]
+
+
+def component_delta(snaps: list[dict[str, Any]], key: str) -> tuple[Optional[float], Optional[float], Optional[float]]:
     """Annualized delta of a component over the sub-window where it's populated.
 
     Components (offensive_grade, defensive_value) are only written on snapshots
@@ -100,7 +104,7 @@ def dev_group(bucket: str) -> str:
     return "HIT"
 
 
-def build_baseline(records: list[dict]) -> dict[str, dict[tuple, tuple]]:
+def build_baseline(records: list[dict[str, Any]]) -> Baseline:
     """Per (dev_group, age-band) mean/SD for each dev signal.
 
     Returns {signal: {(group, band): (mean, sd, n)}} for signal in {"comp","off"}
@@ -109,17 +113,17 @@ def build_baseline(records: list[dict]) -> dict[str, dict[tuple, tuple]]:
     A (group, "ALL") all-ages fallback cell is also emitted for tiny leagues.
     """
     field = {"comp": "annual_comp", "off": "annual_off"}
-    out: dict[str, dict[tuple, tuple]] = {}
+    out: Baseline = {}
     from collections import defaultdict
     for sig, fld in field.items():
-        fine: dict[tuple, list] = defaultdict(list)
-        grp_all: dict[str, list] = defaultdict(list)
+        fine: dict[tuple[str, str], list[float]] = defaultdict(list)
+        grp_all: dict[str, list[float]] = defaultdict(list)
         for r in records:
             if r["age"] <= MAX_BASELINE_AGE and r.get(fld) is not None:
                 g = dev_group(r["bucket"])
                 fine[(g, r["band"])].append(r[fld])
                 grp_all[g].append(r[fld])
-        b = {}
+        b: dict[tuple[str, str], tuple[float, float, int]] = {}
         for key, vals in fine.items():
             if len(vals) >= MIN_GROUP_N:
                 b[key] = (round(_st.mean(vals), 3), round(_st.pstdev(vals) or 1.0, 3), len(vals))
@@ -138,7 +142,8 @@ def primary_signal(bucket: str, has_off: bool) -> str:
 
 
 def dev_speed_z(annual_move: Optional[float], bucket: str, band: str,
-                sig: str, baseline: dict) -> tuple[Optional[float], Optional[tuple]]:
+                sig: str, baseline: Baseline,
+                ) -> tuple[Optional[float], Optional[tuple[float, float, int]]]:
     if annual_move is None:
         return None, None
     b = baseline.get(sig, {})
@@ -210,8 +215,8 @@ def compute_dev_speed(
     *,
     bucket: str,
     age: int,
-    window: list[dict],
-    baseline: dict,
+    window: list[dict[str, Any]],
+    baseline: Baseline,
     acc: Optional[str] = None,
     playing_time: float = 0.0,
 ) -> Optional[dict[str, Any]]:
@@ -240,9 +245,9 @@ def compute_dev_speed(
     # consistent with the rest of the app. OVR/POT are NULL in OVR-less leagues
     # (e.g. PPL); composite/ceiling are always populated. d_ovr/d_pot are stored
     # under legacy names but represent current-composite / ceiling deltas.
-    def _cur(s):
+    def _cur(s: dict[str, Any]) -> Any:
         return s.get("composite_score") if s.get("composite_score") else (s.get("ovr") or 0)
-    def _ceil(s):
+    def _ceil(s: dict[str, Any]) -> Any:
         return s.get("ceiling_score") if s.get("ceiling_score") else (s.get("pot") or 0)
     cur_last, cur_first = _cur(last), _cur(first)
     ceil_last, ceil_first = _ceil(last), _ceil(first)
