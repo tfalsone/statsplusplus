@@ -41,6 +41,25 @@ jobs:
       - name: Run tests (hermetic — no live API)
         run: pytest -m "not live_api" -q
 
+  docs:
+    name: docs drift (check_docs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # check_docs compares git commit timestamps; a shallow clone would
+          # collapse them all to one commit and hide drift.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Stdlib-only script; no install needed.
+      - name: Check living docs against owned code
+        run: python scripts/check_docs.py --strict
+
   typecheck:
     name: mypy
     runs-on: ubuntu-latest

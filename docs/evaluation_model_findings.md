@@ -1,7 +1,7 @@
 # Player Evaluation Model — Findings & User Guide
 
 > **Status:** Living · **Owns:** model accuracy, empirical WAR drivers (`src/statsplusplus/evaluation/`)
-> **Writing standard:** prose · **Last verified against code:** Session 95
+> **Writing standard:** prose · **Last verified against code:** Session 110
 > **Scope note:** The empirical WAR-driver findings, defense/aging insights, and
 > calibration architecture below are durable and current. The **Model Accuracy**
 > R² tables are a Session 79 baseline (pre-run-space / pre-ceiling-anchored FV) —

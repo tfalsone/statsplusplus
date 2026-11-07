@@ -1,7 +1,7 @@
 # EMLB Analytics Platform — System Overview
 
 > **Status:** Living · **Owns:** architecture, data flow, DB tables, routes, query functions, design decisions
-> **Writing standard:** prose · **Last verified against code:** Session 108
+> **Writing standard:** prose · **Last verified against code:** Session 110
 
 ## Purpose
 

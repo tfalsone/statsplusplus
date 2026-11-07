@@ -9,7 +9,7 @@ statsplusplus/
 ├── RULES.md                    # Data pull and storage rules
 ├── start.sh / start.bat        # Launchers (venv setup, deps, stale-file prune, run app)
 ├── prune_stale.py              # Manifest-based cleanup of stale files on upgrade (zip installs)
-├── .github/workflows/          # CI (ci.yml — pytest+mypy matrix) + release (release.yml — tag→zip)
+├── .github/workflows/          # CI (ci.yml — pytest+mypy matrix, check_docs --strict) + release (release.yml — tag→zip)
 │
 ├── src/statsplusplus/          # Core package (all logic lives here)
 │   ├── version.py                  # Single version source (reads pyproject/metadata) + semver compare

@@ -363,7 +363,8 @@ python3 scripts/check_docs.py --strict   # exit 1 if any doc is stale
 
 Uses git commit timestamps as the signal and the doc status header as the
 human-readable one. The ownership map (`DOC_OWNERSHIP`) mirrors `docs/README.md` §2.
-It is a report, not a gate — a human decides whether a flagged doc actually drifted.
+Without `--strict` it is a report; CI runs it with `--strict` (the `docs` job) and fails
+on drift. A human decides whether a flagged doc actually drifted, then bumps its verified line.
 
 ### `scripts/release.py`
 

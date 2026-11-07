@@ -89,10 +89,12 @@ Documentation is organized by the doc-status convention in `docs/README.md`
 9. **New or obsolete docs** — a new doc gets a status header and a registry row
    (`docs/README.md` §3). A doc that becomes obsolete gets the `Historical` banner
    (pointing at its replacement) and moves to the Historical registry table.
-10. **Run `python3 scripts/check_docs.py`** — it flags Living docs whose owned
-    code changed after the doc was last touched, and docs marked `NOT YET VERIFIED`.
-    It is a report, not a gate: verify each flagged doc and bump its verified line,
-    or confirm it did not drift. Keep the script's `DOC_OWNERSHIP` map in sync with
+10. **Run `python3 scripts/check_docs.py` once, at session end** (not per edit) — it
+    flags Living docs whose owned code changed after the doc was last touched, and
+    docs marked `NOT YET VERIFIED`. CI runs it with `--strict` (the `docs` job in
+    `.github/workflows/ci.yml`) and fails on drift, so there is no per-save review
+    hook. Verify each flagged doc against the code, fix drift, and bump its verified
+    line (header + registry row). Keep the script's `DOC_OWNERSHIP` map in sync with
     `docs/README.md` §2 when either changes.
 11. **Discord patch notes** — post a summary of the session's changes to Discord. Skip if `data/discord_config.json` doesn't exist (webhook not configured on this environment).
 

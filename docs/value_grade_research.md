@@ -1,7 +1,7 @@
 # Value Grade Research — Findings
 
 > **Status:** Living · **Owns:** research findings for a WAR-anchored value grade (`scripts/analyze_grade_divergence.py`, `scripts/proto_value_grade.py`)
-> **Writing standard:** prose · **Last verified against code:** Session 95
+> **Writing standard:** prose · **Last verified against code:** Session 110
 
 Research into whether composite/ceiling grades mislead users on non-prospect
 players, and whether a separate WAR-anchored "value grade" should be added.
