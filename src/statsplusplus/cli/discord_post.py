@@ -5,6 +5,7 @@ Usage:
     python3 scripts/discord_post.py message "text"
     python3 scripts/discord_post.py latest
     python3 scripts/discord_post.py preview
+    python3 scripts/discord_post.py embed --title T --body-file F [--preview]
 """
 
 from __future__ import annotations

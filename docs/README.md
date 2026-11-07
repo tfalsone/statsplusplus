@@ -97,7 +97,7 @@ Guide docs own a *process*, not a code path. Verify them only when the process c
 | `value_grade_research.md` | Value-grade research findings + decisions | Session 95 |
 | `client_reference.md` | StatsPlus API client and fields | Session 95 |
 | `statsplus_api_analysis.md` | API wiki analysis, endpoint coverage | Session 95 |
-| `tools_reference.md` | CLI tools, query functions, data sources | Session 101 |
+| `tools_reference.md` | CLI tools, query functions, data sources | Session 110 |
 | `testing_pipeline_design.md` | CI/release pipeline (Stage 1 shipped; 2–4 roadmap) — `.github/workflows/` | Session 95 |
 
 ### Guide — methodology, changes rarely (top level of `docs/`)

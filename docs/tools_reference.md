@@ -1,7 +1,7 @@
 # Tools Reference
 
 > **Status:** Living · **Owns:** CLI tools, importable query functions, data sources
-> **Writing standard:** prose · **Last verified against code:** Session 108
+> **Writing standard:** prose · **Last verified against code:** Session 110
 
 Quick-reference catalog of all CLI tools, importable libraries, and data sources available
 in the EMLB analytics platform. Intended for agent context — keeps tool discovery out of
@@ -364,6 +364,33 @@ python3 scripts/check_docs.py --strict   # exit 1 if any doc is stale
 Uses git commit timestamps as the signal and the doc status header as the
 human-readable one. The ownership map (`DOC_OWNERSHIP`) mirrors `docs/README.md` §2.
 It is a report, not a gate — a human decides whether a flagged doc actually drifted.
+
+### `scripts/release.py`
+
+Release helper (stdlib only). Notes file format: `# Title` line, then `- bullet` lines.
+
+```bash
+python3 scripts/release.py prepare --bump minor --notes-file notes.md --dry-run   # show every action
+python3 scripts/release.py prepare --bump minor --notes-file notes.md             # test, bump, whats_new, commit, tag
+python3 scripts/release.py discord --notes-file notes.md --preview                # show the embed
+python3 scripts/release.py discord --notes-file notes.md                          # post + update data/discord_posts.json
+```
+
+`prepare` refuses a dirty tree (except `data/discord_posts.json`), a branch other than
+`--branch` (default `main`), a branch behind `origin`, or an existing tag. It never pushes;
+it prints the push commands. `--title` overrides the notes title; `--skip-tests` skips pytest.
+
+### `scripts/discord_post.py`
+
+Discord webhook poster (`data/discord_config.json` holds the webhook URL).
+
+```bash
+python3 scripts/discord_post.py embed --title T --body-file F [--preview]   # formatted embed; body from stdin if no file
+python3 scripts/discord_post.py message "text"                             # plain message
+python3 scripts/discord_post.py latest|preview [--title T]                 # latest changelog session (truncates)
+```
+
+`build_embed(title, body)` rejects text over Discord's limits instead of truncating it.
 
 ---
 

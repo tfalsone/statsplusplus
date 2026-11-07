@@ -127,12 +127,11 @@ def _format_embed(parsed):
     return embed
 
 
-def _post_webhook(config, embed):
-    """POST an embed to the Discord webhook."""
-    payload = json.dumps({"embeds": [embed]}).encode("utf-8")
+def _send(config, payload):
+    """POST a JSON payload to the Discord webhook (browser-like UA avoids 403s)."""
     req = urllib.request.Request(
         config["webhook_url"],
-        data=payload,
+        data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
             "User-Agent": "Stats++ Bot (https://github.com/tfalsone/statsplusplus)",
@@ -149,6 +148,23 @@ def _post_webhook(config, embed):
         body = e.read().decode() if e.fp else ""
         print(f"✗ Discord error {e.code}: {body}")
         sys.exit(1)
+
+
+def _post_webhook(config, embed):
+    """POST an embed to the Discord webhook."""
+    _send(config, {"embeds": [embed]})
+
+
+def build_embed(title, body, color=0x3498db):
+    """Build a release-notes embed. Fails loudly rather than truncating notes."""
+    title, body = title.strip(), body.strip()
+    if not title or not body:
+        raise ValueError("embed needs a non-empty title and body")
+    if len(title) > 256:
+        raise ValueError(f"title is {len(title)} chars (Discord limit 256)")
+    if len(body) > 4096:
+        raise ValueError(f"body is {len(body)} chars (Discord limit 4096)")
+    return {"title": title, "description": body, "color": color}
 
 
 def post_latest():
@@ -169,27 +185,7 @@ def post_latest():
 
 def post_custom(message):
     """Post a custom message to Discord."""
-    config = _load_config()
-    payload = json.dumps({"content": message}).encode("utf-8")
-    req = urllib.request.Request(
-        config["webhook_url"],
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "Stats++ Bot (https://github.com/tfalsone/statsplusplus)",
-        },
-        method="POST",
-    )
-    try:
-        resp = urllib.request.urlopen(req)
-        if resp.status == 204:
-            print("✓ Posted to Discord successfully.")
-        else:
-            print(f"Discord responded with status {resp.status}")
-    except urllib.error.HTTPError as e:
-        body = e.read().decode() if e.fp else ""
-        print(f"✗ Discord error {e.code}: {body}")
-        sys.exit(1)
+    _send(_load_config(), {"content": message})
 
 
 if __name__ == "__main__":
@@ -203,6 +199,11 @@ if __name__ == "__main__":
     preview_parser.add_argument("--title", help="Override the embed title")
     msg_parser = sub.add_parser("message", help="Post a custom message")
     msg_parser.add_argument("text", help="Message text")
+
+    emb_parser = sub.add_parser("embed", help="Post a formatted embed (markdown body)")
+    emb_parser.add_argument("--title", required=True, help="Embed title")
+    emb_parser.add_argument("--body-file", help="Markdown body file (default: stdin)")
+    emb_parser.add_argument("--preview", action="store_true", help="Print instead of sending")
 
     args = parser.parse_args()
 
@@ -233,6 +234,16 @@ if __name__ == "__main__":
         print(f"Description ({len(embed['description'])} chars):")
         print("---")
         print(embed['description'])
+    elif args.cmd == "embed":
+        body = Path(args.body_file).read_text() if args.body_file else sys.stdin.read()
+        try:
+            embed = build_embed(args.title, body)
+        except ValueError as e:
+            sys.exit(f"✗ {e}")
+        if args.preview:
+            print(f"Title: {embed['title']}\nDescription ({len(embed['description'])} chars):\n---\n{embed['description']}")
+        else:
+            _post_webhook(_load_config(), embed)
     elif args.cmd == "message":
         post_custom(args.text)
     else:

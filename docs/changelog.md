@@ -4,6 +4,19 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 
 ---
 
+## Session 110 — Release script + Discord embed command
+
+- **`scripts/release.py`** — replaces the prose release checklist. `prepare` checks for a
+  clean, up-to-date `main`, runs the tests, bumps `pyproject.toml`, prepends a
+  `whats_new.json` entry, commits and creates the annotated tag, then prints (does not run)
+  the push commands. `--dry-run` shows every step. `discord` posts the release embed and
+  updates `data/discord_posts.json`; `--preview` prints it.
+- **`discord_post.py embed`** — posts a formatted embed from a file or stdin, replacing the
+  ad-hoc webhook snippets. `post_custom` and `_post_webhook` now share one `_send` path.
+- Steering `dev-agent.md` steps 11–12 point at the script. Tests: `tests/test_release.py`.
+
+---
+
 ## Session 109 — Defensive-runs curve centering + centered clamp
 
 Fixed a systematic over-valuation of positional defense in the run-space model,

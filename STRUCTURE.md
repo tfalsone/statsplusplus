@@ -73,6 +73,7 @@ statsplusplus/
 │   ├── model_regression.py         # Model accuracy testing + parameter calibration
 │   ├── draft_settings.py           # Draft board settings management
 │   ├── check_docs.py               # Documentation staleness checker (ownership map in docs/README.md)
+│   ├── release.py                  # Release helper: bump, whats_new, commit, tag, Discord embed
 │   ├── analyze_grade_divergence.py # Research: composite/ceiling vs WAR-anchored value grade (read-only)
 │   └── proto_value_grade.py        # Prototype: per-bucket value grade exploration (read-only)
 │
