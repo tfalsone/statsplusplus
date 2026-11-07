@@ -3,7 +3,8 @@
 > **Status:** Living (partially implemented) · **Owns:** `.github/workflows/` (CI + release)
 > **Writing standard:** prose · **Last verified against code:** Session 110
 > **Progress:** Stage 1 (CI: pytest + mypy on the Python matrix, plus a
-> `check_docs.py --strict` docs-drift job) is **implemented**
+> `check_docs.py --strict` docs-drift job) is **implemented**; mypy is **blocking**
+> (modules with known gaps are listed under `TYPING DEBT` in `pyproject.toml`)
 > (`.github/workflows/ci.yml`, Sessions 95/110). The release zip build (`release.yml`)
 > predates this. Stages 2–4 (artifact-boot, Playwright, API canary) are not yet
 > built. The staged design below is the roadmap for the rest.
@@ -43,7 +44,8 @@ CSV format change, stale `start.sh` behavior) was invisible to a green suite.
 GitHub Actions, no network.
 - Unit + integration tests (existing ~720) — logic correctness.
 - Smoke tests (entry points, CLI tools, web routes vs fixture leagues).
-- `mypy` on the typed packages (configured today, not enforced in CI).
+- `mypy` on the typed packages (blocking in CI; per-module relaxations are listed under `TYPING DEBT` in
+  `pyproject.toml` and should only shrink).
 - **Matrix: Python 3.10 / 3.11 / 3.12 / 3.13** — we advertise "3.10+" but CI
   tests none. The original bug report was on 3.14.
 - Gate: green → mergeable.

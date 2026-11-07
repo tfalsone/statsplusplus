@@ -33,6 +33,7 @@ Public API:
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from typing import Any, Optional
 
 from statsplusplus.utils.positions import (
@@ -529,7 +530,7 @@ def runs_to_composite(
         comp = mapping["comp_mean"] + z * mapping["comp_sd"]
     else:
         comp = 50.0 + runs_above_avg * 0.5
-    return max(20, min(80, round(comp)))
+    return int(max(20, min(80, round(comp))))
 
 
 def composite_to_runs(
@@ -580,13 +581,13 @@ def composite_to_runs(
                 ppw / slope if slope else 0.0
             )
             off_runs = gc + (c - tc - pos_pts) / slope
-            return off_runs + pos_runs
-        return center + (c - tc - pos_pts) / slope
+            return float(off_runs + pos_runs)
+        return float(center + (c - tc - pos_pts) / slope)
 
     # --- Legacy affine inverse ---
     if mapping and mapping.get("comp_sd", 0) > 0 and mapping.get("runs_sd", 0) > 0:
         z = (comp - mapping["comp_mean"]) / mapping["comp_sd"]
-        return mapping["runs_mean"] + z * mapping["runs_sd"]
+        return float(mapping["runs_mean"] + z * mapping["runs_sd"])
 
     # Fallback inverse of comp = 50 + runs*0.5
     return (comp - 50.0) / 0.5
@@ -708,7 +709,7 @@ _DEF_TOOL_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _def_tool(def_tools: dict[str, float | int | None], key: str):
+def _def_tool(def_tools: Mapping[str, float | int | None], key: str) -> Any:
     """Fetch a defensive tool value under either the lowercase or CamelCase key."""
     for k in _DEF_TOOL_ALIASES.get(key, (key,)):
         v = def_tools.get(k)
@@ -717,7 +718,7 @@ def _def_tool(def_tools: dict[str, float | int | None], key: str):
     return None
 
 
-def _blended_def_grade(def_tools: dict[str, float | int | None],
+def _blended_def_grade(def_tools: Mapping[str, float | int | None],
                        weights: dict[str, float]) -> Optional[float]:
     """Weighted-blend defensive grade (20-80) from a multi-tool `weights` dict.
 
@@ -806,13 +807,12 @@ def calibrate_multitool_curve(
     gy = [observed_runs[i] for i, g in enumerate(blended) if g is not None]
     if len(gx) < min_n:
         return None
-    curve = calibrate_grade_runs_curve(gx, gy, FIELDING_PRIOR_SLOPE,
-                                       shrink=shrink, min_n=min_n,
-                                       center_grade=center_grade)
-    if curve is None:
+    fit = calibrate_grade_runs_curve(gx, gy, FIELDING_PRIOR_SLOPE,
+                                     shrink=shrink, min_n=min_n,
+                                     center_grade=center_grade)
+    if fit is None:
         return None
-    curve["weights"] = weights
-    curve["multitool"] = True
+    curve: dict[str, Any] = {**fit, "weights": weights, "multitool": True}
     return curve
 
 

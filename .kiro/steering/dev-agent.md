@@ -133,6 +133,7 @@ Documentation is organized by the doc-status convention in `docs/README.md`
 - `statsplusplus.data.db` — connection management (request-scoped in web, explicit `league_dir` in CLI).
 - SQLite WAL mode for concurrent reads during writes.
 - Web layer is read-only against the DB. All writes go through `data/` pipelines.
+- **New code must pass `mypy`** (blocking in CI). When touching a module listed under `TYPING DEBT` in `pyproject.toml`, add annotations and shrink that list; never add to it.
 - **Do not run tests** unless the user explicitly asks to run them.
 - **Do not push to git** without explicit user permission. Prepare commits but wait for approval before pushing. (Approved release notes count as permission for the two release pushes in step 12, and only those.)
 

@@ -47,7 +47,10 @@ _C_SO_NGB = 5.155
 _C_BB_NGB = 4.546
 
 
-def siera(k, bb, gb, fb, bf, const=SIERA_CONST):
+def siera(
+    k: float | None, bb: float | None, gb: float | None,
+    fb: float | None, bf: float | None, const: float = SIERA_CONST,
+) -> float | None:
     """Canonical FanGraphs SIERA.
 
     Args:

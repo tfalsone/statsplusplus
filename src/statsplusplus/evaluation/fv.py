@@ -559,7 +559,7 @@ def positional_access_premium(
 
 
 def calc_fv_from_dict(
-    p: dict,
+    p: dict[str, Any],
     scale: str = "1-100",
     league_dir: "Path | None" = None,
 ) -> tuple[int, str]:

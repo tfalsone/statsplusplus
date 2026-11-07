@@ -72,3 +72,50 @@ ignore_missing_imports = true
 module = ["statsplusplus.config.league_config"]
 disallow_any_expr = false
 warn_return_any = false
+
+# TYPING DEBT: shrink this list. Each module below relaxes ONLY the strict
+# flags behind the error codes it still has (counts as of the mypy baseline).
+# When you touch one of these modules, add annotations and delete the flag (or
+# the whole block once it is clean). Every module NOT listed is fully strict,
+# so new untyped defs / untyped calls / bare generics there fail CI.
+[[tool.mypy.overrides]]  # 130 errors: 96 untyped-call, 33 untyped-def, 1 type-arg
+module = ["statsplusplus.data.calibrate"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false
+
+[[tool.mypy.overrides]]  # 112 errors: 70 untyped-call, 41 untyped-def, 1 type-arg
+module = ["statsplusplus.data.refresh"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false
+
+[[tool.mypy.overrides]]  # 89 errors: 70 type-arg, 12 untyped-def, 7 untyped-call
+module = ["statsplusplus.data.evaluation_engine"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false
+
+[[tool.mypy.overrides]]  # 31 errors: 25 type-arg, 5 untyped-def, 1 untyped-call
+module = ["statsplusplus.data.fv_calc"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false
+
+[[tool.mypy.overrides]]  # 15 errors: 11 type-arg, 2 untyped-def, 2 untyped-call
+module = ["statsplusplus.evaluation.dev_speed"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false
+
+[[tool.mypy.overrides]]  # 7 errors: 3 type-arg, 2 untyped-def, 2 untyped-call
+module = ["statsplusplus.evaluation.composite"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false

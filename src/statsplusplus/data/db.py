@@ -446,7 +446,9 @@ CREATE VIEW IF NOT EXISTS mlb_fielding_stats AS
 ORG_ID_SQL = "COALESCE(NULLIF(p.organization_id,0), NULLIF(p.parent_team_id,0), p.team_id)"
 
 
-def primary_league_predicate(primary_league_id, alias: str = "p"):
+def primary_league_predicate(
+    primary_league_id: int | None, alias: str = "p"
+) -> tuple[str, list[int]]:
     """SQL predicate restricting a `players` row (aliased ``alias``) to the
     primary MLB league — excludes co-resident top-level leagues like NPB.
 

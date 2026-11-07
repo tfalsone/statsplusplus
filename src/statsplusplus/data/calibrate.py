@@ -360,7 +360,7 @@ def _calibrate_tool_weights(conn, game_year, role_map):
     """, (age_lo, age_hi, year_lo, year_hi)).fetchall()
 
     PITCHER_BUCKETS = ("SP", "RP")
-    pitching_data = {role: ([], []) for role in PITCHER_BUCKETS}
+    pitching_data: dict[str, tuple[list[Any], list[Any]]] = {role: ([], []) for role in PITCHER_BUCKETS}
 
     pitch_cols = ["fst", "snk", "crv", "sld", "chg", "splt", "cutt",
                   "cir_chg", "scr", "frk", "kncrv", "knbl"]
@@ -549,8 +549,8 @@ def _calibrate_run_space(conn, game_year, role_map, woba_wts, off_norm, result_h
         gs = [_fr._blended_def_grade(
                   {t: norm(_r[t]) for t in tools if t in _r.keys()}, w)
               for _r in _bucket_pop.get(bucket, [])]
-        gs = [g for g in gs if g is not None]
-        return (sum(gs) / len(gs)) if gs else None
+        gv = [g for g in gs if g is not None]
+        return (sum(gv) / len(gv)) if gv else None
 
     # --- outfield: multi-tool blend (range + error + arm) ---
     # Target = observed OF defensive runs = ZR + (-0.5*errors) + arm runs (OOTP's
@@ -648,17 +648,17 @@ def _calibrate_run_space(conn, game_year, role_map, woba_wts, off_norm, result_h
         FROM latest_ratings r JOIN fielding_stats f ON r.player_id=f.player_id
         WHERE f.position=2 AND f.ip>=250 AND f.framing IS NOT NULL
           AND f.year BETWEEN ? AND ?""", (year_lo, year_hi)).fetchall()
-    ctool_rows = []
-    cobs = []
+    ctool_rows: list[Any] = []
+    cobs: list[Any] = []
     for x in crows:
         g = x["g"] or 0
         if g < 20:
             continue
         s = 162.0 / g  # scale to a full-season run value
-        obs = ((x["framing"] or 0.0) + (x["zr"] or 0.0)) * s
+        c_obs = ((x["framing"] or 0.0) + (x["zr"] or 0.0)) * s
         ctool_rows.append({"c_frm": norm(x["c_frm"]), "c_blk": norm(x["c_blk"]),
                            "c_arm": norm(x["c_arm"])})
-        cobs.append(obs)
+        cobs.append(c_obs)
     # Population-mean blended catcher grade (center so an average catcher ~0 runs).
     ccur = _fr.calibrate_multitool_curve(_fr.CATCHER_DEF_TOOLS, ctool_rows, cobs,
                                          shrink=0.6,
@@ -884,7 +884,7 @@ def _fit_tool_transforms(rows, tool_cols, war_key="war"):
 
     curves: dict[str, Any] = {"_n": n}
     for t in tool_cols:
-        band_vals = {b: [] for b in _TRANSFORM_BANDS}
+        band_vals: dict[Any, list[Any]] = {b: [] for b in _TRANSFORM_BANDS}
         for vals, war in data:
             # Residual = WAR minus the other tools' predicted contribution.
             others = b0 + sum(bt[o] * vals[o] for o in tool_cols if o != t)
@@ -1096,8 +1096,8 @@ def _calibrate_development_curves(conn):
         return None
 
     # Organize by type
-    hitter_data = {}  # age -> (mean_real, mean_gap, n)
-    pitcher_data = {}
+    hitter_data: dict[Any, Any] = {}  # age -> (mean_real, mean_gap, n)
+    pitcher_data: dict[Any, Any] = {}
     for r in rows:
         d = pitcher_data if r["is_pitcher"] else hitter_data
         d[r["age"]] = (r["mean_real"], r["mean_gap"], r["n"])
@@ -1357,7 +1357,7 @@ def _derive_fv_to_peak_war(ovr_table):
         return tbl[pts[0]]
 
     # Per-bucket hitter FV→WAR tables
-    hitter_fv_tables = {}
+    hitter_fv_tables: dict[Any, Any] = {}
     for bucket in HITTER_BUCKETS:
         if bucket in ovr_table:
             hitter_fv_tables[bucket] = {}
@@ -1650,7 +1650,7 @@ def _calibrate_scarcity(conn, game_date):
         return None
 
     # Group into 2-point bands for smoothing
-    bands = defaultdict(lambda: [0, 0])
+    bands: defaultdict[Any, list[int]] = defaultdict(lambda: [0, 0])
     for r in rows:
         center = (r["pot"] // 2) * 2
         bands[center][0] += r["non_mlb"]

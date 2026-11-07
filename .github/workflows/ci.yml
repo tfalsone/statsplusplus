@@ -77,10 +77,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      # Non-blocking for now: a strict-typing pass is in progress and the data/
-      # evaluation modules still have known untyped-def errors. Type errors are
-      # surfaced in the logs but do not fail CI. Flip `continue-on-error` to
-      # `false` once the typing pass lands.
-      - name: Run mypy (non-blocking)
-        continue-on-error: true
+      # Blocking. Modules with known gaps are listed under "TYPING DEBT" in
+      # pyproject.toml; shrink that list rather than adding to it.
+      - name: Run mypy
         run: mypy

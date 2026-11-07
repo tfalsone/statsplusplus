@@ -93,7 +93,7 @@ def career_outcome_probs(
     offensive_ceiling: Optional[int] = None,
     defensive_value: Optional[int] = None,
     durability_score: Optional[int] = None,
-    weights=None,
+    weights: Any = None,
 ) -> dict[str, Any]:
     """Compute cumulative probability of reaching each WAR/season tier.
 

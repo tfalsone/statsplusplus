@@ -56,9 +56,9 @@ def compute_ceiling(
     age: int = 25,
     ratings_scale: str = "1-100",
     transforms: dict[str, list[float]] | None = None,
-    run_space: dict | None = None,
+    run_space: dict[str, Any] | None = None,
     bucket: str | None = None,
-    positional_models: dict | None = None,
+    positional_models: dict[str, Any] | None = None,
 ) -> int:
     """Compute Ceiling_Score from potential tool ratings.
 
@@ -152,9 +152,9 @@ def compute_true_ceiling(
     stamina: int = 50,
     role: str = "SP",
     transforms: dict[str, list[float]] | None = None,
-    run_space: dict | None = None,
+    run_space: dict[str, Any] | None = None,
     bucket: str | None = None,
-    positional_models: dict | None = None,
+    positional_models: dict[str, Any] | None = None,
 ) -> int:
     """Compute the true ceiling from potential tools with no age blend.
 

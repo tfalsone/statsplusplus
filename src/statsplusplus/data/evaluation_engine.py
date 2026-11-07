@@ -1701,12 +1701,12 @@ def _compute_defensive_score_for_bucket(
             _n(defense_tools.get(f, 0) or 0) * w
             for f, w in DEFENSIVE_WEIGHTS.get("COF_RF", {}).items()
         )
-        return max(lf, rf)
+        return float(max(lf, rf))
 
     weights = DEFENSIVE_WEIGHTS.get(bucket)
     if not weights:
         return 0.0
-    return sum(_n(defense_tools.get(f, 0) or 0) * w for f, w in weights.items())
+    return float(sum(_n(defense_tools.get(f, 0) or 0) * w for f, w in weights.items()))
 
 
 def _load_qualifying_stat_seasons(
@@ -2083,8 +2083,8 @@ def _run_impl(conn: sqlite3.Connection, league_dir: Path) -> None:
 
     # -- Load MiLB averages and level discounts for unified stat blending --
     milb_averages = _load_milb_averages(league_dir)
-    milb_discounts = {"hitter": {}, "pitcher": {}}
-    milb_norm_ages = {}
+    milb_discounts: dict[str, dict[Any, Any]] = {"hitter": {}, "pitcher": {}}
+    milb_norm_ages: dict[Any, Any] = {}
     try:
         mw_path = league_dir / "config" / "model_weights.json"
         if mw_path.exists():

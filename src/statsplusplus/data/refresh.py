@@ -448,12 +448,12 @@ def _detect_league_structure(conn, year):
     games = conn.execute(
         "SELECT home_team, away_team FROM games WHERE played=1 AND game_type=0"
     ).fetchall()
-    pair_counts = Counter()
+    pair_counts: Counter[tuple[Any, ...]] = Counter()
     for h, a in games:
         if h in mlb_tids and a in mlb_tids:
             pair_counts[tuple(sorted([h, a]))] += 1
 
-    team_vs = defaultdict(Counter)
+    team_vs: defaultdict[Any, Counter[Any]] = defaultdict(Counter)
     for (t1, t2), cnt in pair_counts.items():
         team_vs[t1][t2] = cnt
         team_vs[t2][t1] = cnt
