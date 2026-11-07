@@ -6,7 +6,30 @@ on:
       - 'v*'
 
 jobs:
+  # Gate: the build/publish job below makes the release public (and therefore
+  # the in-app updater's "latest"), so nothing ships unless CI is green for
+  # this exact commit. Reuses ci.yml (workflow_call): full Python 3.10-3.13
+  # test matrix, mypy and check_docs --strict, with no duplicated steps.
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  # The zip name and the in-app update check both key off the version, so the
+  # tag must equal the pyproject.toml version.
+  tag-matches-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag must equal v<pyproject version>
+        run: |
+          VERSION=$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' pyproject.toml | head -n1)
+          if [ -z "$VERSION" ] || [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "::error::tag '${GITHUB_REF_NAME}' does not match pyproject.toml version '${VERSION}'"
+            exit 1
+          fi
+
   build:
+    needs: [verify, tag-matches-version]
     runs-on: ubuntu-latest
     permissions:
       contents: write

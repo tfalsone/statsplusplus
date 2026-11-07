@@ -6,7 +6,7 @@
 > `check_docs.py --strict` docs-drift job) is **implemented**; mypy is **blocking**
 > (modules with known gaps are listed under `TYPING DEBT` in `pyproject.toml`)
 > (`.github/workflows/ci.yml`, Sessions 95/110). The release zip build (`release.yml`)
-> predates this. Stages 2–4 (artifact-boot, Playwright, API canary) are not yet
+> is gated by CI (see "Release gate" below). Stages 2–4 (artifact-boot, Playwright, API canary) are not yet
 > built. The staged design below is the roadmap for the rest.
 
 Status: **Stage 1 shipped (Session 95); Stages 2–4 are the remaining roadmap.**
@@ -37,6 +37,21 @@ The test suite validates **the source tree with mocks**, but users run **the zip
 artifact against real data and the real API**. Nothing tested the thing users
 actually get. Every bug that session (broken entry points, PPL crashes, ratings
 CSV format change, stale `start.sh` behavior) was invisible to a green suite.
+
+## Release gate
+
+Pushing a `v*` tag runs `release.yml`. Its `build` job publishes the GitHub Release
+(not a draft), which the in-app updater reads as `latest`. So `build` needs two jobs first:
+
+- `verify` calls `ci.yml` as a reusable workflow (`workflow_call`): the full Python
+  3.10-3.13 test matrix, mypy and `check_docs.py --strict`. The full matrix is kept
+  because the release is what users install on their own Python, and one reusable
+  call avoids duplicated steps.
+- `tag-matches-version` fails unless the tag equals `v<pyproject.toml version>`.
+
+`scripts/release.py prepare` runs pytest, mypy and `check_docs.py --strict` locally
+before it commits or tags. If `verify` fails, the tag produced no release. Fix it with a
+new commit; deleting and re-pushing the tag needs the user's explicit approval.
 
 ## Proposed stages
 

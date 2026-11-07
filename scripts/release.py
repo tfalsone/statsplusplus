@@ -4,7 +4,9 @@
     python3 scripts/release.py discord --title T --notes-file notes.md [--preview]
 
 Notes file: optional first line "# Title", then "- bullet" lines (one per highlight).
-`prepare` never pushes: it prints the push/tag commands for you to run.
+`prepare` runs the same checks as the release `verify` job (pytest, mypy,
+check_docs --strict) before it changes anything, and never pushes: it prints the
+push/tag commands for you to run.
 """
 
 import argparse
@@ -84,6 +86,16 @@ def preflight(root, tag, branch, fetch):
     return problems
 
 
+def checks(root):
+    """The release gate, mirroring CI: (label, argv) pairs, run before any change."""
+    py = sys.executable
+    return [
+        ("pytest -m 'not live_api' -q", [py, "-m", "pytest", "-m", "not live_api", "-q"]),
+        ("mypy", [py, "-m", "mypy"]),
+        ("scripts/check_docs.py --strict", [py, str(root / "scripts" / "check_docs.py"), "--strict"]),
+    ]
+
+
 def prepare(args, root=BASE):
     title, bullets = parse_notes(Path(args.notes_file).read_text(), args.title)
     old = read_version(root)
@@ -103,7 +115,8 @@ def prepare(args, root=BASE):
 
     msg = f"Release {tag} — {title}"
     tag_msg = msg + "\n\n" + "\n".join(f"- {b}" for b in bullets)
-    say(f"run pytest -m 'not live_api' -q" + (" (skipped by --skip-tests)" if args.skip_tests else ""))
+    for label, _ in checks(root):
+        say(f"run {label}" + (" (skipped by --skip-checks)" if args.skip_checks else ""))
     say(f"bump pyproject.toml {old} -> {new}")
     say(f"prepend docs/whats_new.json entry {new} ({date}): {title!r}, {len(bullets)} highlights")
     say(f"commit: {msg}")
@@ -111,10 +124,10 @@ def prepare(args, root=BASE):
     if dry:
         return 0
 
-    if not args.skip_tests:
-        r = subprocess.run([sys.executable, "-m", "pytest", "-m", "not live_api", "-q"], cwd=root)
-        if r.returncode:
-            sys.exit("✗ tests failed; nothing changed")
+    if not args.skip_checks:
+        for label, cmd in checks(root):
+            if subprocess.run(cmd, cwd=root).returncode:
+                sys.exit(f"✗ {label} failed; nothing changed")
     pp = root / "pyproject.toml"
     pp.write_text(VERSION_RE.sub(f'version = "{new}"', pp.read_text(), count=1))
     add_whats_new(root / "docs" / "whats_new.json", new, date, title, bullets)
@@ -156,7 +169,8 @@ def main(argv=None):
     p.add_argument("--notes-file", required=True)
     p.add_argument("--title", help="release title (default: '# ' line of notes file)")
     p.add_argument("--branch", default="main")
-    p.add_argument("--skip-tests", action="store_true")
+    p.add_argument("--skip-checks", "--skip-tests", dest="skip_checks", action="store_true",
+                   help="skip ALL pre-release checks (pytest, mypy, check_docs); CI's verify job still gates the tag")
     p.add_argument("--dry-run", action="store_true")
     d = sub.add_parser("discord", help="post release embed and update discord_posts.json")
     d.add_argument("--notes-file", required=True)

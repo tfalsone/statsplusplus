@@ -45,7 +45,7 @@ def repo(tmp_path):
 
 def _args(repo, **kw):
     ns = dict(bump="minor", notes_file=str(repo / "notes.md"), title=None, branch="main",
-              skip_tests=True, dry_run=False)
+              skip_checks=True, dry_run=False)
     ns.update(kw)
     return MagicMock(**ns)
 
@@ -134,3 +134,45 @@ def test_send_uses_user_agent_and_exits_on_http_error():
     err = urllib.error.HTTPError("https://x", 403, "no", {}, None)
     with patch("urllib.request.urlopen", side_effect=err), pytest.raises(SystemExit):
         discord_post._send({"webhook_url": "https://x"}, {"content": "hi"})
+
+
+def test_dry_run_lists_all_three_checks(repo, capsys):
+    release.prepare(_args(repo, dry_run=True, skip_checks=False), root=repo)
+    out = capsys.readouterr().out
+    assert "run pytest" in out and "run mypy" in out and "run scripts/check_docs.py --strict" in out
+
+
+@pytest.mark.parametrize("failing", ["pytest", "mypy", "check_docs"])
+def test_failing_check_aborts_before_commit_and_tag(repo, failing):
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
+    ran = []
+    real_run = subprocess.run
+
+    def fake_run(cmd, **kw):
+        if cmd[0] != sys.executable:
+            return real_run(cmd, **kw)
+        ran.append(cmd)
+        return MagicMock(returncode=1 if failing in " ".join(map(str, cmd)) else 0)
+
+    with patch.object(release.subprocess, "run", side_effect=fake_run), pytest.raises(SystemExit):
+        release.prepare(_args(repo, skip_checks=False), root=repo)
+    assert any(failing in " ".join(map(str, c)) for c in ran)
+    assert 'version = "1.2.3"' in (repo / "pyproject.toml").read_text()
+    assert subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True) == head
+    assert subprocess.check_output(["git", "tag"], cwd=repo, text=True) == ""
+
+
+def test_all_checks_pass_then_commit(repo):
+    real_run = subprocess.run
+    seen = []
+
+    def fake_run(cmd, **kw):
+        if cmd[0] == sys.executable:
+            seen.append(cmd)
+            return MagicMock(returncode=0)
+        return real_run(cmd, **kw)
+
+    with patch.object(release.subprocess, "run", side_effect=fake_run):
+        release.prepare(_args(repo, skip_checks=False), root=repo)
+    assert len(seen) == 3
+    assert subprocess.check_output(["git", "tag"], cwd=repo, text=True).strip() == "v1.3.0"

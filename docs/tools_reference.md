@@ -372,14 +372,17 @@ Release helper (stdlib only). Notes file format: `# Title` line, then `- bullet`
 
 ```bash
 python3 scripts/release.py prepare --bump minor --notes-file notes.md --dry-run   # show every action
-python3 scripts/release.py prepare --bump minor --notes-file notes.md             # test, bump, whats_new, commit, tag
+python3 scripts/release.py prepare --bump minor --notes-file notes.md             # pytest+mypy+check_docs, bump, whats_new, commit, tag
 python3 scripts/release.py discord --notes-file notes.md --preview                # show the embed
 python3 scripts/release.py discord --notes-file notes.md                          # post + update data/discord_posts.json
 ```
 
 `prepare` refuses a dirty tree, a branch other than
 `--branch` (default `main`), a branch behind `origin`, or an existing tag. It never pushes;
-it prints the push commands. `--title` overrides the notes title; `--skip-tests` skips pytest.
+it prints the push commands. Before changing anything it runs `pytest -m 'not live_api' -q`,
+`mypy` and `scripts/check_docs.py --strict`; a failure aborts with no commit or tag. `--skip-checks`
+(alias `--skip-tests`) skips all three; the release `verify` job still gates the tag.
+`--title` overrides the notes title.
 `data/discord_posts.json` is local, untracked state (covered by the `/data/` ignore rule).
 
 ### `scripts/discord_post.py`
