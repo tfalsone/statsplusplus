@@ -53,6 +53,10 @@ Pushing a `v*` tag runs `release.yml`. Its `build` job publishes the GitHub Rele
 before it commits or tags. If `verify` fails, the tag produced no release. Fix it with a
 new commit; deleting and re-pushing the tag needs the user's explicit approval.
 
+After the push, `scripts/release.py verify-release` (read-only, via `gh`) confirms the
+`Build Release` run passed, the release zip exists with `MANIFEST.txt` and the right
+version, and `releases/latest` points at the tag.
+
 ## Proposed stages
 
 ### Stage 1 — "Alpha": commit/PR CI (fast, every push, hermetic)

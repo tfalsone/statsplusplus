@@ -176,3 +176,111 @@ def test_all_checks_pass_then_commit(repo):
         release.prepare(_args(repo, skip_checks=False), root=repo)
     assert len(seen) == 3
     assert subprocess.check_output(["git", "tag"], cwd=repo, text=True).strip() == "v1.3.0"
+
+
+# ---- verify-release (gh mocked) ---------------------------------------------
+
+import io
+import zipfile
+
+
+def _zip_bytes(manifest=True, version="1.3.0"):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("pyproject.toml", f'[project]\nversion = "{version}"\n')
+        if manifest:
+            z.writestr("MANIFEST.txt", "pyproject.toml\n")
+    return buf.getvalue()
+
+
+class FakeGh:
+    """Stand-in for subprocess.run that answers `gh` calls; records every call."""
+
+    def __init__(self, run_states=None, conclusion="success", assets=("statsplusplus-v1.3.0.zip",),
+                 zip_data=None, latest="v1.3.0", auth_rc=0, draft=False):
+        self.states = list(run_states or ["completed"])
+        self.conclusion, self.assets, self.latest = conclusion, list(assets), latest
+        self.zip_data = zip_data if zip_data is not None else _zip_bytes()
+        self.auth_rc, self.draft, self.calls = auth_rc, draft, []
+
+    def __call__(self, cmd, **kw):
+        self.calls.append(cmd)
+        out = lambda o="", rc=0: subprocess.CompletedProcess(cmd, rc, json.dumps(o) if not isinstance(o, str) else o, "err")
+        a = cmd[1:]
+        if a[:2] == ["auth", "status"]:
+            return out("", self.auth_rc)
+        if a[:2] == ["run", "list"]:
+            return out([{"databaseId": 42}])
+        if a[:2] == ["run", "view"]:
+            st = self.states.pop(0) if len(self.states) > 1 else self.states[0]
+            return out({"status": st, "conclusion": self.conclusion if st == "completed" else None,
+                        "jobs": [{"name": "verify", "conclusion": "success"},
+                                 {"name": "build", "conclusion": self.conclusion}]})
+        if a[:2] == ["release", "view"] and "--json" in a and len(a) == 4:  # latest
+            return out({"tagName": self.latest})
+        if a[:2] == ["release", "view"]:
+            return out({"tagName": a[2], "isDraft": self.draft, "isPrerelease": False,
+                        "assets": [{"name": n} for n in self.assets]})
+        if a[:2] == ["release", "download"]:
+            (Path(a[a.index("--dir") + 1]) / a[a.index("--pattern") + 1]).write_bytes(self.zip_data)
+            return out("")
+        raise AssertionError(cmd)
+
+
+def _verify(fake, tmp_path, **kw):
+    (tmp_path / "pyproject.toml").write_text('version = "1.3.0"\n')
+    ns = dict(tag=None, timeout=100, poll=10)
+    ns.update(kw)
+    sleeps = []
+    with patch.object(release.subprocess, "run", fake):
+        rc = release.verify_release(MagicMock(**ns), root=tmp_path, sleep=sleeps.append)
+    return rc, sleeps
+
+
+def test_verify_gh_missing(tmp_path, capsys):
+    def boom(*a, **k):
+        raise FileNotFoundError
+    (tmp_path / "pyproject.toml").write_text('version = "1.3.0"\n')
+    with patch.object(release.subprocess, "run", boom):
+        assert release.verify_release(MagicMock(tag=None, timeout=1, poll=1), root=tmp_path) == 2
+    assert "not installed" in capsys.readouterr().out
+
+
+def test_verify_gh_not_authenticated(tmp_path, capsys):
+    rc, _ = _verify(FakeGh(auth_rc=1), tmp_path)
+    assert rc == 2 and "not authenticated" in capsys.readouterr().out
+
+
+def test_verify_full_pass_defaults_tag_and_waits(tmp_path, capsys):
+    fake = FakeGh(run_states=["queued", "in_progress", "completed"])
+    rc, sleeps = _verify(fake, tmp_path)
+    assert rc == 0 and sleeps == [10, 10]
+    assert "PASS: v1.3.0" in capsys.readouterr().out
+    assert all(c[1:3] not in (["release", "delete"], ["release", "edit"]) for c in fake.calls)
+
+
+def test_verify_run_failed(tmp_path, capsys):
+    rc, _ = _verify(FakeGh(conclusion="failure"), tmp_path)
+    out = capsys.readouterr().out
+    assert rc == 1 and "FAIL" in out and "build" in out and "gh run view 42 --log-failed" in out
+
+
+def test_verify_asset_missing(tmp_path, capsys):
+    rc, _ = _verify(FakeGh(assets=[]), tmp_path)
+    assert rc == 1 and "missing" in capsys.readouterr().out
+
+
+def test_verify_zip_missing_manifest(tmp_path, capsys):
+    rc, _ = _verify(FakeGh(zip_data=_zip_bytes(manifest=False)), tmp_path)
+    assert rc == 1 and "FAIL  zip has MANIFEST.txt" in capsys.readouterr().out
+
+
+def test_verify_zip_wrong_version_and_not_latest(tmp_path, capsys):
+    rc, _ = _verify(FakeGh(zip_data=_zip_bytes(version="1.2.0"), latest="v1.2.0"), tmp_path)
+    out = capsys.readouterr().out
+    assert rc == 1 and "FAIL  zip pyproject version" in out and "FAIL  releases/latest" in out
+
+
+def test_verify_timeout(tmp_path, capsys):
+    rc, sleeps = _verify(FakeGh(run_states=["in_progress"]), tmp_path, timeout=30)
+    assert rc == 3 and sleeps == [10, 10, 10] and "timed out" in capsys.readouterr().out

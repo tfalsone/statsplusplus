@@ -375,6 +375,7 @@ python3 scripts/release.py prepare --bump minor --notes-file notes.md --dry-run 
 python3 scripts/release.py prepare --bump minor --notes-file notes.md             # pytest+mypy+check_docs, bump, whats_new, commit, tag
 python3 scripts/release.py discord --notes-file notes.md --preview                # show the embed
 python3 scripts/release.py discord --notes-file notes.md                          # post + update data/discord_posts.json
+python3 scripts/release.py verify-release [--tag vX.Y.Z] [--timeout 1200] [--poll 20]  # read-only gh check after the tag push
 ```
 
 `prepare` refuses a dirty tree, a branch other than
@@ -384,6 +385,15 @@ it prints the push commands. Before changing anything it runs `pytest -m 'not li
 (alias `--skip-tests`) skips all three; the release `verify` job still gates the tag.
 `--title` overrides the notes title.
 `data/discord_posts.json` is local, untracked state (covered by the `/data/` ignore rule).
+
+`verify-release` (stdlib + the `gh` CLI, read-only; tag defaults to `v<pyproject version>`)
+checks `gh auth status`, polls the `release.yml` run for the tag until it completes
+(`--timeout`/`--poll`), lists each job's conclusion, then confirms the release is published
+(not draft/prerelease) with `statsplusplus-<tag>.zip`, downloads it to a temp dir to check
+`MANIFEST.txt` and the zip's `pyproject.toml` version, and checks `releases/latest` is the
+tag (the in-app updater reads it). Prints a PASS/FAIL summary. Exit codes: 0 pass, 1 failed
+check (failed jobs + `gh run view <id> --log-failed` hint printed), 2 `gh` missing or not
+authenticated, 3 timed out. `prepare` prints it as a next step.
 
 ### `scripts/discord_post.py`
 

@@ -14,6 +14,10 @@ Completed and deferred work items, organized by session. Moved from `task_list.m
 - **`discord_post.py embed`** — posts a formatted embed from a file or stdin, replacing the
   ad-hoc webhook snippets. `post_custom` and `_post_webhook` now share one `_send` path.
 - Steering `dev-agent.md` steps 11–12 point at the script. Tests: `tests/test_release.py`.
+- **`release.py verify-release`** — read-only `gh` check after the tag push: Build Release
+  run and jobs, published release asset, `MANIFEST.txt` and version inside the zip, and
+  `releases/latest`. `gh` is available locally, so the agent runs it instead of leaving the
+  CI/zip check to the user; `prepare` prints it as a next step.
 
 ---
 
